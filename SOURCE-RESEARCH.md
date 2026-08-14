@@ -166,7 +166,7 @@
 
 - `mt` / 看蜜桃：已更新，恢复为待接入。
 - `miss` / 看 Miss：页面提供类型、女优、发行商和 API 文档入口；已更新，恢复为待接入。
-- `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。
+- `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。**2026-08-14 已接入并本地验收（见下节「栖影 / 91吃瓜网」）。**
 - `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。
 - `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。
 - `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
@@ -211,3 +211,37 @@
 
 - 已确认参考站真实结构为 131 平台 → `/api/channels/{platformId}` → FLV/MSE 直播播放器，实测频道 readyState 4；不是录播目录。
 - 2026-08-14 用户确认站点已更新，恢复为待接入；参考结构（131 平台 → `/api/channels/{platformId}` → FLV/MSE 直播播放器）仍为研究记录。
+
+## 栖影 / 91吃瓜网（`qiying`，2026-08-14 接入）
+
+### 参考站真实上游
+
+- 栖影参考站（`qiying.cfnav.me`）与看91 一样，是 91吃瓜网（Typecho 博客，官网自述"91吃瓜网-第一成人吃瓜色情资讯平台"）的聚合前端。列表/详情/图集/视频全部来自 91吃瓜网的发布内容。
+- 主站域名从 91吃瓜网防失联页（用户提供）解码得到，多线路：
+  - 线路一 `https://agency.nsguiiwz.cc`（实测 = 主站）、线路二 `https://being.nsguiiwz.cc`、线路三 `https://act.nsguiiwz.cc`、线路四 `https://d1jgfjfuhhmyma.cloudfront.net`（CloudFront）、`Powered by 91cg1.com`。
+  - 注意 `91vip2x.com` / `91chigua.com` 等历史域名已被劫持/停用（页面显示 bilibili 视频），不能使用。
+- 主站架构（Typecho）：帖子页 `/archives/{id}/`、分类列表 `/category/{code}/`（每页 30 条，卡片含 `loadBannerDirect` 封面、`h2.post-card-title` 标题、作者、日期、分类）、搜索 `/search/{kw}/`、RSS `/feed/rss/`。
+
+### 播放链路（关键发现）
+
+- 主站帖子页内嵌 DPlayer：`data-config='{"...","video":{"url":"https://op.vkjyoi.cn/videos5/{hash}/{hash}.m3u8?auth_key=..."}}'`。
+- `auth_key` 由 91吃瓜网服务端生成（短时效，数分钟内过期）；无签名请求被拒：`op.vkjyoi.cn` 无签名 400、`as.bgqpnx.cn`（ts/key 域）无签名 403、`ffxddn` 线路当前断开（用户浏览器亦 ERR_CONNECTION_CLOSED）、`eisees` 家族域无视频镜像。
+- 签名链实测（Node）：m3u8 200 → 清单内 ts/key 被改写为 `as.bgqpnx.cn` 并带各自 `auth_key` → ts 200（1MB/片）、key 200（16B AES key），全部 `Access-Control-Allow-Origin: *`。
+- 结论：**视频必须点播时现爬主站帖子页拿新鲜签名 URL**，不能离线保存或复用 cfnav.me 的 `/api/hls`。签名私钥在服务端，不尝试复刻。
+
+### 图片链路
+
+- 主站帖子页图片属性 `data-xkrkllgl`（主站页只含部分图，如 120333 仅 8 张，而完整图集 18 张）；图集以参考站镜像数据为准。
+- 图片域直连验证：`pic.uforxk.cn`（主站）、`pic.xustgq.cn`、`imgpublic.ycomesc.live`（镜像数据图集，新旧路径均可），均 200 + CORS `*`。
+
+### 参考站数据镜像（一次性导出，运行期零依赖）
+
+- `qiying.cfnav.me/media-data/v2/` 登录墙后（Node 401）；用户浏览器登录态经 Console 脚本导出 `qiying-full.json`（catalog 23368 帖 + details 96 桶 + mode_images 22763 + mode_videos 6099）。
+- catalog 字段 `p,i,v,c,r,t,d,a,u,m,k,g`；detail 分片 `details/details-{pid%96}.json`，每条 `{p, i:[{i,p,w,h}], v:[{i,p,w,h,d,s,c}]}`。
+- `scripts/prepare-qiying-data.mjs` 将其分片为 `public/qiying/{catalog,details-000..095,mode_images,mode_videos}.json.gz + manifest.json`（总计约 2.9MB gzip）；刷新数据 = 重新导出后重跑该脚本。
+
+### 本地实现（provider `qiying`）
+
+- 浏览器端：`catalog.json.gz` 内存解压 → 列表/搜索/分类 Tab/分页/计数；详情图集与视频条取 detail 分片；图片直连 `imgpublic.ycomesc.live`。
+- worker 端：`qiyingPage`（主站多线路 failover 抓帖子页）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频）、`qiyingDetail`、`qiyingPlay`。
+- 验收（headless Chrome，2026-08-14）：列表 24 卡片、封面 24/24 加载、26 分类 Tab、搜索"海角" 156 条、详情图集 18 图翻页、点播放 → 签名 m3u8 → hls.js blob → readyState 4、1280×720、时长 1419s 实测播放推进、页面零错误。

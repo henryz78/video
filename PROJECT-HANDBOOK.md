@@ -28,10 +28,10 @@
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
-| 下一项 | ASMR 按用户决定暂时跳过；当前看TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
+| 下一项 | `qiying`（栖影）已接入并本地验收（本地镜像目录 + 主站签名视频播放）；ASMR 按用户决定暂时跳过；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
-| 测试 | `npm run test:sites` 8 项；`npm run test:cloudflare` 4 项，当前均通过 |
+| 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
 | 主导航视觉 | 2026-08-12 已用用户保存的完整首页与在线 `cfnav.me` 直接逐屏对照，覆盖桌面 1280×720、手机 390×844、深色/浅色、卡片默认/悬停状态；当前范围内的结构、尺寸、字样、图标、主题、封面和交互已对齐。仍保留三项产品决定差异：移除看板娘游戏、未接入站点诚实显示 PENDING、统计显示 38/READY 8，而不伪装参考站的 39/GAME 1。 |
 
 ### 状态术语
@@ -53,7 +53,7 @@
 | 7 | `mr` | 看每日大赛 | 社区 / feed | — | — | 待接入 | 待接入。 |
 | 8 | `xf` | 看推特 | 社区 / feed | — | — | 尚未加入 | 待接入。 |
 | 9 | `sjs` | 司机社 SJS | 社区 / feed | — | — | 待接入 | 待接入。 |
-| 10 | `qiying` | 栖影 | 影视 / cinema | — | — | 待接入 | 待接入。 |
+| 10 | `qiying` | 栖影 | 影视 / cinema | qiying | — | 专用已验收 | 真实上游为 91吃瓜网（Typecho，`agency.nsguiiwz.cc` 等防失联线路）。已按参考站 media-data 分片导出 23368 帖本地镜像目录（`public/qiying/*.gz`，浏览器内存过滤/搜索/分页，26 个分类 Tab、图/视频计数、作者与日期）；详情图集取自镜像 detail 分片（pid%96 桶，完整图片列表）；视频经 worker 实时抓主站帖子页，取页面 `data-config` 内服务端签名的 m3u8（`op.vkjyoi.cn` auth_key）直连浏览器播放（ts/key 走 `bgqpnx.cn` 带签名，CORS 全 `*`）。图片直连 `pic.uforxk.cn` / `imgpublic.ycomesc.live`。参考站数据仅一次性导出用，运行期零依赖。 |
 | 11 | `tx` | 看糖心 Vlog | 影视 / cinema | — | — | 待接入 | 待接入。 |
 | 12 | `lg` | 看 OnlyFans | 图集 / gallery | LeakGallery | — | 专用已验收 | 热门、创作者搜索、详情、图片和 MP4；媒体来自独立 CDN。 |
 | 13 | `hxc` | 看含羞草 | 影视 / cinema | — | — | 整站暂缓（上游含 VIP / 私有媒体） | 登录后复核 9984 部、416 页以及列表/搜索/详情/完整播放；参考播放走 `/api/video/play` 后进入私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。原始含羞草接口字段明确包含 `isVip`、`isBuy`、`isNeedLogin`、`isTemporarilyFree`，并区分预览地址；按整站免费规则不接入，也不使用任何预览升级或 VIP 解锁逻辑。 |
@@ -99,6 +99,7 @@
 | `tnaflix` | `www.tnaflix.com` + TNAFlix 媒体节点 | 解析匿名公开目录、分页、搜索、详情 JSON-LD 与页面内动态清晰度地址 | 多清晰度 MP4 直连 | 无 | 官方 HTML 结构和媒体签名会轮换；adapter 每次打开详情重新取得最新地址，不写死签名。 |
 | `adulttv` | `oxax.tv` / `s.oxax.tv` / `r.pokaz.me` + `cdn.adultiptv.net` | 内置经参考站逐项核对的 80 路目录；AdultIPTV 直接 HLS；oxax 访问公开 HTTP slug 页面，解析拆分的 Playerjs 签名，随后由受限同源代理重写 HLS 清单、分片和 key URI | HLS.js / 浏览器原生 HLS | 无账号或持久令牌；oxax 的临时签名不落盘；代理仅允许 `s.oxax.tv` 和 `r.pokaz.me` | 39 路主题流已本地验收；41 路品牌流解析与代理代码、真实页面样本测试已完成，待可出网部署环境逐路验收。 |
 | `kan91` | `91porna.com` + `yd-hls.utxxds.cn` + `tp*.xmbvxj.cn` / `pic.xmbvxj.cn` | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.xmbvxj.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测。 |
+| `qiying` | `agency.nsguiiwz.cc` / `being` / `act` + `public/qiying/*.gz` 本地镜像 + `pic.uforxk.cn` / `imgpublic.ycomesc.live` / `op.vkjyoi.cn` / `bgqpnx.cn` | 目录/搜索/详情图集用导出分片（浏览器 gzip 解压内存过滤）；视频实时抓主站 `/archives/{id}/` 帖子页，解析 DPlayer `data-config` 内服务端签名 m3u8 | HLS.js（AES-128 分片，ts/key 直连 CDN） | 无账号；签名由 91吃瓜网服务端生成，每次点播现抓不落盘 | 主站域名轮换（防失联页多线路，adapter 内置三个镜像）；签名有时效，过期重新点播即可 |
 
 ## 5. 请求与数据契约
 

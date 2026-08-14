@@ -894,6 +894,114 @@ async function kan91Image(requestUrl) {
   });
 }
 
+const QIYING_ORIGIN = "https://agency.nsguiiwz.cc";
+const QIYING_MIRRORS = ["https://being.nsguiiwz.cc", "https://act.nsguiiwz.cc"];
+const QIYING_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CFNav-Independent/2.0",
+};
+
+async function qiyingPage(pathname, mirrors = [QIYING_ORIGIN, ...QIYING_MIRRORS]) {
+  let lastError;
+  for (const origin of mirrors) {
+    try {
+      const response = await fetch(new URL(pathname, origin), {
+        headers: QIYING_HEADERS,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        lastError = new Error(`qiying page ${response.status}`);
+        continue;
+      }
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("qiying page unavailable");
+}
+
+function qiyingDecodeHtmlEntities(value = "") {
+  return decodeHtml(value);
+}
+
+function qiyingExtractDetail(html, id) {
+  const title = qiyingDecodeHtmlEntities(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<title>([^<]*)<\/title>/)?.[1] || `91吃瓜 ${id}`).replace(/\s+-\s*91吃瓜网\s*$/, "");
+  const description = qiyingDecodeHtmlEntities(html.match(/<meta property="og:description" content="([^"]*)"/)?.[1] || "");
+  const author = qiyingDecodeHtmlEntities(html.match(/<meta itemprop="name" content="([^"]+)"/)?.[1] || "");
+  const datePublished = html.match(/<meta itemprop="datePublished" content="([^"]+)"/)?.[1] || "";
+  const categories = [...new Set(html.match(/data-video_type_name="([^"]+)"/g)?.map((m) => m.match(/data-video_type_name="([^"]+)"/)[1]) || [])];
+
+  const images = [];
+  const seenImages = new Set();
+  for (const match of html.matchAll(/(?:data-xkrkllgl|data-src|data-original|src)="(https:\/\/[^"]+\.(?:jpe?g|png|webp))"/g)) {
+    const url = match[1].replace(/&amp;/g, "&");
+    if (seenImages.has(url)) continue;
+    if (/hc237\/|uploads\/default\/other|\/gif$|zw\.png|banner\.png|avatar|\.gif/i.test(url)) continue;
+    seenImages.add(url);
+    images.push(url);
+  }
+  const fallbackImages = [...new Set(html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/g) || [])];
+  if (!images.length) images.push(...fallbackImages);
+
+  const videos = [];
+  for (const match of html.matchAll(/<div class="dplayer"[\s\S]{0,9000}?data-config='([\s\S]*?)'/g)) {
+    try {
+      const config = JSON.parse(match[1]);
+      if (typeof config?.video?.url === "string" && /\.m3u8(?:\?|$)/i.test(config.video.url)) {
+        videos.push({ url: config.video.url.replace(/\\\//g, "/").replace(/&amp;/g, "&"), type: config.video.type || "hls" });
+      }
+    } catch {
+      // Malformed player config blocks are ignored; page fallbacks below still apply.
+    }
+  }
+  const poster = images[0] || html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/)?.[0] || "";
+
+  return {
+    title,
+    description,
+    author,
+    datePublished,
+    categories,
+    images,
+    videos,
+    poster,
+  };
+}
+
+async function qiyingDetail(id) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await qiyingPage(`/archives/${id}/`);
+  const detail = qiyingExtractDetail(html, id);
+  const primary = detail.videos[0];
+  return json({
+    vod_id: id,
+    vod_name: detail.title,
+    vod_pic: detail.poster,
+    vod_remarks: detail.videos.length ? `${detail.images.length} 图 · ${detail.videos.length} 视频` : `${detail.images.length} 图`,
+    vod_blurb: [detail.author && `作者：${detail.author}`, detail.datePublished && `发布于：${detail.datePublished.slice(0, 10)}`].filter(Boolean).join(" · "),
+    vod_content: detail.description || "",
+    type_name: detail.categories[0] || "91吃瓜",
+    vod_area: "91吃瓜网",
+    media_gallery: detail.images,
+    vod_play_url: primary?.url || "",
+    media_kind: detail.videos.length ? "video" : "gallery",
+    needs_detail: false,
+    provider: "qiying",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function qiyingPlay(id) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await qiyingPage(`/archives/${id}/`);
+  const detail = qiyingExtractDetail(html, id);
+  const primary = detail.videos[0];
+  if (!primary) return json({ message: "此帖子没有公开视频" }, { status: 404 });
+  return json({ vod_id: id, video: primary.url, poster: detail.poster || detail.images[0] || "", provider: "qiying" }, {
+    headers: { "cache-control": "no-store" },
+  });
+}
+
 let iptvCatalogCache;
 let iptvCatalogExpires = 0;
 
@@ -1282,6 +1390,7 @@ export async function handleProviderRequest(request) {
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
     if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
+    if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id")) : action === "detail" ? qiyingDetail(requestUrl.searchParams.get("id")) : qiyingDetail(requestUrl.searchParams.get("id")));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
