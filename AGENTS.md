@@ -1,0 +1,28 @@
+# Prototype Instructions
+
+Before any work, read `PROJECT-HANDBOOK.md`. It is the canonical project handoff, original 39-site registry (38 currently in scope), priority list, implementation map, and safety boundary. Update it whenever a site's provider, preset, status, verification result, or next step changes.
+
+Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
+
+Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
+
+When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
+
+Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+
+## Product decisions
+
+- This is an authorized, personal, non-commercial learning project inspired by cfnav.me.
+- Independence is the priority: do not make the app depend on `cfnav.me/api/*` as its permanent data source.
+- User-visible resource behavior (browse, search, open, play/read) matters more than pixel-perfect UI cloning.
+- The first video/live screening pass is complete: the genuinely matchable public entries are implemented, while the rest have explicit paid-content, magnet-only, or independence blockers. Do not reopen excluded video sites without new evidence. The unresolved items are `zb`, whose public MP4 objects lack an independent dynamic catalog, and the deployment-level playback verification for 41 oxax channels in `tv`. The user asked to skip `asmr` for now; do not request saved ASMR pages again until they resume it.
+- On 2026-08-14 the user confirmed the sites previously excluded for content reasons have been updated and are back to 待接入 (pending): `mt`, `miss`, `qiying`, `rou`, `tx`, `hqw`, `91`, `mr`, `mm`, `jm`, `book`, `madou`, `best`, `sjs`, `qms`. `dj` / 轻看短剧 remains 暂缓 (paid-content signal).
+- The `ja` / 看 JavBus entry is a metadata-and-magnet directory without online playback. The user explicitly chose to skip it; do not implement or investigate magnet/download flows.
+- Cloudflare Pages support is prepared but not deployed. The current task is to finish verification of the existing `tv` implementation; `asmr` is paused by user decision.
+- The `game` / 看板娘入口 is explicitly out of scope by user decision and must not be restored to navigation or implementation work.
+- Do not create, upload, save, or deploy this project to OpenAI Sites unless the user explicitly asks for that exact deployment in a future message. The intended target is local use or infrastructure controlled by the user; read-only capability checks do not authorize a deployment.
+- If the user later asks for deployment, the preferred target is Cloudflare Pages for the static app and lightweight API resolution. Do not deploy yet. Do not route sustained third-party video segment traffic through Pages Functions/Workers by default; keep direct media URLs direct and place any unavoidable HLS relay on separately approved infrastructure after checking provider and hosting terms.
+- Main-directory fidelity is now a product requirement: preserve the reference site's exact entry names where known, prefer real per-site/upstream cover imagery over generic placeholders, reproduce its denser card information and hover feedback, and avoid presenting the navigation as a sparse experimental dashboard. Do not claim pixel-perfect fidelity until the saved reference homepage and hover state have been compared directly.
+- Fidelity rule: never use a same-category substitute provider or keyword preset to claim a reference sub-site is implemented. A route is complete only after its actual reference catalog, fields, detail flow, and playback/resource chain are verified. Unverified routes must show a clear pending state rather than unrelated fallback content.
+- Put every source behind a replaceable adapter with health reporting and keep private sessions, cookies, keys, and user data out of the project.
+- Site-level gating rule: if a reference site contains any VIP, paid, purchase-gated, or login-gated content, skip that entire site for now, including its free subset. Only implement sites whose catalog and playback are wholly public/free; never reproduce an unlock, preview-escalation, or access-control bypass path.
