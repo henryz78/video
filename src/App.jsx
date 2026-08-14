@@ -264,10 +264,24 @@ function SourcePanel({ health }) {
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);
   if (provider?.id === "qiying") return <QiyingPage site={site} go={go} setHealth={setHealth} />;
+  const MADOU_TABS = [
+    ["", "最新"], ["麻豆传媒", "麻豆传媒"], ["麻豆番外篇", "番外篇"], ["麻豆花絮", "花絮"],
+    ["HongKongDoll", "HongKongDoll"], ["PsychopornTW", "PsychopornTW"], ["91制片厂", "91制片厂"],
+    ["果冻传媒", "果冻传媒"], ["蜜桃影像", "蜜桃影像"], ["天美传媒", "天美传媒"],
+    ["皇家华人", "皇家华人"], ["兔子先生", "兔子先生"], ["星空无限传媒", "星空无限"],
+    ["爱豆", "爱豆"], ["麻豆导演系列", "导演系列"], ["大象传媒", "大象传媒"],
+    ["猫爪影像", "猫爪影像"], ["精东影业", "精东影业"], ["杏吧", "杏吧"],
+    ["乐播传媒", "乐播传媒"], ["草莓", "草莓"], ["抖阴", "抖阴"],
+    ["SA国际传媒", "SA国际"], ["起点传媒性视界传媒", "起点/性视界"], ["大鸟十八", "大鸟十八"],
+    ["小鹏奇啪行", "小鹏奇啪行"], ["女优淫娃培训营", "培训营"], ["淫欲游戏王", "淫欲游戏王"],
+    ["女神羞羞研究所", "羞羞研究所"], ["突袭女优家", "突袭女优家"], ["情趣K歌房", "情趣K歌房"],
+    ["KISS糖果屋", "KISS糖果屋"], ["likes", "点赞排行"],
+  ];
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [page, setPage] = useState(1);
+  const [category, setCategory] = useState(provider?.id === "madou" ? "" : provider?.preset || "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
@@ -278,7 +292,8 @@ function SitePage({ site, go, health, setHealth }) {
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
     const params = new URLSearchParams({ pg: String(page), limit: "24", ac: "detail" });
     if (submitted) params.set("wd", submitted);
-    else if (provider.preset) params.set("preset", provider.preset);
+    else if (category) params.set("preset", category);
+    else if (provider.preset && provider.id !== "madou") params.set("preset", provider.preset);
     setLoading(true); setError("");
     fetch(`/provider-api/${provider.id}?${params}`, { signal: controller.signal }).then((r) => {
       if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
@@ -286,8 +301,9 @@ function SitePage({ site, go, health, setHealth }) {
       if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
     }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [page, submitted, setHealth, provider?.id, provider?.preset]);
+  }, [page, submitted, category, setHealth, provider?.id, provider?.preset]);
   const submit = (e) => { e.preventDefault(); setPage(1); setSubmitted(query.trim()); };
+  useEffect(() => { setPage(1); }, [category, submitted]);
   if (!provider) return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip error">SOURCE PENDING</span></nav>
@@ -299,7 +315,8 @@ function SitePage({ site, go, health, setHealth }) {
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className={`status-chip ${health}`}>{health === "ok" ? "SOURCE ONLINE" : "SOURCE CHECK"}</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">独立适配器 · {provider.name}{provider.preset ? ` · ${provider.preset}` : ""}</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
-    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>PAGE {page}</span></div>
+    {provider?.id === "madou" && <div className="qiying-tabs">{MADOU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>PAGE {page}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
       {!loading && !error && <ContentGrid items={items} mode={site.mode} onOpen={async (item) => {

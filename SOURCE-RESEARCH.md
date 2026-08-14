@@ -253,3 +253,30 @@
 - worker 端：`qiyingPage`（主站多线路 failover 抓帖子页）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频，支持多 DPlayer 块）、`qiyingDetail`、`qiyingPlay`（`idx` 参数选第 N 个视频；主站无页面时返回 404「帖子已从主站删除，仅图集可用」）。
 - 验证（2026-08-14）：有标题帖主站存在率 20/20、视频签名率 19/19；多视频帖顺序与主站 DPlayer 块逐一对应（120231 镜像 9 = 主站 9、120218 镜像 7 = 主站 7，哈希一致）；分类页 `/category/{slug}/` 抽查 6 个全部 200；标签页 `/tag/黑丝/`、`/tag/口交/` 200（32 卡片）；镜像分类名与主站 slug 对应（美加墨世界杯/优选投放区→体育直播、擦边短剧→AI短剧 为参考站保留的旧名，与参考站显示一致）。
 - 验收（headless Chrome）：列表 24 卡片、封面 24/24 加载、26 分类 Tab、搜索"海角" 156 条、详情图集 18 图翻页、单视频/多视频（idx=1 播放第 2 个）实测播放推进、readyState 4、1280×720、页面零错误。
+
+## 看麻豆 / madou.club（`madou`，2026-08-14 接入）
+
+### 参考站与上游同源证据
+
+- 参考站 `madou.cfnav.me` 登录墙（Node 401）；用户浏览器登录态导出契约：`/api/nav`（分类）、`/api/list?page=`（`{id,title,path,cover,views,likes,badge}`）、`/api/detail?path=`（`{title,path,shareId,tags,categories,views,likes,prev,next}`）、`/api/play/{shareId}`（返回 `__cfnav_media/m/kan-madou/playlist/{token}` 私有代理 m3u8）。
+- **真实上游 `madou.club`（麻豆社-专注国产剧情中文对白小电影，WordPress）**：参考站 list 的 `path`（如 `/md0362-%e6%b7%ab%e5%83%a7...html`）与 madou.club 首页链接完全一致；参考站 `postid=28789` 与上游 `data-pid="28789"` 一致；分类名逐项一致（麻豆传媒、麻豆番外篇、HongKongDoll、PsychopornTW、91制片厂、果冻传媒、蜜桃影像、天美传媒、皇家华人、兔子先生、星空无限传媒、爱豆、麻豆导演系列、大象传媒、猫爪影像、精东影业、杏吧、乐播传媒、草莓、抖阴、SA国际传媒、起点传媒-性视界传媒、大鸟十八、小鹏奇啪行、女优淫娃培训营、淫欲游戏王、女神羞羞研究所、突袭女优家、情趣K歌房、KISS糖果屋 等 33 个）。
+
+### 目录与搜索
+
+- 首页/分类：`/`、`/category/{slug}/page/{n}`（每页 20 条）；搜索 `/?s={kw}`（WordPress 标准）；点赞排行 `/likes`（100 条）；`/week` `/month` 页面 200 但内容为空，未采用。
+- 卡片结构：`article.excerpt` → `a.thumbnail[href]`（详情路径）、`img.data-src`（封面 `madou.club/covers/{date}/{hash}-240x180.jpg`）、`h2 > a`（标题）、`footer .post-like[data-pid]`（点赞）、`span.post-view`（观看）、`rel="category tag"`（分类）。
+- 详情页：`h1.article-title`、`article-content > p > iframe[src=https://dash.madou.club/share/{shareId}]`（**注意 iframe 属性无引号**）、`article-tags`、`article-actions .action-like[data-pid]`、观看数、上一部/下一部、相关推荐。
+- 付费检查：首页/分类/详情/搜索均无会员/VIP/付费/购买/金币/积分/充值/订阅信号，全站公开免费。
+
+### 播放链路（关键发现，完全独立于 cfnav）
+
+- 详情页 iframe 指向 `https://dash.madou.club/share/{shareId}`（DPlayer 播放器页面，公开 200，CORS `*`）。
+- share 页内联脚本：`var m3u8 = '/videos/{shareId}/index.m3u8'; var token = "{JWT}";`，最终 URL `…/index.m3u8?token={JWT}`。JWT payload `{"access":"view","iat":…,"exp":iat+100}` —— **有效期仅 100 秒**，每次打开 share 页实时生成。
+- 实测（Node）：m3u8 带 token 200（CORS `*`，AES-128 加密清单）；ts 分片与 `ts.key` **无需 token** 直接 200（CORS `*`，16 字节 key）；poster/thumbnails.jpg 直连 200。分享页 Referer 检查 `antiurl="https://madou.club"` 只影响 share 页自身渲染，不影响 m3u8/ts 请求。
+- 结论：每次点播现抓 share 页拿新 JWT → m3u8 带 token → ts/key 直连。与 qiying 同模式，但无需登录、零 cfnav 依赖。
+
+### 本地实现（provider `madou`）
+
+- worker 端：`madouPage`（90 秒内存缓存）、`madouParseCards`、`madouList`（首页/分类 preset/搜索/点赞排行/分页）、`madouDetail`（详情字段 + shareId + 现抓分享页拼 m3u8）、`madouPlay`、`madouResolvePlay`。
+- 前端：SitePage 通用列表/详情 + 33 个分类 Tab（`preset` 参数）+ 搜索；DetailModal 标准 HLS.js 播放。
+- 验收（headless Chrome）：列表 20 卡片、分类 Tab 切换（麻豆传媒 20 条）、详情（MD0362 标题/观看/点赞）、点播放 → hls.js → readyState 4、1280×720、播放推进、搜索"苏畅" 20 条。测试链 sites 9/9、cloudflare 4/4 全绿。

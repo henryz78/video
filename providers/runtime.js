@@ -1008,6 +1008,172 @@ async function qiyingPlay(id, index) {
   });
 }
 
+const MADOU_ORIGIN = "https://madou.club";
+const MADOU_DASH = "https://dash.madou.club";
+const MADOU_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) CFNav-Independent/2.0",
+};
+const MADOU_CATEGORY_SLUGS = {
+  麻豆传媒: "麻豆传媒", 麻豆番外篇: "麻豆番外篇", 麻豆花絮: "麻豆花絮",
+  HongKongDoll: "hongkongdoll", PsychopornTW: "psychoporntw", "91制片厂": "91制片厂",
+  果冻传媒: "果冻传媒", 蜜桃影像: "蜜桃影像", 天美传媒: "天美传媒",
+  皇家华人: "皇家华人", 兔子先生: "兔子先生", 星空无限传媒: "星空无限传媒",
+  爱豆: "爱豆", 麻豆导演系列: "麻豆导演系列", 大象传媒: "大象传媒",
+  猫爪影像: "猫爪影像", 精东影业: "精东影业", 杏吧: "杏吧",
+  乐播传媒: "乐播传媒", 草莓: "草莓", 抖阴: "抖阴",
+  SA国际传媒: "sa国际传媒", 起点传媒性视界传媒: "起点传媒-性视界传媒", 大鸟十八: "大鸟十八",
+  小鹏奇啪行: "小鹏奇啪行", 女优淫娃培训营: "女优淫娃培训营", 淫欲游戏王: "淫欲游戏王",
+  女神羞羞研究所: "女神羞羞研究所", 突袭女优家: "突袭女优家", 情趣K歌房: "情趣k歌房",
+  KISS糖果屋: "kiss糖果屋",
+};
+const MADOU_BADGES = { likes: "点赞排行", week: "7天热门", month: "30天热门" };
+
+async function madouPage(pathname, params = {}) {
+  const url = new URL(pathname, MADOU_ORIGIN);
+  for (const [key, value] of Object.entries(params)) if (value) url.searchParams.set(key, value);
+  const cacheKey = url.href;
+  const cached = madouPageCache.get(cacheKey);
+  if (cached && Date.now() < cached.expires) return cached.html;
+  const response = await fetch(url, { headers: MADOU_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`madou page ${response.status}`);
+  const html = await response.text();
+  if (madouPageCache.size > 40) madouPageCache.clear();
+  madouPageCache.set(cacheKey, { html, expires: Date.now() + 90_000 });
+  return html;
+}
+const madouPageCache = new Map();
+
+function madouParseCards(html) {
+  const cards = [];
+  for (const article of html.matchAll(/<article class="excerpt[^"]*">([\s\S]*?)<\/article>/g)) {
+    const block = article[1];
+    const title = decodeHtml(block.match(/<h2[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/)?.[1] || block.match(/<a[^>]*>([\s\S]*?)<\/a>/)?.[1] || "");
+    const path = block.match(/<a[^>]*class="thumbnail"[^>]*href="([^"]+)"/)?.[1] || "";
+    const cover = block.match(/data-src="([^"]+)"/)?.[1] || "";
+    const pid = block.match(/post-like[^>]*data-pid="(\d+)"/)?.[1] || "";
+    const likes = block.match(/post-like[^>]*[\s\S]{0,200}?<span>(\d+)<\/span>/)?.[1] || "";
+    const views = block.match(/post-view">观看\(([^)]+)\)/)?.[1] || "";
+    const category = decodeHtml(block.match(/rel="category tag">([^<]+)</)?.[1] || "");
+    if (!title && !path) continue;
+    const cleanPath = path.startsWith(MADOU_ORIGIN) ? path.slice(MADOU_ORIGIN.length) : path;
+    cards.push({
+      vod_id: cleanPath || pid,
+      vod_name: title || "未命名",
+      vod_pic: cover,
+      vod_remarks: [category, views && `观看 ${views}`, likes && `赞 ${likes}`].filter(Boolean).join(" · ") || "可播放",
+      vod_blurb: category || "",
+      type_name: category || "麻豆社",
+      vod_area: "madou.club",
+      media_kind: "video",
+      needs_detail: true,
+      path: cleanPath,
+    });
+  }
+  return cards;
+}
+
+function madouPageCount(html, page) {
+  const nextRel = html.match(/<link rel="next" href="[^"]*\/page\/(\d+)\//);
+  const nextLink = html.match(/href="[^"]*\/page\/(\d+)\/[^"]*"[^>]*>下一页|class="next[^"]*"[^>]*href="[^"]*\/page\/(\d+)\//);
+  const next = nextRel?.[1] || nextLink?.[2] || (html.includes("/page/" + (page + 1)) ? String(page + 1) : "");
+  return Math.max(page, ...(next ? [Number(next)] : []));
+}
+
+async function madouList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  let html;
+  if (keyword) {
+    html = await madouPage("/", { s: keyword });
+  } else if (preset === "likes") {
+    html = await madouPage("/likes");
+  } else if (preset === "week") {
+    html = await madouPage("/week");
+  } else if (preset === "month") {
+    html = await madouPage("/month");
+  } else if (preset && MADOU_CATEGORY_SLUGS[preset]) {
+    html = await madouPage(`/category/${encodeURIComponent(MADOU_CATEGORY_SLUGS[preset])}/`, page > 1 ? { page } : {});
+  } else {
+    html = await madouPage("/", page > 1 ? { page } : {});
+  }
+  const list = madouParseCards(html).slice(0, 24);
+  const pagecount = keyword ? 1 : madouPageCount(html, page);
+  return json({
+    code: 1,
+    page,
+    pagecount,
+    limit: 24,
+    total: pagecount * 24,
+    list,
+    provider: "madou",
+  }, { headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=120" } });
+}
+
+async function madouDetail(id) {
+  let path = "";
+  if (typeof id === "string" && id.startsWith("/")) {
+    path = id;
+  } else if (typeof id === "string" && /^[\w%._-]+$/.test(id) && !/^\d+$/.test(id)) {
+    path = decodeURIComponent(id);
+    if (!path.startsWith("/")) path = "/" + path;
+  }
+  let html;
+  if (path) {
+    html = await madouPage(path);
+  } else {
+    html = await madouPage("/");
+  }
+  const title = decodeHtml(html.match(/<h1 class="article-title">([\s\S]*?)<\/h1>/)?.[1] || html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || "");
+  const shareIframe = html.match(/<iframe[^>]+src=["']?(https:\/\/dash\.madou\.club\/share\/[0-9a-f]+)/)?.[1];
+  const shareId = shareIframe?.match(/share\/([0-9a-f]+)/)?.[1] || "";
+  const pid = html.match(/action-like[^>]*data-pid="(\d+)"/)?.[1] || "";
+  const likes = html.match(/action-like[^>]*[\s\S]{0,200}?赞\(<span>(\d+)<\/span>/)?.[1] || "";
+  const views = html.match(/观看\(([^)]+)\)/)?.[1] || "";
+  const categories = [...new Set([...html.matchAll(/rel="category tag">([^<]+)</g)].map((m) => decodeHtml(m[1])))];
+  const tags = [...new Set([...html.matchAll(/<div class="article-tags">[\s\S]*?<\/div>/g)].map((m) => [...m[0].matchAll(/rel="tag">([^<]+)</g)].map((t) => decodeHtml(t[1]))).flat())];
+  const poster = html.match(/shareimage\s*:\s*'([^']+)'/)?.[1] || "";
+  const shareUrl = shareIframe || "";
+  const play = shareId ? await madouResolvePlay(shareId) : null;
+  return json({
+    vod_id: pid || id || shareId,
+    vod_name: title || "未命名",
+    vod_pic: poster,
+    vod_remarks: [categories[0], views && `观看 ${views}`, likes && `赞 ${likes}`].filter(Boolean).join(" · ") || "VIDEO",
+    vod_blurb: [views && `观看(${views})`, likes && `点赞 ${likes}`].filter(Boolean).join(" · "),
+    vod_content: tags.join(" · "),
+    type_name: categories[0] || "麻豆社",
+    vod_area: "madou.club",
+    vod_play_url: play?.video || "",
+    media_kind: "video",
+    share_id: shareId,
+    needs_detail: false,
+    provider: "madou",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function madouResolvePlay(shareId) {
+  const response = await fetch(`${MADOU_DASH}/share/${shareId}`, { headers: MADOU_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`madou dash ${response.status}`);
+  const html = await response.text();
+  const m3u8 = html.match(/var m3u8 = '([^']+)'/)?.[1];
+  const token = html.match(/var token = "([^"]+)"/)?.[1];
+  const poster = html.match(/pic: '([^']+)'/)?.[1] || "";
+  if (!m3u8) throw new Error("madou share unavailable");
+  const playUrl = new URL(m3u8, MADOU_DASH);
+  if (token) playUrl.searchParams.set("token", token);
+  return { video: playUrl.href, poster: poster ? new URL(poster, MADOU_DASH).href : "" };
+}
+
+async function madouPlay(id) {
+  if (!/^[0-9a-f]{20,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const play = await madouResolvePlay(id);
+  return json({ vod_id: id, video: play.video, poster: play.poster, provider: "madou" }, {
+    headers: { "cache-control": "no-store" },
+  });
+}
+
 let iptvCatalogCache;
 let iptvCatalogExpires = 0;
 
@@ -1397,6 +1563,7 @@ export async function handleProviderRequest(request) {
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
     if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
     if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx"))) : qiyingDetail(requestUrl.searchParams.get("id")));
+    if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

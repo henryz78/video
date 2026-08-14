@@ -23,12 +23,12 @@
 | 项目 | 当前状态 |
 |---|---|
 | 本地入口 | 38 个；原 39 个参考入口中的看板娘游戏已按用户决定移除 |
-| 独立 provider | 11 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna |
-| 真实匹配完成 | 8 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91；看TV 进入部分可用 |
+| 独立 provider | 12 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社 |
+| 真实匹配完成 | 9 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
-| 下一项 | `qiying`（栖影）已接入并本地验收（本地镜像目录 + 主站签名视频播放）；ASMR 按用户决定暂时跳过；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
+| 下一项 | `qiying`、`madou` 已接入并本地验收；`qms` 用户决定跳过（流被登录墙代理隐藏）；ASMR 按用户决定暂时跳过；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
 | 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
@@ -78,7 +78,7 @@
 | 32 | `ep` | Flux / EPORNER | 影视 / cinema | Eporner | — | 专用已验收 | 官方 API 列表、搜索、排序、详情和官方嵌入播放。 |
 | 33 | `tna` | TNAFlix | 影视 / cinema | TNAFlix | — | 专用已验收 | 用户保存的参考详情页及前端资源确认 `/api/home`、搜索、分类和详情结构；条目 `708531` 的路径、标题、封面、时长、相关 ID 与 144p/240p/360p 媒体均和官方 `www.tnaflix.com` 一致。本地已接官方公开目录、分页、搜索、详情及动态多清晰度 MP4；匿名完整播放支持 Range/CORS，不依赖 cfnav 签名。 |
 | 34 | `tv` | 看 TV | 直播 / live | adulttv | — | 部分可用（41 路代码完成、待部署验收） | 已复现参考站 80 路目录（41 oxax 品牌 + 39 AdultIPTV 主题）、搜索和分页；39 路主题流已独立播放。2026-08-12 观察参考站 oxax 频道，确认它从 `http://oxax.tv/{slug}.html` 读取拆分的 Playerjs 配置，生成 `s.oxax.tv` 带时效 HLS 并通过同源中转加载 TS。本地已改为 HTTP slug 页面、还原 `kodk + 模板 + kos`、重写清单并代理受限分片；`oh-ah` 与 `superone-hd` 两种不同插入位置的真实页面样本均可精确还原现场 HLS。当前沙箱禁止本地服务进程出网，41 路仍需部署环境完成逐路播放验收。 |
-| 35 | `madou` | 看麻豆 | 影视 / cinema | — | — | 待接入 | 待接入。 |
+| 35 | `madou` | 看麻豆 | 影视 / cinema | madou | — | 专用已验收 | 真实上游为 madou.club（麻豆社，WordPress）。已接分类目录（33 分类 Tab + 点赞排行）、搜索（`/?s=`）、分页、详情（标题/分类/标签/观看/点赞）、封面直连 `madou.club/covers/`；播放经 `dash.madou.club/share/{shareId}` 分享页现抓 100 秒时效 JWT，m3u8 带 token 请求、ts/key 直连（CORS 全 `*`）。参考站条目 slug/分类/详情 ID 与 madou.club 逐项一致；运行期零依赖 cfnav。 |
 | 36 | `best` | 看 JavPorn | 影视 / cinema | — | — | 待接入 | 待接入。 |
 | 37 | `ja` | 看 JavBus | 资料 / magnet | — | — | 用户跳过 / 不接入 | 用户现场确认该站只有影片资料与磁力链接，不能在线直接播放，并明确决定跳过。它不符合当前“可浏览并在线播放”的视频接入目标；不实现磁力、下载或外部播放器流程，也不以其他日语片源替代。 |
 | 38 | `bj` | 韩国主播视频 | 影视 / live | — | — | 整站暂缓（会员 / 积分） | 2026-08-12 用户现场确认站内存在会员和积分内容。按整站免费规则，不再要求保存页面，也不接其中可能免费的子集。 |
@@ -100,6 +100,7 @@
 | `adulttv` | `oxax.tv` / `s.oxax.tv` / `r.pokaz.me` + `cdn.adultiptv.net` | 内置经参考站逐项核对的 80 路目录；AdultIPTV 直接 HLS；oxax 访问公开 HTTP slug 页面，解析拆分的 Playerjs 签名，随后由受限同源代理重写 HLS 清单、分片和 key URI | HLS.js / 浏览器原生 HLS | 无账号或持久令牌；oxax 的临时签名不落盘；代理仅允许 `s.oxax.tv` 和 `r.pokaz.me` | 39 路主题流已本地验收；41 路品牌流解析与代理代码、真实页面样本测试已完成，待可出网部署环境逐路验收。 |
 | `kan91` | `91porna.com` + `yd-hls.utxxds.cn` + `tp*.xmbvxj.cn` / `pic.xmbvxj.cn` | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.xmbvxj.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测。 |
 | `qiying` | `agency.nsguiiwz.cc` / `being` / `act` + `public/qiying/*.gz` 本地镜像 + `pic.uforxk.cn` / `imgpublic.ycomesc.live` / `op.vkjyoi.cn` / `bgqpnx.cn` | 目录/搜索/详情图集用导出分片（浏览器 gzip 解压内存过滤）；视频实时抓主站 `/archives/{id}/` 帖子页，解析 DPlayer `data-config` 内服务端签名 m3u8 | HLS.js（AES-128 分片，ts/key 直连 CDN） | 无账号；签名由 91吃瓜网服务端生成，每次点播现抓不落盘 | 主站域名轮换（防失联页多线路，adapter 内置三个镜像）；签名有时效，过期重新点播即可 |
+| `madou` | `madou.club`（WordPress）+ `dash.madou.club` 分享页 | 抓首页/分类/搜索/点赞排行 HTML 解析卡片（标题/封面/观看/点赞/分类）；详情页解析 iframe shareId 与分享页短时效 JWT，拼 m3u8 完整 URL | HLS.js（AES-128，ts/key 直连） | 无账号；分享页每次现抓 100 秒时效 JWT，不落盘 | 上游域名/主题结构可能轮换；JWT 时效短，过期重新点播即可 |
 
 ## 5. 请求与数据契约
 

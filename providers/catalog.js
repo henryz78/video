@@ -83,6 +83,13 @@ export const PROVIDERS = {
     discoveredFrom: "栖影 数据分片导出与 91吃瓜网 防失联页主站域名的同源核对",
     capabilities: "本地图帖目录 / 分类 / 搜索 / 详情图集 / 主站签名 HLS 播放",
   },
+  madou: {
+    id: "madou",
+    name: "麻豆社 公开目录",
+    upstream: "madou.club + dash.madou.club（分享页短时效 JWT + AES-128 HLS）",
+    discoveredFrom: "看麻豆 参考条目 slug/分类/详情与 madou.club 逐项同源核对",
+    capabilities: "分类目录 / 搜索 / 点赞·周·月排行 / 详情 / 分享页签名 HLS 播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -96,6 +103,7 @@ const ROUTE_CONFIGS = {
   tv: { provider: "adulttv" },
   91: { provider: "kan91" },
   qiying: { provider: "qiying" },
+  madou: { provider: "madou" },
 };
 
 export function getProviderForSite(slug) {
