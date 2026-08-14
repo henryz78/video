@@ -1,6 +1,6 @@
 # CFNav Independent 项目总台账
 
-> 最后更新：2026-08-12
+> 最后更新：2026-08-14
 >
 > 本文件是换代理、换 AI 助手、对话压缩或重新接手时的第一入口。开始工作前先读本文件，再对照 `providers/catalog.js`、`providers/runtime.js` 和 `src/App.jsx`。如文档与代码冲突，以代码的实际运行结果为准，并立即更新本文件。
 
@@ -23,12 +23,12 @@
 | 项目 | 当前状态 |
 |---|---|
 | 本地入口 | 38 个；原 39 个参考入口中的看板娘游戏已按用户决定移除 |
-| 独立 provider | 10 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV |
-| 真实匹配完成 | 7 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合；看TV 进入部分可用 |
+| 独立 provider | 11 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna |
+| 真实匹配完成 | 8 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
-| 下一项 | ASMR 按用户决定暂时跳过；当前回头验证看 TV 的 41 路 oxax 品牌直播 |
+| 下一项 | ASMR 按用户决定暂时跳过；当前看TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
 | 测试 | `npm run test:sites` 8 项；`npm run test:cloudflare` 4 项，当前均通过 |
@@ -48,7 +48,7 @@
 | 2 | `game` | 看板娘游戏 | 游戏 / game | — | — | 用户取消 / 已移除 | 用户明确表示该游戏不需要进入、没有用途。已从本地导航和待办移除，后续不再研究或接入。 |
 | 3 | `ai` | 麻豆视频 AI | 影视 / cinema | MadouAI | — | 专用已验收 | 参考前端明确指向 `www.madouai.xyz/api/v1`；已接真实分类目录、搜索、分页、详情、封面代理与 HLS 播放。参考站当前误把搜索词传入会忽略 `keyword` 的列表接口，导致搜索仍显示默认内容；本地使用真正的 `/videos/search?q=`，因此保留正常搜索效果。此入口与 `madou` /「看麻豆」不是同一站。 |
 | 4 | `hj` | 看海角 | 社区 / feed | — | — | 整站暂缓（含购买） | 已确认匿名列表、详情和三层 Base64，但完整内容存在购买边界。按整站规则不再接公开预览子集，不实现购买内容或任何解锁路径。 |
-| 5 | `91` | 看91 | 影视 / cinema | — | — | 待接入 | 待接入。 |
+| 5 | `91` | 看91 | 影视 / cinema | kan91 | play | 专用已验收 | 已接 91porna.com 真实分类目录（正在播放/本月热门/原创）、搜索、分页、详情（作者/播放数/时长/日期）、封面 AES 解密代理与 AES-128 HLS 播放；浏览器直连媒体域（CORS 全 `*`）。 |
 | 6 | `qms` | 秋名山直播 | 直播 / live | — | — | 待接入 | 待接入。 |
 | 7 | `mr` | 看每日大赛 | 社区 / feed | — | — | 待接入 | 待接入。 |
 | 8 | `xf` | 看推特 | 社区 / feed | — | — | 尚未加入 | 待接入。 |
@@ -98,6 +98,7 @@
 | `redgifs` | `api.redgifs.com` + `media.redgifs.com` | 获取匿名临时令牌；搜索与详情 JSON；45 分钟内存缓存 | HD/移动版 MP4，`no-referrer` | 匿名临时令牌，仅内存 | API 未作为本项目的稳定契约保证；CDN 会拒绝本地 Referer。 |
 | `tnaflix` | `www.tnaflix.com` + TNAFlix 媒体节点 | 解析匿名公开目录、分页、搜索、详情 JSON-LD 与页面内动态清晰度地址 | 多清晰度 MP4 直连 | 无 | 官方 HTML 结构和媒体签名会轮换；adapter 每次打开详情重新取得最新地址，不写死签名。 |
 | `adulttv` | `oxax.tv` / `s.oxax.tv` / `r.pokaz.me` + `cdn.adultiptv.net` | 内置经参考站逐项核对的 80 路目录；AdultIPTV 直接 HLS；oxax 访问公开 HTTP slug 页面，解析拆分的 Playerjs 签名，随后由受限同源代理重写 HLS 清单、分片和 key URI | HLS.js / 浏览器原生 HLS | 无账号或持久令牌；oxax 的临时签名不落盘；代理仅允许 `s.oxax.tv` 和 `r.pokaz.me` | 39 路主题流已本地验收；41 路品牌流解析与代理代码、真实页面样本测试已完成，待可出网部署环境逐路验收。 |
+| `kan91` | `91porna.com` + `yd-hls.utxxds.cn` + `tp*.xmbvxj.cn` / `pic.xmbvxj.cn` | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.xmbvxj.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测。 |
 
 ## 5. 请求与数据契约
 
@@ -238,6 +239,11 @@ npm.cmd run test:cloudflare
 - 海角匿名列表、详情和三层 Base64 已确认；下一次应直接研究公开预览 adapter 和图片/CDN 解码，不要重新从登录页开始。
 
 ## 11. 当前工作记录
+
+### 2026-08-14
+
+- 看91 独立 adapter 完成并验收：新增 provider `kan91`（91porna.com）。列表（play/now_month_hot/original + 分页）、搜索（梅庭 24 条）、详情（JSON-LD 标题/作者/播放数/时长/日期）、`detail_play` 实时取流（纯 JS 解包 packed 脚本，`t = now/1000/2100` 时间桶）、封面 AES-128-CBC 解密代理（key/iv 为 UTF-8 字符串）全部实测通过；m3u8/key/分片 CORS 均为 `*`，浏览器直连播放，无需媒体代理。`expose.eisees.com` 明文图域实测返回空图，不可用，封面一律走解密代理。`91` 入口从待接入改为专用已验收。
+- 环境说明：91porna.com 在大陆 DNS 污染（本地曾解析到 Facebook/Dropbox IP），真实 IP 为 Cloudflare（172.67.181.57 / 104.21.40.76），可通过 `dns.google/resolve` DoH 获取；Cloudflare 部署环境 DNS 正常无需处理。
 
 ### 2026-08-12
 

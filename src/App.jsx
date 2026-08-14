@@ -312,7 +312,8 @@ function DetailModal({ item, mode, provider, onClose }) {
     const media = mediaRef.current;
     if (!media || !active) return;
     const isHls = /\.m3u8(?:$|\?)/i.test(active.url);
-    if (!isHls || media.canPlayType("application/vnd.apple.mpegurl")) {
+    const appleNative = isHls && /(iphone|ipod|ipad|mac)/i.test(navigator.userAgent) && media.canPlayType("application/vnd.apple.mpegurl");
+    if (!isHls || appleNative) {
       media.src = active.url;
       media.play().catch(() => {});
       return () => { media.removeAttribute("src"); media.load(); };

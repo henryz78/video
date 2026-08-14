@@ -699,6 +699,201 @@ async function tnaflixDetail(id) {
   }, { headers: { "cache-control": "public, max-age=120" } });
 }
 
+const KAN91_ORIGIN = "https://91porna.com";
+const KAN91_HEADERS = {
+  accept: "text/html,application/xhtml+xml",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CFNav-Independent/2.0",
+};
+const KAN91_IMG_KEY = new TextEncoder().encode("f5d965df75336270");
+const KAN91_IMG_IV = new TextEncoder().encode("97b60394abc2fbe1");
+
+function unpackPacked(src) {
+  const match = src.match(/function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\),0,\{\}\)/);
+  if (!match) return null;
+  const payload = match[1];
+  const base = Number(match[2]);
+  const count = Number(match[3]);
+  const dict = match[4].split("|");
+  const key = (n) => (n < base ? "" : key(Math.floor(n / base))) + ((n = n % base) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
+  const keyMap = {};
+  for (let index = 0; index < count; index += 1) keyMap[key(index)] = dict[index] || key(index);
+  return payload.replace(/\b([A-Za-z0-9]+)\b/g, (word) => keyMap[word] || word);
+}
+
+async function kan91Page(pathname, params = {}, extraHeaders = {}) {
+  const upstream = new URL(pathname, KAN91_ORIGIN);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") upstream.searchParams.set(key, String(value));
+  });
+  const response = await fetch(upstream, { headers: { ...KAN91_HEADERS, ...extraHeaders } });
+  if (!response.ok) throw new Error(`kan91 page ${response.status}`);
+  return response.text();
+}
+
+function kan91ImageProxy(source) {
+  if (!source) return "";
+  return `/provider-api/kan91?action=image&url=${encodeURIComponent(source)}`;
+}
+
+function parseKan91Cards(html) {
+  const cards = [];
+  const seen = new Set();
+  const pattern = /video_key=(\d+)[^"]*"[\s\S]{0,600}?data-src="(https:\/\/pic\.xmbvxj\.cn\/[^"]+)"[\s\S]{0,600}?alt="([^"]*)"/g;
+  for (const match of html.matchAll(pattern)) {
+    const id = match[1];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    cards.push({
+      vod_id: id,
+      vod_name: decodeHtml(match[3]) || `91视频 ${id}`,
+      vod_pic: kan91ImageProxy(match[2]),
+      vod_remarks: "VIDEO",
+      type_name: "91视频",
+      vod_area: "91porna.com",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "kan91",
+    });
+  }
+  return cards;
+}
+
+function kan91PageCount(html, page) {
+  const next = html.match(/<link rel="next" href="[^"]*page=(\d+)"/);
+  return Math.max(page, ...(next ? [Number(next[1])] : []));
+}
+
+async function kan91List(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const category = requestUrl.searchParams.get("preset")?.trim() || "play";
+  const html = keyword
+    ? await kan91Page("/comic/index/search", { keyword })
+    : await kan91Page("/comic/index/video", { category, page: page > 1 ? String(page) : "" });
+  const list = parseKan91Cards(html).slice(0, 24);
+  const pagecount = keyword ? 1 : kan91PageCount(html, page);
+  return json({
+    code: 1,
+    page,
+    pagecount,
+    limit: 24,
+    total: pagecount * 24,
+    list,
+    provider: "kan91",
+  }, { headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=120" } });
+}
+
+function kan91NormalizeAsset(value = "") {
+  const cleaned = value.replace(/\\+$/, "");
+  try {
+    const parsed = new URL(cleaned);
+    parsed.pathname = decodeURIComponent(parsed.pathname).replace(/^\/+/, "/");
+    return parsed.href;
+  } catch {
+    return cleaned;
+  }
+}
+
+async function kan91ResolvePlay(html, id) {
+  const script = html.match(/eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('([\s\S]*?)'\.split\('\|'\),0,\{\}\)\)/);
+  if (!script) throw new Error("kan91 detail_play metadata unavailable");
+  const unwrapped = unpackPacked(script[0]);
+  const img = unwrapped.match(/detail_play\?img=([^"&]+)/)?.[1];
+  const ads = unwrapped.match(/&ads=([^"&]+)/)?.[1];
+  const signature = unwrapped.match(/encodeURIComponent\("([0-9a-f]+)"\)/)?.[1];
+  if (!img || !signature) throw new Error("kan91 detail_play params unavailable");
+  const playUrl = new URL("/index/detail_play", KAN91_ORIGIN);
+  playUrl.searchParams.set("img", decodeURIComponent(img));
+  if (ads) playUrl.searchParams.set("ads", decodeURIComponent(ads));
+  playUrl.searchParams.set("u", signature);
+  playUrl.searchParams.set("t", String(Math.floor(Date.now() / 1000 / 2100)));
+  const response = await fetch(playUrl, {
+    headers: {
+      ...KAN91_HEADERS,
+      accept: "application/javascript, */*;q=0.1",
+      referer: `${KAN91_ORIGIN}/comic/index/detail?video_key=${id}`,
+    },
+  });
+  if (!response.ok) throw new Error(`kan91 detail_play ${response.status}`);
+  const payload = unpackPacked(await response.text());
+  if (!payload) throw new Error("kan91 detail_play payload unavailable");
+  const video = payload.match(/https:\/\/yd-hls\.utxxds\.cn\/[^'"\\]+/)?.[0];
+  const poster = payload.match(/https:\/\/pic\.xmbvxj\.cn\/[^'"\\]+/)?.[0];
+  if (!video) throw new Error("kan91 stream unavailable");
+  return { video: video.replace(/\\+$/, ""), poster: kan91NormalizeAsset(poster || "") };
+}
+
+function kan91VideoObject(html) {
+  for (const script of html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)) {
+    try {
+      const parsed = JSON.parse(script[1]);
+      const graph = Array.isArray(parsed?.["@graph"]) ? parsed["@graph"] : [parsed];
+      const video = graph.find((node) => node?.["@type"] === "VideoObject");
+      if (video) return video;
+    } catch {
+      // Ignore unrelated malformed metadata blocks and continue with page fallbacks.
+    }
+  }
+  return {};
+}
+
+async function kan91Detail(id) {
+  if (!/^\d+$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await kan91Page("/comic/index/detail", { video_key: id });
+  const metadata = kan91VideoObject(html);
+  const play = await kan91ResolvePlay(html, id);
+  const author = typeof metadata.author === "object" ? metadata.author.name : "";
+  const plays = metadata.interactionStatistic?.find?.((item) => item.interactionType?.["@type"] === "WatchAction")?.userInteractionCount;
+  const tags = Array.isArray(metadata.keywords) ? metadata.keywords : [];
+  const title = decodeHtml(metadata.name || html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || `91视频 ${id}`);
+  const description = decodeHtml(metadata.description || html.match(/<meta property="og:description" content="([^"]*)"/)?.[1] || "");
+  const duration = isoDuration(metadata.duration || "");
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: kan91ImageProxy(play.poster || ""),
+    vod_remarks: [duration, "VIDEO"].filter(Boolean).join(" · "),
+    vod_blurb: [author && `作者：${author}`, plays && `${plays} 次播放`, metadata.uploadDate && `更新：${metadata.uploadDate.slice(0, 10)}`].filter(Boolean).join(" · "),
+    vod_content: description || tags.join(" · "),
+    vod_year: String(metadata.uploadDate || "").slice(0, 4),
+    vod_area: "91porna.com",
+    type_name: tags[0] || "91视频",
+    vod_play_url: play.video,
+    media_kind: "video",
+    needs_detail: false,
+    provider: "kan91",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function kan91Image(requestUrl) {
+  let source;
+  try {
+    source = new URL(requestUrl.searchParams.get("url") || "");
+  } catch {
+    return json({ message: "invalid image source" }, { status: 400 });
+  }
+  if (source.hostname !== "pic.xmbvxj.cn" || !["https:", "http:"].includes(source.protocol)) {
+    return json({ message: "invalid image source" }, { status: 400 });
+  }
+  const response = await fetch(source, { headers: { ...KAN91_HEADERS, accept: "image/*" } });
+  if (!response.ok) return json({ message: `kan91 image ${response.status}` }, { status: 502 });
+  const cipher = await response.arrayBuffer();
+  const key = await crypto.subtle.importKey("raw", KAN91_IMG_KEY, { name: "AES-CBC" }, false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name: "AES-CBC", iv: KAN91_IMG_IV }, key, cipher);
+  const head = new Uint8Array(plain.slice(0, 3));
+  const contentType = head[0] === 0xff && head[1] === 0xd8 ? "image/jpeg"
+    : head[0] === 0x47 && head[1] === 0x49 ? "image/gif"
+    : head[0] === 0x89 && head[1] === 0x50 ? "image/png"
+    : "application/octet-stream";
+  return new Response(plain, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 let iptvCatalogCache;
 let iptvCatalogExpires = 0;
 
@@ -1086,6 +1281,7 @@ export async function handleProviderRequest(request) {
     if (provider === "pmvhaven") return await (action === "detail" ? pmvHavenDetail(requestUrl.searchParams.get("id")) : pmvHavenList(requestUrl));
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
+    if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

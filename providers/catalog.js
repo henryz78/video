@@ -69,6 +69,13 @@ export const PROVIDERS = {
     discoveredFrom: "用户保存的参考详情页与 TNAFlix 官方页面逐项核对",
     capabilities: "目录 / 搜索 / 分页 / 详情 / 多清晰度 MP4",
   },
+  kan91: {
+    id: "kan91",
+    name: "91porna 公开目录",
+    upstream: "91porna.com + yd-hls.utxxds.cn + tp*.xmbvxj.cn / pic.xmbvxj.cn",
+    discoveredFrom: "看91 参考条目与 91porna.com 目录/搜索/详情/播放 ID 逐项同源核对",
+    capabilities: "分类目录 / 搜索 / 分页 / 详情 / 图片解密代理 / AES-128 HLS 播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -80,6 +87,7 @@ const ROUTE_CONFIGS = {
   pmv: { provider: "pmvhaven" },
   tna: { provider: "tnaflix" },
   tv: { provider: "adulttv" },
+  91: { provider: "kan91" },
 };
 
 export function getProviderForSite(slug) {
