@@ -236,12 +236,14 @@
 
 ### 参考站数据镜像（一次性导出，运行期零依赖）
 
-- `qiying.cfnav.me/media-data/v2/` 登录墙后（Node 401）；用户浏览器登录态经 Console 脚本导出 `qiying-full.json`（catalog 23368 帖 + details 96 桶 + mode_images 22763 + mode_videos 6099）。
+- `qiying.cfnav.me/media-data/v2/` 登录墙后（Node 401）；用户浏览器登录态经 Console 脚本导出 `qiying-full.json`（catalog 23368 条 + details 96 桶 + mode_images 22763 + mode_videos 6099）。
 - catalog 字段 `p,i,v,c,r,t,d,a,u,m,k,g`；detail 分片 `details/details-{pid%96}.json`，每条 `{p, i:[{i,p,w,h}], v:[{i,p,w,h,d,s,c}]}`。
+- **2026-08-14 复核（按日分层 + 随机抽样实测主站）**：catalog 里 4383 条为有标题活动帖（日期 2026-07 起，主站 100% 存在，3369 条带视频、共 4024 个视频）；18985 条为无标题废弃存档（主站 100% 已删 404，无可用内容）。本地列表过滤无标题条目，只展示与参考站一致的活动目录。
 - `scripts/prepare-qiying-data.mjs` 将其分片为 `public/qiying/{catalog,details-000..095,mode_images,mode_videos}.json.gz + manifest.json`（总计约 2.9MB gzip）；刷新数据 = 重新导出后重跑该脚本。
 
 ### 本地实现（provider `qiying`）
 
-- 浏览器端：`catalog.json.gz` 内存解压 → 列表/搜索/分类 Tab/分页/计数；详情图集与视频条取 detail 分片；图片直连 `imgpublic.ycomesc.live`。
-- worker 端：`qiyingPage`（主站多线路 failover 抓帖子页）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频）、`qiyingDetail`、`qiyingPlay`。
-- 验收（headless Chrome，2026-08-14）：列表 24 卡片、封面 24/24 加载、26 分类 Tab、搜索"海角" 156 条、详情图集 18 图翻页、点播放 → 签名 m3u8 → hls.js blob → readyState 4、1280×720、时长 1419s 实测播放推进、页面零错误。
+- 浏览器端：`catalog.json.gz` 内存解压（过滤无标题存档）→ 列表/搜索/分类 Tab/分页/计数；详情图集与视频条取 detail 分片；图片直连 `imgpublic.ycomesc.live`。
+- worker 端：`qiyingPage`（主站多线路 failover 抓帖子页）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频，支持多 DPlayer 块）、`qiyingDetail`、`qiyingPlay`（`idx` 参数选第 N 个视频；主站无页面时返回 404「帖子已从主站删除，仅图集可用」）。
+- 验证（2026-08-14）：有标题帖主站存在率 20/20、视频签名率 19/19；多视频帖顺序与主站 DPlayer 块逐一对应（120231 镜像 9 = 主站 9、120218 镜像 7 = 主站 7，哈希一致）；分类页 `/category/{slug}/` 抽查 6 个全部 200；标签页 `/tag/黑丝/`、`/tag/口交/` 200（32 卡片）；镜像分类名与主站 slug 对应（美加墨世界杯/优选投放区→体育直播、擦边短剧→AI短剧 为参考站保留的旧名，与参考站显示一致）。
+- 验收（headless Chrome）：列表 24 卡片、封面 24/24 加载、26 分类 Tab、搜索"海角" 156 条、详情图集 18 图翻页、单视频/多视频（idx=1 播放第 2 个）实测播放推进、readyState 4、1280×720、页面零错误。

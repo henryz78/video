@@ -53,7 +53,7 @@
 | 7 | `mr` | 看每日大赛 | 社区 / feed | — | — | 待接入 | 待接入。 |
 | 8 | `xf` | 看推特 | 社区 / feed | — | — | 尚未加入 | 待接入。 |
 | 9 | `sjs` | 司机社 SJS | 社区 / feed | — | — | 待接入 | 待接入。 |
-| 10 | `qiying` | 栖影 | 影视 / cinema | qiying | — | 专用已验收 | 真实上游为 91吃瓜网（Typecho，`agency.nsguiiwz.cc` 等防失联线路）。已按参考站 media-data 分片导出 23368 帖本地镜像目录（`public/qiying/*.gz`，浏览器内存过滤/搜索/分页，26 个分类 Tab、图/视频计数、作者与日期）；详情图集取自镜像 detail 分片（pid%96 桶，完整图片列表）；视频经 worker 实时抓主站帖子页，取页面 `data-config` 内服务端签名的 m3u8（`op.vkjyoi.cn` auth_key）直连浏览器播放（ts/key 走 `bgqpnx.cn` 带签名，CORS 全 `*`）。图片直连 `pic.uforxk.cn` / `imgpublic.ycomesc.live`。参考站数据仅一次性导出用，运行期零依赖。 |
+| 10 | `qiying` | 栖影 | 影视 / cinema | qiying | — | 专用已验收 | 真实上游为 91吃瓜网（Typecho，`agency.nsguiiwz.cc` 等防失联线路）。本地镜像目录来自参考站 media-data 导出（23368 条；其中 4383 条为有标题的活动帖，18985 条为无标题废弃存档、主站已删，列表已过滤）；列表/搜索/分页/26 分类 Tab/标签/图集全部用镜像数据（浏览器 gzip 解压内存过滤）。2026-08-14 复核实测：有标题帖在主站 100% 存在（抽样 20/20），带视频帖 100% 有服务端签名 m3u8（抽样 19/19），多视频帖按 dplayer 块序与镜像一一对应（`action=play&idx=N` 逐个播放）；视频经 worker 实时抓主站帖子页 `data-config` 内签名 m3u8 直连浏览器播放（ts/key 走 `bgqpnx.cn` 带签名，CORS 全 `*`），帖子被删时返回友好 404「帖子已从主站删除，仅图集可用」。图片直连 `pic.uforxk.cn` / `imgpublic.ycomesc.live`。参考站数据仅一次性导出用，运行期零依赖。 |
 | 11 | `tx` | 看糖心 Vlog | 影视 / cinema | — | — | 待接入 | 待接入。 |
 | 12 | `lg` | 看 OnlyFans | 图集 / gallery | LeakGallery | — | 专用已验收 | 热门、创作者搜索、详情、图片和 MP4；媒体来自独立 CDN。 |
 | 13 | `hxc` | 看含羞草 | 影视 / cinema | — | — | 整站暂缓（上游含 VIP / 私有媒体） | 登录后复核 9984 部、416 页以及列表/搜索/详情/完整播放；参考播放走 `/api/video/play` 后进入私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。原始含羞草接口字段明确包含 `isVip`、`isBuy`、`isNeedLogin`、`isTemporarilyFree`，并区分预览地址；按整站免费规则不接入，也不使用任何预览升级或 VIP 解锁逻辑。 |

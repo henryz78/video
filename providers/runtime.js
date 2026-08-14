@@ -991,13 +991,19 @@ async function qiyingDetail(id) {
   }, { headers: { "cache-control": "no-store" } });
 }
 
-async function qiyingPlay(id) {
+async function qiyingPlay(id, index) {
   if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
-  const html = await qiyingPage(`/archives/${id}/`);
+  const selected = Number.isInteger(Number(index)) && Number(index) > 0 ? Number(index) : 0;
+  let html;
+  try {
+    html = await qiyingPage(`/archives/${id}/`);
+  } catch {
+    return json({ message: "帖子已从主站删除，仅图集可用" }, { status: 404 });
+  }
   const detail = qiyingExtractDetail(html, id);
-  const primary = detail.videos[0];
-  if (!primary) return json({ message: "此帖子没有公开视频" }, { status: 404 });
-  return json({ vod_id: id, video: primary.url, poster: detail.poster || detail.images[0] || "", provider: "qiying" }, {
+  const video = detail.videos[selected];
+  if (!video) return json({ message: selected ? `此帖子没有第 ${selected + 1} 个公开视频` : "此帖子没有公开视频" }, { status: 404 });
+  return json({ vod_id: id, video: video.url, poster: detail.poster || detail.images[0] || "", provider: "qiying" }, {
     headers: { "cache-control": "no-store" },
   });
 }
@@ -1390,7 +1396,7 @@ export async function handleProviderRequest(request) {
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
     if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
-    if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id")) : action === "detail" ? qiyingDetail(requestUrl.searchParams.get("id")) : qiyingDetail(requestUrl.searchParams.get("id")));
+    if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx"))) : qiyingDetail(requestUrl.searchParams.get("id")));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

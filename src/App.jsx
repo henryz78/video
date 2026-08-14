@@ -26,8 +26,8 @@ function qiyingLoadCatalog() {
   if (qiyingStore.catalog) return Promise.resolve(qiyingStore.catalog);
   if (qiyingStore.promise) return qiyingStore.promise;
   qiyingStore.promise = qiyingGunzip("/qiying/catalog.json.gz").then((data) => {
-    qiyingStore.catalog = data;
-    return data;
+    qiyingStore.catalog = data.filter((post) => Boolean(post.t));
+    return qiyingStore.catalog;
   }).catch((error) => { qiyingStore.promise = null; throw error; });
   return qiyingStore.promise;
 }
@@ -467,6 +467,7 @@ function QiyingModal({ post, onClose }) {
   const [playing, setPlaying] = useState(false);
   const [playError, setPlayError] = useState("");
   const [playLoading, setPlayLoading] = useState(false);
+  const [currentVideo, setCurrentVideo] = useState(0);
   const mediaRef = useRef(null);
   const record = post.detail_record;
   const images = (record?.i || []).map((item) => qiyingAssetPath(item.p)).filter(Boolean);
@@ -477,6 +478,7 @@ function QiyingModal({ post, onClose }) {
     setPlaying(false);
     setPlayError("");
     setPlayLoading(false);
+    setCurrentVideo(0);
   }, [post.p]);
   useEffect(() => {
     const media = mediaRef.current;
@@ -497,14 +499,13 @@ function QiyingModal({ post, onClose }) {
     }
     setPlayError("当前浏览器不支持 HLS 播放");
   }, [playing, post.play_url]);
-  const startPlay = () => {
+  const startPlay = (index = 0) => {
     setPlayLoading(true); setPlayError("");
-    fetch(`/provider-api/qiying?action=play&id=${encodeURIComponent(post.p)}`).then((response) => {
-      if (!response.ok) throw new Error(`播放解析失败（${response.status}）`);
-      return response.json();
-    }).then((data) => {
+    setCurrentVideo(index);
+    fetch(`/provider-api/qiying?action=play&id=${encodeURIComponent(post.p)}&idx=${index}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "播放解析失败");
       setPlayLoading(false);
-      setPostPlay(post, data.video);
+      setPostPlay(post, body.video);
       setPlaying(true);
     }).catch((playLoadError) => {
       setPlayLoading(false);
@@ -519,8 +520,8 @@ function QiyingModal({ post, onClose }) {
       {playError && <div className="qiying-play-error">{playError}</div>}
     </div>
     <div className="detail-copy"><small>{[post.k?.[0], post.a, qiyingFormatTime(post.u || post.c)].filter(Boolean).join(" · ") || "91吃瓜"}</small><h2>{post.t || "未命名"}</h2><p>{post.d || "暂无简介"}</p>
-      {videos.length > 0 && <div className="qiying-video-strip">{videos.map((video, index) => <button key={video.i || index} className="is-active" onClick={() => { if (!playing) startPlay(); else setPlaying(false); }}>
-        {playLoading ? "解析中…" : playing ? "重新播放" : `播放视频${videos.length > 1 ? ` ${index + 1}` : ""}`}<small>{video.d ? `${video.d} 秒` : ""}{video.w ? ` · ${video.w}x${video.h}` : ""}</small>
+      {videos.length > 0 && <div className="qiying-video-strip">{videos.map((video, index) => <button key={video.i || index} className={playing && currentVideo === index ? "is-active" : ""} onClick={() => startPlay(index)}>
+        {playLoading && currentVideo === index ? "解析中…" : `播放视频${videos.length > 1 ? ` ${index + 1}` : ""}`}<small>{video.d ? `${video.d} 秒` : ""}{video.w ? ` · ${video.w}x${video.h}` : ""}</small>
       </button>)}</div>}
       {(post.g || []).length > 0 && <div className="qiying-tags">{(post.g || []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
       <dl><div><dt>编号</dt><dd>{post.p}</dd></div><div><dt>分类</dt><dd>{(post.k || []).join(" / ") || "—"}</dd></div><div><dt>来源</dt><dd>91吃瓜网镜像 + 主站签名</dd></div></dl>
