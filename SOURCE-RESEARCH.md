@@ -211,6 +211,12 @@
 
 - 已确认参考站真实结构为 131 平台 → `/api/channels/{platformId}` → FLV/MSE 直播播放器，实测频道 readyState 4；不是录播目录。
 - 2026-08-14 用户确认站点已更新，恢复为待接入；参考结构（131 平台 → `/api/channels/{platformId}` → FLV/MSE 直播播放器）仍为研究记录。
+- **2026-08-14 复查结论（用户决定跳过，不再接入）**：
+  - 参考站 `qms.cfnav.me` 与 qiying 相同有 cfnav.me 登录墙（Node 全 401）；用户浏览器登录态导出 `/api/platforms`（131 平台、约 12000 频道）与 `/api/channels/{platformId}`（每条含 `{id,title,image,imageFallback,stream,streamFallback,streamType}`）。
+  - 频道封面/流多数落在保护 CDN（`camhaoer07.hfjqkc.com/7707`、`mandhhdhdnhzhc1kd.quanyuanhj.com/7701`、`17daskweter.hesurf.com/7701`），任意路径 403（S3 风格 AccessDenied），流地址被参考站 `/api/stream/{id}` 登录墙内代理隐藏，独立无法解析真实 FLV 规律。
+  - 仅少数频道暴露直连阿里云 OSS（如 `zjkkdkdkd06.oss-ap-northeast-2.aliyuncs.com/zxcvb/1.flv`、`xiaodonzi.oss-ap-northeast-2.aliyuncs.com/VID_*.mp4`）：实测公开可读、FLV magic/MP4 正常、支持 Range，但无 CORS 头（浏览器需同源转发）。
+  - 参考站自身播放亦不稳定：用户现场日志显示 `Fetch stream meet Early-EOF`（断流）后自动切下一频道才成功——直播断流为常态。
+  - 因绝大多数频道流依赖参考站登录墙代理、独立上游不可得，且用户现场确认放弃，`qms` 保持 pending，不再要求导出全量目录或尝试接入。
 
 ## 栖影 / 91吃瓜网（`qiying`，2026-08-14 接入）
 
