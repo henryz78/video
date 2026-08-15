@@ -83,6 +83,13 @@ export const PROVIDERS = {
     discoveredFrom: "栖影 参考条目与 91吃瓜网 防失联页主站域名同源核对（2026-08-15 转全实时，删除 gz 镜像）",
     capabilities: "实时列表/分页 / 23 分类 / 搜索 / 详情图集 / 主站签名 HLS 播放",
   },
+  mr: {
+    id: "mr",
+    name: "每日大赛 实时上游",
+    upstream: "mrds.com / mrds66.com + imgpublic.ycomesc.live 图片 CDN + hls.dscxru.cn / ts.syjiaotong.mobi 视频 CDN",
+    discoveredFrom: "看每日大赛 参考站 /api/meta 21 分类与 /api/posts 条目同源核对 mrds.com（1691 页一致）",
+    capabilities: "实时列表/分页 / 21 分类 / 搜索 / 详情图集 / 主站签名 AES-128 HLS 播放",
+  },
   madou: {
     id: "madou",
     name: "麻豆社 公开目录",
@@ -124,6 +131,7 @@ const ROUTE_CONFIGS = {
   tv: { provider: "adulttv" },
   91: { provider: "kan91" },
   qiying: { provider: "qiying" },
+  mr: { provider: "mr" },
   madou: { provider: "madou" },
   miss: { provider: "miss" },
   tx: { provider: "tx", preset: "home" },

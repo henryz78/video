@@ -172,7 +172,7 @@
 - `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
 - `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。**2026-08-14 上游破解后用户决定跳过（见下方「好片 / haoqi7.com 破解记录（2026-08-14，未接入）」）。**
 - `91` / 看91：独立上游已确认为 `91porna.com`（2026-08-14 全功能实测通过）。目录与看91 参考站完全一致（分类 `/comic/index/video?category=play|now_month_hot|original`、搜索 `/comic/index/search?keyword=`、JSON-LD 与看91 的 `#/watch/{id}` 同 ID；列表/分页/搜索/相关视频 `/comic/av/relvideo`/RSS `/feed/video`/embed `/comic/index/embed?id=` 均验证可用）。播放链路已实测打通：详情页内联混淆脚本 `document.write` 调 `/index/detail_play?img={封面路径}&ads={广告}&u={视频稳定签名}&t={parseInt(now/1000/2100)}`（JSONP 风格，返回混淆 JS），纯 JS 解包 packed 脚本后实时请求得 m3u8；m3u8 为单码率 AES-128 加密清单（显式 IV），`crypt.key` 与 5 秒分片位于 `tp*.xmbvxj.cn`（多台边缘，均已签名，`auth_key` 短时效需实时取流）。封面图在 `pic.xmbvxj.cn`，**图片本身也是 AES-CBC 加密**（固定密钥 `f5d965df75336270` / IV `97b60394abc2fbe1`，PKCS7，`crypto_image.js` 客户端解密，服务端需解密后使用）。`expose.eisees.com` 明文图域实测返回空图不可用。主站 Cloudflare 后面，大陆 DNS 被污染（真实 IP 172.67.181.57 / 104.21.40.76，可用 `dns.google/resolve` DoH 获取；本机 `--resolve` 或正常网络直连即可）。已实现为 provider `kan91`（列表/搜索/分页/详情/封面解密代理/AES-128 HLS 播放），实测 200、CORS 全 `*`，入口状态专用已验收。
-- `mr` / 看每日大赛：约 1677 页、每页 30 条；接口 `/api/meta`、`/api/posts?page=1`，图片为 `media.cfnav.com/m/kan-mr/*`；已更新，恢复为待接入。
+- `mr` / 看每日大赛：约 1677 页、每页 30 条；接口 `/api/meta`、`/api/posts?page=1`，图片为 `media.cfnav.com/m/kan-mr/*`；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看每日大赛 / mrds.com」）。**
 - `mm` / 墨影集：14973 图集、841140 张图片；图片直连 `telegra.ph/file/*`；已更新，恢复为待接入。
 - `jm` / 禁漫天堂：80 本/页，封面来自 `cdn-msp2.18comic.ink`，排行、分类与搜索可见；已更新，恢复为待接入。
 - `book` / 有声读物：书库/音声双模式，书库第一页 50 本，封面直连 `cdn2.createaiasian.com`；已更新，恢复为待接入。
@@ -265,6 +265,29 @@
 - 浏览器端（2026-08-15 重写）：实时列表（15 卡/页 + 分页 1/1246）、23 分类 Tab（点击即实时抓 `/category/{slug}/`）、搜索（实时抓 `/search/{kw}/`）、详情（实时抓 `/archives/{id}/`）；封面/图集直连 `imgpublic.ycomesc.live`；移除全部 gz 解压代码。
 - worker 端：`qiyingPage`（主站多线路 failover 抓页面）、`qiyingParseCards`（列表/分类/搜索卡片解析，跳过广告卡）、`qiyingCats`（导航分类）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频，支持多 DPlayer 块）、`qiyingImageUrl`（pic.*.cn → imgpublic.ycomesc.live）、`qiyingDetail`、`qiyingPlay`（`idx` 参数选第 N 个视频；主站无页面时返回 404「帖子已从主站删除，仅图集可用」）。
 - 验收（headless Chrome，2026-08-15）：列表 15 卡、封面全加载（1280×1300px）、分类 30 卡、分类分页 2/1224、详情（图集+视频按钮）、搜索「哪吒」12 条、清除回 15 卡、播放 readyState 4 且 1280×720 推进、页面零错误。
+
+## 看每日大赛 / mrds.com（`mr`，2026-08-15 接入）
+
+### 参考站与上游同源证据
+
+- 参考站 `mr.cfnav.me` API 登录墙（Node 401 返回 Linux.do 登录页 + CDK 激活）；图片/播放全走 cfnav 私有票据域（`media.cfnav.com/m/kan-mr/image/{token}`、`mr.cfnav.me/__cfnav_media/m/kan-mr/playlist/{token}`，`media.cfnav.com` 全站 Cloudflare challenge，Node 403）。用户浏览器登录态导出 `/api/meta`（21 分类）与 `/api/posts?page=1`（30 条，字段 `id/title/author/dateText/categories/coverUrl`，totalPages 1691）与 `/api/post/{id}` 详情（`textBlocks/images/videos[].playUrl`）。
+- **真实上游 `mrds.com`（= `www.mrds66.com`，「每日大赛-实时吃瓜爆料平台」）**，与 91吃瓜网**同程序**（Typecho + Mirages 主题）：
+  - `/api/meta` 21 个分类 slug（mrds/sjbq/ztds/rstt/xazd/blyp/fctg/mhds/lqdp/jdsj/mxwh/smdh/dypd/mtds/ysds/czds/hjds/tgds/omjp/qwcs/aijc）与 mrds.com 首页导航 21 项**完全一致**。
+  - `/api/posts` totalPages 1691 与 mrds.com 首页分页 `1/1691` 一致；第一页 30 条 id/标题/作者与 mrds.com 首页 30 卡一一对应（如 188690「AI改编 咒术回战…」作者赛利亚）。**注意**：参考站总页数会随上游增长（旧记录 1677 → 现 1691）。
+  - 参考站搜索页卡片为 `/archives/{id}/` 绝对/相对链接，与上游卡片同构。
+- 上游域名：`mrds.com` 与 `www.mrds.com` 均 200（`http` 301 → https，CloudFront）；`www.mrds66.com` 为 canonical。首页卡片结构与 qiying 完全一致（`article.itemscope` → `div.post-card` → `h2.post-card-title` + `loadBannerDirect('...')` 封面 + `post-card-info` 作者/日期/分类；广告卡 `post-card-ads` 无标题需跳过）。首页 30 卡中约 27 条有标题（广告卡数量与 qiying 略不同，解析器按 `h2.post-card-title` 过滤即可）。
+
+### 媒体链路（全验证，2026-08-15）
+
+- **图片**：详情页 `data-xkrkllgl="https://pic.xustgq.cn/upload_01/..."`；`pic.xustgq.cn` 直连返回**加密字节**（magic `09 3d e3 b1 fc 4a f4 6f`，`content-type: binary/octet-stream`，CORS `*`）→ 复用 `qiyingImageUrl` 重写为 `https://imgpublic.ycomesc.live{path}`（真 JPEG `ff d8 ff e0`，CORS 无但 `<img>` 无需 CORS）。图片域与 91吃瓜网相同家族。
+- **播放**：详情页 DPlayer `data-config` 内 `video.url = https://hls.dscxru.cn/videos5/{hash}/{hash}.m3u8?auth_key=...&v=3&time=0`（服务端签名，短时效）；m3u8 200 + CORS `*`；`#EXT-X-KEY:METHOD=AES-128,URI="https://ts.syjiaotong.mobi/videos5/{hash}/crypt.key?auth_key=..."` + IV；ts 分片与 key 均 200 + CORS `*`（ts 约 1.8MB/片、key 16B）。浏览器 hls.js 直连播放无需代理。
+- **付费检查**：上游首页/分类/搜索/详情均无会员/VIP/付费/购买/金币信号，全站公开免费。
+
+### 本地实现（provider `mr`，完全复用 qiying 解析层）
+
+- worker 端：复用 `qiyingParseCards`/`qiyingCats`/`qiyingExtractDetail`（新增 `siteName` 参数默认「91吃瓜网」，mr 传「每日大赛」）/`qiyingImageUrl`；新增 `MR_ORIGIN = mrds.com` + `MR_MIRRORS = [www.mrds66.com, www.mrds.com]`、`mrPage`（镜像 failover）、`mrDetail`、`mrPlay`（`idx` 选第 N 个视频；帖子被删 404「帖子已从主站删除，仅图集可用」）、`mrList`（列表 `/`、`/page/N/`；分类 `/category/{slug}/` 与 `/{n}/`；搜索 `/search/{kw}/` 仅第一页）。`qiyingCats` 参数化接受已抓 HTML。
+- 浏览器端：`QiyingPage`/`QiyingModal` 参数化 `provider`（api 前缀 `/provider-api/{id}`、来源名），qiying 与 mr 共用同一组件。
+- 验收（headless Chrome，2026-08-15）：列表 27 卡 + 封面 27/27 加载、分类「每日大赛」28 卡、分页 1/1658 → 2/1658（30 卡）、搜索「小千」22 条、详情（图集 + 1 视频按钮）、**播放 readyState 4、1280×720 推进**、页面零 JS 错误（favicon 404 与 miss 健康检查 502 与 mr 无关）。
 
 ## 看麻豆 / madou.club（`madou`，2026-08-14 接入）
 

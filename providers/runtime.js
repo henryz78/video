@@ -902,6 +902,9 @@ const QIYING_HEADERS = {
   "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CFNav-Independent/2.0",
 };
 
+const MR_ORIGIN = "https://mrds.com";
+const MR_MIRRORS = ["https://www.mrds66.com", "https://www.mrds.com"];
+
 function qiyingImageUrl(url = "") {
   if (!url) return "";
   return url.replace(/^https?:\/\/pic\.[a-z0-9.-]+\.cn/, QIYING_IMG_CDN);
@@ -931,8 +934,8 @@ function qiyingDecodeHtmlEntities(value = "") {
   return decodeHtml(value);
 }
 
-function qiyingExtractDetail(html, id) {
-  const title = qiyingDecodeHtmlEntities(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<title>([^<]*)<\/title>/)?.[1] || `91吃瓜 ${id}`).replace(/\s+-\s*91吃瓜网\s*$/, "");
+function qiyingExtractDetail(html, id, siteName = "91吃瓜网") {
+  const title = qiyingDecodeHtmlEntities(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<title>([^<]*)<\/title>/)?.[1] || `${siteName} ${id}`).replace(new RegExp(`\\s+-\\s*${siteName}\\s*$`), "");
   const description = qiyingDecodeHtmlEntities(html.match(/<meta property="og:description" content="([^"]*)"/)?.[1] || "");
   const author = qiyingDecodeHtmlEntities(html.match(/<meta itemprop="name" content="([^"]+)"/)?.[1] || "");
   const datePublished = html.match(/<meta itemprop="datePublished" content="([^"]+)"/)?.[1] || "";
@@ -1036,11 +1039,11 @@ function qiyingParseCards(html) {
   return items;
 }
 
-async function qiyingCats() {
-  const html = await qiyingPage("/");
+async function qiyingCats(html) {
+  const source = html || await qiyingPage("/");
   const cats = [];
   const seen = new Set();
-  for (const match of html.matchAll(/<a[^>]*href="(\/category\/[a-z0-9-]+\/)"[^>]*>([^<]{1,40})<\/a>/g)) {
+  for (const match of source.matchAll(/<a[^>]*href="(\/category\/[a-z0-9-]+\/)"[^>]*>([^<]{1,40})<\/a>/g)) {
     const slug = match[1].replace(/^\/category\//, "").replace(/\/$/, "");
     const name = qiyingDecodeHtmlEntities(match[2].trim());
     if (!name || seen.has(slug)) continue;
@@ -1069,6 +1072,72 @@ async function qiyingList(requestUrl) {
     totalPages: total,
     note: q ? "search" : category ? "category" : "latest",
     provider: "qiying",
+  }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
+function mrPage(pathname) {
+  return qiyingPage(pathname, [MR_ORIGIN, ...MR_MIRRORS]);
+}
+
+async function mrDetail(id) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await mrPage(`/archives/${id}/`);
+  const detail = qiyingExtractDetail(html, id, "每日大赛");
+  const primary = detail.videos[0];
+  return json({
+    vod_id: id,
+    vod_name: detail.title,
+    vod_pic: detail.poster,
+    vod_remarks: detail.videos.length ? `${detail.images.length} 图 · ${detail.videos.length} 视频` : `${detail.images.length} 图`,
+    vod_blurb: [detail.author && `作者：${detail.author}`, detail.datePublished && `发布于：${detail.datePublished.slice(0, 10)}`].filter(Boolean).join(" · "),
+    vod_content: detail.description || "",
+    type_name: detail.categories[0] || "每日大赛",
+    vod_area: "每日大赛",
+    media_gallery: detail.images,
+    videos: detail.videos.map((video) => ({ url: video.url, type: video.type })),
+    vod_play_url: primary?.url || "",
+    media_kind: detail.videos.length ? "video" : "gallery",
+    needs_detail: false,
+    provider: "mr",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function mrPlay(id, index) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const selected = Number.isInteger(Number(index)) && Number(index) > 0 ? Number(index) : 0;
+  let html;
+  try {
+    html = await mrPage(`/archives/${id}/`);
+  } catch {
+    return json({ message: "帖子已从主站删除，仅图集可用" }, { status: 404 });
+  }
+  const detail = qiyingExtractDetail(html, id, "每日大赛");
+  const video = detail.videos[selected];
+  if (!video) return json({ message: selected ? `此帖子没有第 ${selected + 1} 个公开视频` : "此帖子没有公开视频" }, { status: 404 });
+  return json({ vod_id: id, video: video.url, poster: detail.poster || detail.images[0] || "", provider: "mr" }, {
+    headers: { "cache-control": "no-store" },
+  });
+}
+
+async function mrList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("page")) || 1);
+  const category = requestUrl.searchParams.get("category") || "";
+  const q = (requestUrl.searchParams.get("q") || "").trim();
+  let pathname;
+  if (q) pathname = `/search/${encodeURIComponent(q)}/`;
+  else if (category) pathname = page <= 1 ? `/category/${category}/` : `/category/${category}/${page}/`;
+  else pathname = page <= 1 ? "/" : `/page/${page}/`;
+  const html = await mrPage(pathname);
+  const items = qiyingParseCards(html);
+  const pager = html.match(/page-info">\s*(\d+)\s*\/\s*(\d+)/);
+  const current = Number(pager?.[1]) || 1;
+  const total = q ? Math.max(1, Math.ceil(items.length / 30)) : Number(pager?.[2]) || Math.max(current, page);
+  return json({
+    items,
+    page: current,
+    totalPages: total,
+    note: q ? "search" : category ? "category" : "latest",
+    provider: "mr",
   }, { headers: { "cache-control": "public, max-age=60" } });
 }
 
@@ -2111,6 +2180,12 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
       if (action === "cats") return json(await qiyingCats(), { headers: { "cache-control": "public, max-age=600" } });
       if (action === "list" || action === "search") return await qiyingList(requestUrl);
       return await qiyingDetail(requestUrl.searchParams.get("id"));
+    }
+    if (provider === "mr") {
+      if (action === "play") return await mrPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx")));
+      if (action === "cats") return json(await qiyingCats(await mrPage("/")), { headers: { "cache-control": "public, max-age=600" } });
+      if (action === "list" || action === "search") return await mrList(requestUrl);
+      return await mrDetail(requestUrl.searchParams.get("id"));
     }
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));

@@ -222,7 +222,7 @@ function SourcePanel({ health }) {
 
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);
-  if (provider?.id === "qiying") return <QiyingPage site={site} go={go} setHealth={setHealth} />;
+  if (provider?.id === "qiying" || provider?.id === "mr") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
   const MISS_TABS = [
     ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
     ["monthly-hot", "本月热门"], ["chinese-subtitle", "中文字幕"], ["uncensored-leak", "无码流出"],
@@ -384,7 +384,8 @@ function qiyingFormatTime(value) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function QiyingPage({ site, go, setHealth }) {
+function QiyingPage({ site, go, setHealth, provider }) {
+  const api = `/provider-api/${provider?.id || "qiying"}`;
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -400,7 +401,7 @@ function QiyingPage({ site, go, setHealth }) {
     setLoading(true);
     setError("");
     const qs = new URLSearchParams({ action: "list", ...params });
-    return fetch(`/provider-api/qiying?${qs}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+    return fetch(`${api}?${qs}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
       if (!ok) throw new Error(body?.message || "目录加载失败");
       setPosts(body.items || []);
       setTotalPages(body.totalPages || 1);
@@ -414,7 +415,7 @@ function QiyingPage({ site, go, setHealth }) {
   };
   useEffect(() => {
     let cancelled = false;
-    fetch("/provider-api/qiying?action=cats").then((response) => response.json()).then((body) => { if (!cancelled) setCats(body || []); }).catch(() => {});
+    fetch(`${api}?action=cats`).then((response) => response.json()).then((body) => { if (!cancelled) setCats(body || []); }).catch(() => {});
     request({ page: 1 });
     return () => { cancelled = true; };
   }, []);
@@ -442,7 +443,7 @@ function QiyingPage({ site, go, setHealth }) {
   };
   const openDetail = (post) => {
     setSelected({ ...post, pid: post.p, detail_loading: true });
-    fetch(`/provider-api/qiying?action=detail&id=${encodeURIComponent(post.p)}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+    fetch(`${api}?action=detail&id=${encodeURIComponent(post.p)}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
       if (!ok) throw new Error(body?.message || "详情加载失败");
       setSelected((current) => current && current.p === post.p ? { ...current, detail_loading: false, images: body.media_gallery || [], videos: body.videos || [], d: body.vod_content || "", play_url: body.vod_play_url || "" } : current);
     }).catch((detailError) => {
@@ -452,7 +453,7 @@ function QiyingPage({ site, go, setHealth }) {
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
-    <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 主站签名播放 · 91吃瓜网</div></section>
+    <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 主站签名播放 · {provider?.name || "实时上游"}</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的图文内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); setCategory(""); setPage(1); request({ page: 1 }); }}>清除</button>}</form>
     <div className="qiying-tabs">{tabs.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => openCategory(key)}>{label}</button>)}</div>
     <section className="content-section">
@@ -468,11 +469,11 @@ function QiyingPage({ site, go, setHealth }) {
         <div className="pager"><button disabled={page <= 1} onClick={() => gotoPage(page - 1)}>上一页</button><span>{page} / {totalPages}</span><button disabled={page >= totalPages} onClick={() => gotoPage(page + 1)}>下一页</button></div>
       </>}
     </section>
-    {selected && <QiyingModal post={selected} onClose={() => setSelected(null)} />}
+    {selected && <QiyingModal post={selected} onClose={() => setSelected(null)} provider={provider} />}
   </div>;
 }
 
-function QiyingModal({ post, onClose }) {
+function QiyingModal({ post, onClose, provider }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [playError, setPlayError] = useState("");
@@ -511,7 +512,7 @@ function QiyingModal({ post, onClose }) {
   const startPlay = (index = 0) => {
     setPlayLoading(true); setPlayError("");
     setCurrentVideo(index);
-    fetch(`/provider-api/qiying?action=play&id=${encodeURIComponent(post.p)}&idx=${index}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+    fetch(`${provider?.id === "mr" ? "/provider-api/mr" : "/provider-api/qiying"}?action=play&id=${encodeURIComponent(post.p)}&idx=${index}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
       if (!ok) throw new Error(body?.message || "播放解析失败");
       setPlayLoading(false);
       setPostPlay(post, body.video);
@@ -528,12 +529,12 @@ function QiyingModal({ post, onClose }) {
       {images.length > 1 && !playing && <div className="qiying-image-nav"><button onClick={() => setImageIndex((x) => (x + images.length - 1) % images.length)}>上一张</button><span>{imageIndex + 1} / {images.length}</span><button onClick={() => setImageIndex((x) => (x + 1) % images.length)}>下一张</button></div>}
       {playError && <div className="qiying-play-error">{playError}</div>}
     </div>
-    <div className="detail-copy"><small>{[post.k?.[0], post.a, qiyingFormatTime(post.u)].filter(Boolean).join(" · ") || "91吃瓜"}</small><h2>{post.t || "未命名"}</h2><p>{post.d || "暂无简介"}</p>
+    <div className="detail-copy"><small>{[post.k?.[0], post.a, qiyingFormatTime(post.u)].filter(Boolean).join(" · ") || provider?.name || "每日大赛"}</small><h2>{post.t || "未命名"}</h2><p>{post.d || "暂无简介"}</p>
       {videos.length > 0 && <div className="qiying-video-strip">{videos.map((video, index) => <button key={video.i || index} className={playing && currentVideo === index ? "is-active" : ""} onClick={() => startPlay(index)}>
         {playLoading && currentVideo === index ? "解析中…" : `播放视频${videos.length > 1 ? ` ${index + 1}` : ""}`}
       </button>)}</div>}
       {(post.g || []).length > 0 && <div className="qiying-tags">{(post.g || []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-      <dl><div><dt>编号</dt><dd>{post.p}</dd></div><div><dt>分类</dt><dd>{(post.k || []).join(" / ") || "—"}</dd></div><div><dt>来源</dt><dd>91吃瓜网实时上游 + 主站签名</dd></div></dl>
+      <dl><div><dt>编号</dt><dd>{post.p}</dd></div><div><dt>分类</dt><dd>{(post.k || []).join(" / ") || "—"}</dd></div><div><dt>来源</dt><dd>{provider?.name || "实时上游"} + 主站签名</dd></div></dl>
     </div>
   </article></div>;
 }
