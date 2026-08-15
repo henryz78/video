@@ -459,3 +459,35 @@
 - worker 端：`rouPage`（UA）、`rouParseNextData`（`__NEXT_DATA__`）、`rouPageData`、`rouDecodeEv`（字节减密）、`rouAssetUrl`、`rouFormatCount`（万）、`rouNormalize`、`rouVideosResponse`（26/页）、`rouList`（preset `home`/`cat`/`tag:{tag}` + `wd` 搜索）、`rouDetail`（ev 解密 → vod_play_url 代理 m3u8 + relatedVideos 8 条）、`rouMedia`（白名单代理 + m3u8 分片重写）。
 - 前端：3 个 Tab（首页/分类/标签）；首页渲染 9 sections（最新上传 16 + 8 个热门分区，qiying-card 复用）；分类渲染 4 组 198 标签（组内排布）；标签平铺全部 198 标签按 count 降序；点击标签 → 该标签分页列表（`tag:{tag}` preset）；搜索保留（上游 `/search`，26/页，39 页封顶）。
 - 验收（headless Chrome，2026-08-15）：首页 9 sections 137 卡、封面 137/137 直链加载（lazy 需滚动触发）、详情打开、**720p 播放推进**（1280×720、currentTime 5.9s、readyState 4）、分类 4 组 198 标签、糖心Vlog 标签列表 26 卡分页、搜索「糖心」26 卡 39 页、无 JS 错误，零 cfnav 依赖。
+
+## KanOne / 看ONE（`one`，2026-08-15 调查后用户决定跳过）
+
+### 参考站结构（Next.js SPA，全部 API 在 Linux.do 登录墙后）
+
+- 入口 `one.cfnav.me`：`/api/bootstrap` POST（登录会话内）→ `{ok, uuid, hotKeywords[59]（含「镇ONE之宝」「限时免费」「抄底」「抽奖」等运营词）, imgServers[13], cdnList[11]}`；uuid 缓存在 localStorage `kanone-session-v2`。
+- `/api/search` POST `{uuid, keyword, page, limit}` → `{ok, items:[{id, modelId, thumb/thumbnail/thumbTiny(cfnav 私有 ticket), title, subtitle, isLimitFree, seriesCategory, number, publishedAt}], page, keyword, hasMore}`——**参考站首页就是 hotKeywords 标签流**（默认「限时免费」），无独立最新列表。
+- `/api/detail` POST `{uuid, id}` → `{ok, detail:{id, modelId, title, subtitle, description, content(HTML), actor, author, tags[], tagList[{id,slug}], thumb/thumbnail(私有 ticket), multiplePic[], multiPicThumbnail[], videoFile, previewVideo, videoHls(/api/media?token= 私有代理), videoHlsH265(直链), quality, size, length, views, likeNumber, buys, downloadCount, collectionNumber, shareNumber, replyCounts, publishedAt, isLimitFree, coin, originalCoin, isLike}, streamUrl, mediaKind, thumbUrl}`——**coin/originalCoin/buys 是上游计费体系字段**。
+- `/api/comments` POST `{uuid, articleId, page}`；`/api/image?url=` 代理外部图片（非 `media.cfnav.com/m/kan-one/` 的 http URL 走代理）；`/api/download?url=` 下载代理。
+- Node 直连：全部 API + 静态 chunk 均 401（登录墙）；用户浏览器会话内可正常调用。
+
+### 独立媒体链（已验证，全部 CORS `*`）
+
+- 图床：`imgpw807.s7n7ue8.com` / `imgpw807.2u7qzt7.com` / `jmt612.xqjby.com` / `jmtp616.youguancm.com` `/storage/thumb/{id}/{hash}.jpg|webp` → 200/206 + CORS `*`（真 JPEG/WebP，如 `55873/6a7faf41ef290.jpg` 101KB）。`/storage/thumb/` 是该站群唯一开放路径，其余路径 403。
+- MP4：`dlmk0129.scycjz.com` / `dlmk0129.fwn9vj.com` / `dlmk0129.bx7qxb.com` / `dlmk0129.upmf83.com` 等 `/one/compress/decry/vd/{日期}/{base64(10hex 视频ID)}/{HHMMSS}/{WxH}/aac/h265/mp4/decrypt/{token}.mp4` → 206 + CORS `*`、`ftyp isom` 明文全片（实测 454MB/617MB、Range 正常），无需 Referer/签名；路径中 base64 段解码为 10 位 hex（如 `ZWY2YjAyOGQ0M`→`53f71ac0f6`）。
+- HLS：`1vy79bws04jv.gdliren123.com` / `eyf08pws05jv.gdliren123.com` `/encry/vd/{同结构}/hls/decrypt/index.m3u8` → 返回**加密字节**（非文本清单，decrypt 名不副实）不可直用——有 MP4 即够，忽略。
+- 域名群规律（同一套防封镜像站群）：`dlmk0129`×4 域、`0325api`×5 域、`imgpw807`×2 域、`vd.qmq85ps.com`/`vd.47d1fc4.com`、`su0220vd.3ca7yj.com`、`kwgewx01dl.mfpt8g.com`、`ppfgfj02dl.scycjz.com`、`1vy79bws04jv/eyf08pws05jv.gdliren123.com`、`jmt612`/`jmtp616`。
+- DoH 解析：图/视频 CDN 域 → `23.197.86.x`（Akamai）；`0325api.*` → `23.62.46.x`（Akamai）；`jmt612.xqjby.com` → `218.12.76.167` / `121.22.232.169`（中国电信直连源站，本机 DNS 污染无 A 记录）。
+
+### 上游 API 与 S3 桶
+
+- `0325api.*` 为 Swoft（PHP）API 服务（错误信息暴露 `/home/www/api/vendor/swoft/...`）；60+ 常见路由探测全 500「Route not found」或 403，swagger/openapi/.env 均不可得。
+- **S3 桶公开列表**：`jmt612.xqjby.com/`（无参数）返回 `ListBucketResult`（bucket `one-fruit-new`，1000 keys/页）：
+  - `/oneVideo/hls/one/{日期}/{视频ID}/index.m3u8 + index{n}.ts`（757 keys，但均为 **2022 年旧数据**，如 `20220727/022120-001-carib-C`）
+  - `admin/jiami/storage/...`（222 keys 图片）、`admin/jiami/avatar`（14）、`admin/jiami/images`（3）
+  - 桶内文件全部 403 不可下载；分页全部 403（`?marker=`、`?prefix=`、`?list-type=2`、`?continuation-token=`），仅无参数列表返回 200（其余变体是 CDN 缓存同一响应）。
+- 结论：S3 桶是历史备份/存储暴露，非实时目录源。
+
+### 跳过结论（用户 2026-08-15 决定）
+
+- 与 `mt` 同型：**媒体链（图/MP4）完全独立是局部胜利，但目录/搜索/详情全部锁在参考站登录墙后**；上游 Swoft API 路由不可得；S3 桶非实时目录。不实现。
+- 重新评估条件：上游网页站（非镜像 CDN）公开可访问、0325api 路由暴露、或 S3 桶放行文件读与分页。
