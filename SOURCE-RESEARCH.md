@@ -201,6 +201,15 @@
 - 保存的 `cawd-956` 页面没有落下 `data-hls-direct` 或 `data-hls-proxy`，故离线 HTML 无法调用原站同源接口，播放失败是预期结果。用户表示在线现场也显示无法播放；浏览器的保存权限规则阻止代理读取实时接口响应，已遵守限制停止，未通过替代浏览器或间接方式绕过。因此只能确认在线播放当时失败，不能断言具体是源失效、接口错误还是临时媒体地址失败。
 - 首页未见会员、积分、金币、付费或购买入口；2026-08-14 用户确认站点已更新，`best` 恢复为待接入。
 
+### 2026-08-15 终审结论（用户决定跳过，不再接入）
+
+- 用户提供油猴脚本 `Richy.txt`（BestJavPorn 去广告与原生播放修复 v2.5.0，@include `(?:[^./]+\.)*bestjavporn\.com`）——纯广告拦截 + 播放器浮层修复，无源 URL 线索；确认上游为 `www.bestjavporn.com`，播放器是 blob iframe（`#playeriframe`，沙箱内 JW Player 直播正片），正片 m3u8 来自 streamplay。
+- 参考站契约（用户登录态 console 导出，全部确认）：`/api/home`（最新/最多观看/热门 3×20 + 9 sections：最新/最多观看/热门/时长/有码/无码/素人/英字/减码）、`/api/list/{filter}?page=N`（20/页，latest 共 15013 页≈30 万条）、`/api/search?q=&page=`（14959 页）、`/api/play/{slug}` → `{m3u8_proxy（cfnav 私有 /proxy/hls/{token}，不用）, m3u8_url（直连）}`；详情 `/v/{slug}` SSR（发布日期/简介/相关推荐），播放器元素仅 `data-play-endpoint`（运行时 fetch，SSR 不预填）。
+- **播放链独立可用（实测）**：`m3u8_url` = `apiraw2.streamplay.win/data/master.m3u8/{JWT}` → `index-v1-a1.m3u8?data=` → 分片在 TikTok CDN（`p16/p19-ad-site-sign-sg.tiktokcdn.com/ad-site-i18n-sg/...~tplv-d5opwmad15-ttam-origin.image?lk3s=&x-expires=&x-signature=`，5 秒/片，签名约 2 天时效），分片为 **PNG 外壳包 TS**（`image/png`，PNG 签名 + IEND 后 TS 数据，需前端解包——参考站 hls-direct.js 的 `unwrapPngSegment` 同款逻辑）。整条链不经 cfnav，直抓 200。
+- **封面独立源（部分）**：上游封面在 `pics.pornfhd.com`（无 CF 直连 200，image/jpeg ~509KB）；prestige 系规律 `/mgs/images/prestige/{品牌小写}/{数字}/pb_e_{番号}.jpg`（abf-319 → `prestige/abf/319/`、dlv-006 → `prestige/dlv/006/` 两例吻合）；但非 prestige 品牌路径未知，主站 `pornfhd.com` 522（CF 源站超时，已死），无法遍历/归纳全品牌。
+- **目录是入口级硬阻塞**：参考站 `/api/*` 无 cookie 全部返回 Linux.do 登录页（应用不能持用户会话）；上游 bestjavporn.com 为 WordPress（robots.txt 证实 `wp-includes`/`admin-ajax`），除 robots.txt 外全站 Cloudflare managed challenge（wp-json/search/uploads 全 403，curl 2 分钟 headless 不过 Turnstile）；30 万条实时目录无法一次性快照（1.5 万页请求）。
+- **结论（用户 2026-08-15 决定跳过）**：与 `mt`（cfnav 私有票据）`qms`（目录登录墙）同型——目录/播放 JWT 均锁在参考站登录墙后，上游被 CF 保护。播放媒体链（streamplay/TikTok CDN）与封面 CDN（pics.pornfhd.com）独立是局部胜利，但无目录即无入口。**重新评估条件**：上游开放免 CF 的公开入口、pornfhd.com 复活并提供公开目录、或参考站 API 解除登录墙。
+
 ## 其他分类第一批筛查
 
 - `xf` / 看推特：公开信息流中出现 VIP 节选与完整版订阅导流；整站暂缓。
