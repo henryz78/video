@@ -164,13 +164,13 @@
 
 ### 已更新站点（2026-08-14 用户确认，恢复为待接入）
 
-- `mt` / 看蜜桃：已更新，恢复为待接入。
-- `miss` / 看 Miss：页面提供类型、女优、发行商和 API 文档入口；已更新，恢复为待接入。
+- `mt` / 看蜜桃：已更新，恢复为待接入。**2026-08-14 复查后用户决定跳过（见文件末尾「看蜜桃 / mt 复查结论」）。**
+- `miss` / 看 Miss：页面提供类型、女优、发行商和 API 文档入口；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看 Miss / missav.media」）。**
 - `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。**2026-08-14 已接入并本地验收（见下节「栖影 / 91吃瓜网」）。**
 - `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。
 - `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。
 - `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
-- `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。
+- `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。**2026-08-14 上游破解后用户决定跳过（见下方「好片 / haoqi7.com 破解记录（2026-08-14，未接入）」）。**
 - `91` / 看91：独立上游已确认为 `91porna.com`（2026-08-14 全功能实测通过）。目录与看91 参考站完全一致（分类 `/comic/index/video?category=play|now_month_hot|original`、搜索 `/comic/index/search?keyword=`、JSON-LD 与看91 的 `#/watch/{id}` 同 ID；列表/分页/搜索/相关视频 `/comic/av/relvideo`/RSS `/feed/video`/embed `/comic/index/embed?id=` 均验证可用）。播放链路已实测打通：详情页内联混淆脚本 `document.write` 调 `/index/detail_play?img={封面路径}&ads={广告}&u={视频稳定签名}&t={parseInt(now/1000/2100)}`（JSONP 风格，返回混淆 JS），纯 JS 解包 packed 脚本后实时请求得 m3u8；m3u8 为单码率 AES-128 加密清单（显式 IV），`crypt.key` 与 5 秒分片位于 `tp*.xmbvxj.cn`（多台边缘，均已签名，`auth_key` 短时效需实时取流）。封面图在 `pic.xmbvxj.cn`，**图片本身也是 AES-CBC 加密**（固定密钥 `f5d965df75336270` / IV `97b60394abc2fbe1`，PKCS7，`crypto_image.js` 客户端解密，服务端需解密后使用）。`expose.eisees.com` 明文图域实测返回空图不可用。主站 Cloudflare 后面，大陆 DNS 被污染（真实 IP 172.67.181.57 / 104.21.40.76，可用 `dns.google/resolve` DoH 获取；本机 `--resolve` 或正常网络直连即可）。已实现为 provider `kan91`（列表/搜索/分页/详情/封面解密代理/AES-128 HLS 播放），实测 200、CORS 全 `*`，入口状态专用已验收。
 - `mr` / 看每日大赛：约 1677 页、每页 30 条；接口 `/api/meta`、`/api/posts?page=1`，图片为 `media.cfnav.com/m/kan-mr/*`；已更新，恢复为待接入。
 - `mm` / 墨影集：14973 图集、841140 张图片；图片直连 `telegra.ph/file/*`；已更新，恢复为待接入。
@@ -280,3 +280,67 @@
 - worker 端：`madouPage`（90 秒内存缓存）、`madouParseCards`、`madouList`（首页/分类 preset/搜索/点赞排行/分页）、`madouDetail`（详情字段 + shareId + 现抓分享页拼 m3u8）、`madouPlay`、`madouResolvePlay`。
 - 前端：SitePage 通用列表/详情 + 33 个分类 Tab（`preset` 参数）+ 搜索；DetailModal 标准 HLS.js 播放。
 - 验收（headless Chrome）：列表 20 卡片、分类 Tab 切换（麻豆传媒 20 条）、详情（MD0362 标题/观看/点赞）、点播放 → hls.js → readyState 4、1280×720、播放推进、搜索"苏畅" 20 条。测试链 sites 9/9、cloudflare 4/4 全绿。
+
+## 好片 / haoqi7.com 破解记录（2026-08-14，未接入）
+
+> 技术链路已完全破解并实测，但因上游反滥用封 IP 过严，用户决定放弃接入。代码已从工作区移除（恢复至 madou 提交 `487908d`）。以下为完整研究记录，供未来有新证据时参考。
+
+### 参考站与上游
+
+- 参考站 `hqw.cfnav.me` 登录墙（Node 401）；用户浏览器导出契约：`/api/categories`（14 分类 `{id,name}`）、`/api/recommend?page=&limit=&category=`（列表）、`/api/video/{id}`（详情）、`/api/search?q=`（游客搜索返回空）、`/api/play`（cfnav 私有 `__cfnav_media` 代理）。
+- **真实上游 `haoqi7.com`（好妻网-首映好片，SolidStart + React）**：参考站 list 的条目 id/分类 id 与上游 API 完全一致；媒体在 CloudFront `d17e80montytxe.cloudfront.net`（源为 Cloudflare R2），视频 `web/raw/...`、封面 `web/static/*.ceb`（AES 加密）。
+
+### 上游 API（全部实测打通）
+
+- **游客登录**：`POST /api/v1/users/signin`，body `{verifyType:"anonymous", pid:"HQW", channel:"h5", uuid, inviteCode:"", captcha:"", key:"sFRUdDdCbu62vfSnrJaPedBRCyKyLu8m", url:"https://haoqi7.com/", t:"h", type:"guest"}`，headers 必须含 `referer/origin: https://haoqi7.com/`、`accept-language`、`t:"2", k:"2"`。返回 `data` 为 **AES-256-ECB(PKCS7) 加密**，密钥 = 同上 `key` 字符串（32 字节 UTF-8）；解密后是 **gzip(base64)** JSON `{resToken:{token: JWT}}`。
+- **API 响应加密**：所有 `/api/v1/*` 响应 `data` 字段同样 AES-256-ECB + gzip(base64) 加密。请求头带 `token`（JWT）。
+- 列表：`GET /api/v1/videos/recommend?page=&pageSize=` → `{videos:[{id,name,playCnt,likedCnt,price,payType,time,width,height,coverURL:"web/static/*.ceb",...}]}`。
+- 详情：`GET /api/v1/videos/{id}` → `{video:{...,files:[{url:"https://haoqi7.com/api/v1/videos/m3u8pre/{id}/{id}/f.m3u8?s={签名}&p=20&h=haoqi7.com",...}], user:{...}}}`。
+- **播放**：m3u8pre 签名 URL 直连 200（CORS `*`，AES-128，ts/key 在 `bvzjm.xiaomayipt.com` / `lhx7l.zzzjrcbank.com` 等边缘域，ts 带 `sign=时间戳-...` 时效签名）。
+- **分类**：14 分类来自 SolidStart serverFn `GET /_serverFn/1354834ad42c8644691fcd33e28d91fbdbe39517f95959fe5811245de0ef4148`（Seroval JSON 响应，`{id,name}`）；分类视频列表 `POST /_serverFn/edb02c42c935ccf0aa4b61c9363d57fd40f78f6cce9a66e6fbb435ba70c148b4`，body 为 **Seroval 序列化** `{t:{t:10,p:{k:["data"],v:[...]}},f:63,m:[]}`，参数 `{cateId,page,pageSize,hasTop,hasGuide,compositeSort:4}` → `{guideCategories,childCategories:[{videos}]}`。Seroval 布尔节点 `true={t:2,s:2}`、`false={t:2,s:3}`（t:3 是 BigInt，勿混）。
+- **封面**：`.ceb` 文件 AES-256-ECB 解密（密钥 `82758dd12749c777ef579f1839ceea6a`）后为 `data:image/jpeg;base64,...` 字符串。
+
+### 放弃原因
+
+- 上游反滥用：短时间多次请求即 `errorCode 1067 此ip已经禁止登陆`，换多个代理 IP 均被反复封禁（一次研究会话内封禁多次）。
+- Cloudflare Pages 部署出口 IP 固定，大概率很快被封；复杂度（AES 解密 + Seroval + 风控）与单一入口的收益不成比例。用户 2026-08-14 决定放弃。
+- **重开条件**：新证据表明封禁非纯 IP 维度（如可长期存活的匿名会话、稳定的签名请求模式）。
+
+## 看蜜桃 / mt 复查结论（2026-08-14，未接入）
+
+- 参考站 `mt.cfnav.me` 为 **Next.js App Router SPA**（登录墙，Node 401）。用户浏览器导出：首页 HTML + RSC payload + 关键 chunk。
+- **目录结构**：layout 硬编码 15 个分类（`{id,name}`：10030 吃瓜、10001 动漫、10004 网黄、10031 麻豆、10036 国产、10011 AV、10039 三级、10016 SWAG、10032 OnlyFans、10018 裸舞、10010 少女、10003 欧美、10013 精选、10019 ASMR、10035 另类）；路由 `/category/{id}`、`/latest`、`/search?q=`、`/watch/{id}`、`/topic/{id}`；卡片字段 `{id, title, imagePath, createdAtText, duration, tags, playPreviewPath}`。
+- **媒体链全部为 cfnav 私有**：播放 `https://mt.cfnav.me/__cfnav_media/m/kan-mt/playlist/{token}`（多线路 `sources` 数组 + `fallbackUrl:/api/media/{token}`）、封面 `media.cfnav.com/m/kan-mt/image/{token}`。`/api/media/{token}` 直接请求返回 **"media ticket expired"**（短时效票据，由 cfnav 服务端生成）。
+- **上游源站**：Next.js 服务端 `SOURCE_ORIGIN` env 持有上游域名，客户端 bundle/RSC 均不暴露；服务端 fetch 不可见。
+- **参考站自身播放失败**：研究期间打开 `/watch/65982` 无法播放（票据/媒体链路不稳定或已失效），与用户网络无关。
+- 结论：无独立公开上游可建 adapter，与 qms/hqw 同类（cfnav 私有媒体封装）。用户 2026-08-14 决定跳过，保持 pending，不写代码。
+- **重开条件**：获得真实 `SOURCE_ORIGIN` 上游域名 + 公开媒体路径的新证据。
+
+## 看 Miss / missav.media（`miss`，2026-08-15 接入）
+
+### 参考站与上游同源证据
+
+- 参考站 `miss.cfnav.me` 登录墙（Node 401）。用户浏览器登录态打开 `/docs` 暴露 **FastAPI Swagger**：`/openapi.json` 列出 `/api/catalog`、`/api/home`、`/api/list/{section_key}`、`/api/movie/{video_code}`、`/api/search`、`/api/genres`、`/api/actresses`、`/api/makers`、`/proxy/hls`、`/proxy/cover/{video_code}`、`/proxy/preview/{video_code}`。
+- **真实上游 `missav.media`（公开站，MissAV）**：参考站 `/api/movie/{video_code}` 返回的 `metadata_links` 指向 missav.media；条目 video_code、封面、预览、m3u8 与 missav.media 逐项一致。
+- 分区映射（参考站 section_key ↔ 上游 `/cn/{key}`）：`new` 最近更新、`release` 新作上市、`today-hot` 今日热门、`weekly-hot` 本周热门、`monthly-hot` 本月热门、`chinese-subtitle` 中文字幕、`uncensored-leak` 无码流出、`fc2`、`heyzo`、`siro`。
+- 全站公开免费：首页/分区/搜索/详情/分类/女优/发行商页面均无会员/VIP/付费/购买信号，无登录要求（仅首页年龄门 `.age-gate`，点击即过）。
+
+### 媒体链路（全部公开直链，CORS `*`，无鉴权）
+
+- 封面：`https://fourhoi.mrstcdn.store/{code}/cover-t.jpg`（列表缩略）/ `cover-n.jpg`（详情大图）；预览 `https://fourhoi.mrstcdn.store/{code}/preview.mp4`。
+- 播放：详情页内联脚本含 `surrit\.mrstcdn\.store\\?\/([0-9a-f-]{36})`（seek 缩略图 URL 与 packer 混淆字典均含该 uuid）→ master `https://surrit.mrstcdn.store/{uuid}/playlist.m3u8`，多码率 360p~1080p。
+- 实测（Node）：master 200（CORS `*`）；子清单/分片 200；**分片是 `.jpeg` 伪装的 TS**（magic `47401110`）；无 `EXT-X-KEY`（不加密）；清单里 `#EXT-X-TOKEN` 只是装饰，不带 token 也能播。
+
+### 解析要点
+
+- 卡片：`data-src="https://fourhoi.mrstcdn.store/{code}/cover-t.jpg"` + `alt="{标题}"` + 时长 badge；每页 12 卡，分页链接带 `dm{id}` 前缀，最后一页链接数即总页数。
+- 列表路径：分区 `/cn/{section_key}?page=N`；搜索 `/search/{kw}?page=N`（**不是** `/search?q=`）；分类/女优/发行商 `/cn/{kind}/{slug}?page=N`；genres/actresses/makers 索引页也是 SSR（名称+条数），用作前端 tab 计数与 preset。
+- 详情：og:title / og:image、`<meta name="duration" content="秒">`、`<time datetime>` 发行日期、`<span>番号/发行商/导演:</span>`、女优/类型链接。
+- 女优提取用 `/dm\d+\/cn\/actresses\/([^"]+)` + decodeURIComponent；类型提取必须过滤 sidebar 无 `dm` 前缀的链接（如 "VR"），否则污染 `vod_remarks`。
+- 年龄门：headless 验证必须先点 `.age-gate button`（localStorage `cf-age`），否则卡片为 0。
+
+### 本地实现（provider `miss`）
+
+- worker 端：`missavPage`、`missavAsset`、`parseMissavCards`、`missavPageCount`、`missavList`（preset 支持 `genre:`/`actress:`/`maker:` 前缀 + 分页 + 搜索）、`missavDetail`（字段 + uuid → m3u8 直链，无代理无缓存）。
+- 前端：10 个分区 Tab + 搜索 + 标准 HLS.js 播放（直连 m3u8/ts，零 cfnav 依赖）。
+- 验收（headless Chrome，2026-08-15）：列表 12 卡片、10 tabs 逐个可用、搜索（SNOS）12 条、详情（SNOS-334 · S1 · 肉尊 · 2026-08-07）打开、点播放 → hls.js → videoWidth 640x360、paused:false、time 推进、12 张封面全部 200/ok、页面零错误。

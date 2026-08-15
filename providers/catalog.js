@@ -90,6 +90,13 @@ export const PROVIDERS = {
     discoveredFrom: "看麻豆 参考条目 slug/分类/详情与 madou.club 逐项同源核对",
     capabilities: "分类目录 / 搜索 / 点赞·周·月排行 / 详情 / 分享页签名 HLS 播放",
   },
+  miss: {
+    id: "miss",
+    name: "MissAV 公开目录",
+    upstream: "missav.media + fourhoi.mrstcdn.store / surrit.mrstcdn.store",
+    discoveredFrom: "看Miss 参考站 OpenAPI 文档与 missav.media 条目/媒体逐项同源核对",
+    capabilities: "分区目录 / 搜索 / 详情 / 女优·类型·发行商索引 / 直链多码率 HLS 播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -104,6 +111,7 @@ const ROUTE_CONFIGS = {
   91: { provider: "kan91" },
   qiying: { provider: "qiying" },
   madou: { provider: "madou" },
+  miss: { provider: "miss" },
 };
 
 export function getProviderForSite(slug) {

@@ -1547,8 +1547,122 @@ async function adultTvList(requestUrl) {
   });
 }
 
-export async function handleProviderRequest(request) {
-  const requestUrl = request instanceof URL ? request : new URL(request.url);
+const MISSAV_ORIGIN = "https://missav.media";
+const MISSAV_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CFNav-Independent/2.0",
+};
+const MISSAV_SECTION_KEYS = ["new", "release", "today-hot", "weekly-hot", "monthly-hot", "chinese-subtitle", "uncensored-leak", "fc2", "heyzo", "siro"];
+
+async function missavPage(pathname, params = {}) {
+  const url = new URL(pathname, MISSAV_ORIGIN);
+  for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  const response = await fetch(url, { headers: MISSAV_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`missav page ${response.status}`);
+  return response.text();
+}
+
+function missavAsset(code, kind) {
+  return `https://fourhoi.mrstcdn.store/${code}/${kind}`;
+}
+
+function parseMissavCards(html) {
+  const cards = [];
+  const seen = new Set();
+  const pattern = /data-src="https:\/\/fourhoi\.mrstcdn\.store\/([a-z0-9-]+)\/cover-t\.jpg"[\s\S]{0,900}?alt="([^"]*)"/g;
+  for (const match of html.matchAll(pattern)) {
+    const code = match[1];
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const block = html.slice(match.index, match.index + 3000);
+    const duration = block.match(/class="[^"]*missav_media-text-xs[^"]*"[^>]*>\s*([^<]{1,15}?)</)?.[1] || "";
+    cards.push({
+      vod_id: code,
+      vod_name: decodeHtml(match[2]) || code.toUpperCase(),
+      vod_pic: missavAsset(code, "cover-t.jpg"),
+      vod_remarks: duration || "VIDEO",
+      vod_blurb: code.toUpperCase(),
+      vod_content: code.toUpperCase(),
+      vod_area: "missav.media",
+      type_name: "JAV",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "miss",
+    });
+  }
+  return cards;
+}
+
+function missavPageCount(html, page) {
+  const linkedPages = [...html.matchAll(/[?&]page=(\d+)/g)].map((match) => Number(match[1])).filter(Number.isFinite);
+  return Math.max(page, ...linkedPages);
+}
+
+async function missavList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  let pathname;
+  if (keyword) {
+    pathname = `/search/${encodeURIComponent(keyword)}`;
+  } else if (MISSAV_SECTION_KEYS.includes(preset)) {
+    pathname = `/cn/${preset}`;
+  } else if (preset && (preset.startsWith("genre:") || preset.startsWith("actress:") || preset.startsWith("maker:"))) {
+    const [kind, ...rest] = preset.split(":");
+    const slug = rest.join(":");
+    if (!slug) return json({ message: "invalid preset" }, { status: 400 });
+    pathname = `/cn/${kind === "genre" ? "genres" : kind === "actress" ? "actresses" : "makers"}/${slug}`;
+  } else {
+    pathname = "/cn/new";
+  }
+  const html = await missavPage(pathname, page > 1 ? { page } : {});
+  const list = parseMissavCards(html).slice(0, 24);
+  const pagecount = keyword ? Math.max(page, Math.ceil(list.length / 12) || 1) : missavPageCount(html, page);
+  return json({
+    code: 1,
+    page,
+    pagecount,
+    limit: 24,
+    total: pagecount * 12,
+    list,
+    provider: "miss",
+  }, { headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=120" } });
+}
+
+async function missavDetail(id) {
+  if (!/^[a-z0-9-]+$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await missavPage(`/cn/${id}`);
+  const title = decodeHtml(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || `${id.toUpperCase()}`);
+  const description = decodeHtml(html.match(/<meta property="og:description" content="([^"]*)"/)?.[1] || "");
+  const cover = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || missavAsset(id, "cover-n.jpg");
+  const durationSeconds = Number(html.match(/<meta name="duration" content="(\d+)"/)?.[1] || 0);
+  const releaseDate = html.match(/<time datetime="([^"]+)"/)?.[1]?.slice(0, 10) || "";
+  const uuid = html.match(/surrit\.mrstcdn\.store\\?\/([0-9a-f-]{36})/)?.[1] || "";
+  const m3u8Url = uuid ? `https://surrit.mrstcdn.store/${uuid}/playlist.m3u8` : "";
+  const actresses = [...new Set([...html.matchAll(/href="https:\/\/missav\.media\/dm\d+\/cn\/actresses\/([^"]+)"/g)].map((m) => decodeHtml(decodeURIComponent(m[1]))))].filter(Boolean).slice(0, 8);
+  const genreNames = [...new Set([...html.matchAll(/\/dm\d+\/cn\/genres\/([^"]+)"/g)].map((m) => decodeHtml(decodeURIComponent(m[1]))))].slice(0, 16);
+  const maker = decodeHtml(html.match(/<span>发行商:<\/span>\s*<a[^>]*>([^<]+)/)?.[1] || "");
+  const director = decodeHtml(html.match(/<span>导演:<\/span>\s*<a[^>]*>([^<]+)/)?.[1] || "");
+  const code = html.match(/<span>番号:<\/span>\s*<span[^>]*>([^<]+)/)?.[1]?.trim() || id.toUpperCase();
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: [durationSeconds ? formatDuration(durationSeconds) : "", genreNames[0] || "JAV"].filter(Boolean).join(" · ") || "VIDEO",
+    vod_blurb: [code, maker, director, releaseDate].filter(Boolean).join(" · "),
+    vod_content: description || genreNames.join(" · "),
+    vod_year: releaseDate.slice(0, 4),
+    vod_area: "missav.media",
+    type_name: genreNames[0] || "JAV",
+    vod_play_url: m3u8Url,
+    media_kind: "video",
+    needs_detail: false,
+    provider: "miss",
+    metadata: { code, maker, director, releaseDate, actresses: actresses.slice(0, 8), genres: genreNames.slice(0, 16) },
+  }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
   const action = requestUrl.searchParams.get("action") || "list";
@@ -1564,6 +1678,7 @@ export async function handleProviderRequest(request) {
     if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
     if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx"))) : qiyingDetail(requestUrl.searchParams.get("id")));
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
+    if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

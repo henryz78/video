@@ -264,6 +264,11 @@ function SourcePanel({ health }) {
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);
   if (provider?.id === "qiying") return <QiyingPage site={site} go={go} setHealth={setHealth} />;
+  const MISS_TABS = [
+    ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
+    ["monthly-hot", "本月热门"], ["chinese-subtitle", "中文字幕"], ["uncensored-leak", "无码流出"],
+    ["fc2", "FC2"], ["heyzo", "HEYZO"], ["siro", "SIRO"],
+  ];
   const MADOU_TABS = [
     ["", "最新"], ["麻豆传媒", "麻豆传媒"], ["麻豆番外篇", "番外篇"], ["麻豆花絮", "花絮"],
     ["HongKongDoll", "HongKongDoll"], ["PsychopornTW", "PsychopornTW"], ["91制片厂", "91制片厂"],
@@ -316,6 +321,7 @@ function SitePage({ site, go, health, setHealth }) {
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">独立适配器 · {provider.name}{provider.preset ? ` · ${provider.preset}` : ""}</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
     {provider?.id === "madou" && <div className="qiying-tabs">{MADOU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    {provider?.id === "miss" && <div className="qiying-tabs">{MISS_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>PAGE {page}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
