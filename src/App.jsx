@@ -126,7 +126,7 @@ function SiteCard({ site, go, favorites, toggleFavorite, position }) {
   };
   const icon = site.navCategory === "gallery" ? "gallery" : site.navCategory === "anime" ? "anime" : site.navCategory === "community" ? "community" : "play";
   return <article className={`site-card accent-${site.accent} ${connected ? "is-connected" : "is-pending"}`} data-category={site.navCategory} data-delivery={site.delivery} onPointerMove={moveLight} style={{ "--category": site.color, "--glow-rgb": site.rgb, animationDelay: `${Math.min((site.id - 1) * 35, 280)}ms` }}>
-    <button className="site-link" type="button" onClick={() => go(`/site/${site.slug}`)} aria-label={`打开 ${site.name}`}>
+    <button className="site-link" type="button" onClick={() => site.externalUrl ? window.open(site.externalUrl, "_blank", "noopener") : go(`/site/${site.slug}`)} aria-label={`打开 ${site.name}`}>
       <span className="preview-frame is-loaded">
         <img className="site-preview" src={`/previews/${site.slug}.jpg`} alt={`${site.name} 网站首屏预览`} loading={position < 6 ? "eager" : "lazy"} />
         <span className="preview-shade" aria-hidden="true"></span>
