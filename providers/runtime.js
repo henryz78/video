@@ -1840,6 +1840,194 @@ async function tangxinMedia(requestUrl) {
   });
 }
 
+/* ---------------- rou / 看肉视频 (rou.video) ---------------- */
+const ROU_ORIGIN = "https://rou.video";
+const ROU_HEADERS = {
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+};
+const ROU_SECTIONS = [
+  ["latestVideos", "最新上传"],
+  ["dailyHotCNAV", "今日热门 · 国产 AV"],
+  ["dailyHotSelfie", "今日热门 · 自拍"],
+  ["dailyHot91", "今日热门 · 探花/91"],
+  ["dailyOnlyFans", "今日热门 · OnlyFans"],
+  ["dailyJV", "今日热门 · JVID"],
+  ["hotCNAV", "热门 · 国产 AV"],
+  ["hotSelfie", "热门 · 自拍"],
+  ["hot91", "热门 · 探花/91"],
+];
+const ROU_GROUP_TITLES = { gcAV: "国产 AV", madouAV: "麻豆 AV", v91: "探花/91", onlyfans: "OnlyFans" };
+
+async function rouPage(pathname) {
+  const response = await fetch(new URL(pathname, ROU_ORIGIN), { headers: ROU_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`rou.video page ${response.status}`);
+  return response.text();
+}
+
+function rouParseNextData(html) {
+  const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!match) throw new Error("rou.video page missing __NEXT_DATA__");
+  return JSON.parse(match[1]).props.pageProps;
+}
+
+async function rouPageData(pathname) {
+  return rouParseNextData(await rouPage(pathname));
+}
+
+function rouDecodeEv(ev) {
+  if (!ev || typeof ev.d !== "string" || typeof ev.k !== "number") return null;
+  const bytes = Uint8Array.from(Buffer.from(ev.d, "base64"));
+  for (let i = 0; i < bytes.length; i++) bytes[i] = (bytes[i] - ev.k) & 0xff;
+  try { return JSON.parse(new TextDecoder().decode(bytes)); } catch { return null; }
+}
+
+function rouAssetUrl(url) {
+  return `/provider-api/rou?action=media&url=${encodeURIComponent(url)}`;
+}
+
+function rouFormatCount(value) {
+  const n = Number(value) || 0;
+  if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万`;
+  return n ? String(n) : "";
+}
+
+function rouNormalize(video) {
+  const tags = video.tagsZh || video.tags || [];
+  const duration = video.duration ? formatDuration(Math.round(video.duration)) : "";
+  const views = rouFormatCount(video.viewCount);
+  const likes = rouFormatCount(video.likeCount);
+  return {
+    vod_id: video.id,
+    vod_name: video.nameZh || video.name || video.nameOriginal || video.id,
+    vod_pic: video.coverImageUrl || "",
+    vod_remarks: [duration, views && `▶ ${views}`, likes && `♥ ${likes}`].filter(Boolean).join(" · ") || "VIDEO",
+    vod_blurb: tags.slice(0, 3).join(" / "),
+    vod_content: video.description || "",
+    vod_area: "rou.video",
+    type_name: tags[0] || "看肉",
+    media_kind: "video",
+    needs_detail: true,
+    provider: "rou",
+    metadata: {
+      nameOriginal: video.nameOriginal || video.name,
+      tags,
+      viewCount: video.viewCount || 0,
+      likeCount: video.likeCount || 0,
+      createdAt: video.createdAt || "",
+    },
+  };
+}
+
+function rouVideosResponse(videos, page, totalPage, note = "") {
+  return json({
+    code: 1,
+    page,
+    pagecount: Math.max(1, totalPage || 1),
+    limit: 26,
+    total: totalPage ? totalPage * 26 : videos.length,
+    list: videos.map(rouNormalize),
+    provider: "rou",
+    note,
+  }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+async function rouList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const wd = (requestUrl.searchParams.get("wd") || "").trim();
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  if (wd) {
+    const props = await rouPageData(`/search?q=${encodeURIComponent(wd)}&page=${page}`);
+    return rouVideosResponse(props.videos || [], page, props.totalPage || 1, `搜索“${wd}”`);
+  }
+  if (preset.startsWith("tag:")) {
+    const tag = decodeURIComponent(preset.slice("tag:".length));
+    if (!tag) return json({ message: "invalid preset" }, { status: 400 });
+    const props = await rouPageData(`/t/${encodeURIComponent(tag)}?order=createdAt&page=${page}`);
+    return rouVideosResponse(props.videos || [], page, props.totalPage || 1, tag);
+  }
+  if (preset === "cat") {
+    const props = await rouPageData("/cat");
+    const groups = ["gcAV", "madouAV", "v91", "onlyfans"].filter((key) => Array.isArray(props[key])).map((key) => ({
+      key,
+      title: ROU_GROUP_TITLES[key] || key,
+      tags: props[key].map((tag) => ({ id: tag.id, count: tag.count || 0, parent: tag.parent || "" })),
+    }));
+    return json({ code: 1, page: 1, pagecount: 1, limit: 1, total: 0, list: [], provider: "rou", groups }, { headers: { "cache-control": "public, max-age=600" } });
+  }
+  const props = await rouPageData("/home");
+  const sections = ROU_SECTIONS.map(([key, title]) => ({
+    key,
+    title,
+    videos: (props[key] || []).map(rouNormalize),
+  }));
+  return json({
+    code: 1,
+    page: 1,
+    pagecount: 1,
+    limit: 26,
+    total: sections[0]?.videos.length || 0,
+    list: sections[0]?.videos || [],
+    sections,
+    provider: "rou",
+  }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+async function rouDetail(id) {
+  if (!/^[a-z0-9]{10,40}$/i.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const props = await rouPageData(`/v/${id}`);
+  const video = props.video;
+  const stream = rouDecodeEv(props.ev);
+  if (!video || !stream?.videoUrl) return json({ message: "video unavailable" }, { status: 404 });
+  const normalized = rouNormalize(video);
+  const related = (props.relatedVideos || []).slice(0, 8).map(rouNormalize);
+  return json({
+    ...normalized,
+    vod_play_url: rouAssetUrl(stream.videoUrl),
+    vod_remarks: [normalized.vod_remarks, stream.videoUrl.match(/-(\d+)\//)?.[1] ? `${stream.videoUrl.match(/-(\d+)\//)[1]}P` : ""].filter(Boolean).join(" · ") || "VIDEO",
+    needs_detail: false,
+    metadata: {
+      ...normalized.metadata,
+      thumbnail: stream.thumbVTTUrl ? rouAssetUrl(stream.thumbVTTUrl) : "",
+      quality: props.defaultQuality || 720,
+      related,
+    },
+  }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+async function rouMedia(requestUrl) {
+  const raw = requestUrl.searchParams.get("url") || "";
+  let target;
+  try { target = new URL(raw); } catch { return json({ message: "invalid media url" }, { status: 400 }); }
+  if (!/^v\.rn\d+\.xyz$/i.test(target.hostname) || !target.pathname.startsWith("/hls/")) {
+    return json({ message: "invalid media host" }, { status: 400 });
+  }
+  const isPlaylist = /index\.jpg$|\.m3u8$/i.test(target.pathname);
+  const upstream = await fetch(target, { headers: ROU_HEADERS, signal: AbortSignal.timeout(isPlaylist ? 15_000 : 30_000) });
+  if (!upstream.ok) return json({ message: `rou media ${upstream.status}` }, { status: 502 });
+  if (isPlaylist) {
+    const text = await upstream.text();
+    const rewritten = text.split(/\r?\n/).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      return rouAssetUrl(new URL(trimmed, target).toString());
+    }).join("\n");
+    return new Response(rewritten, {
+      headers: {
+        "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "cache-control": "public, max-age=60",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  return new Response(upstream.body, {
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/octet-stream",
+      "cache-control": "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -1858,6 +2046,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));
     if (provider === "tx") return await (action === "media" ? tangxinMedia(requestUrl) : action === "artists" ? tangxinArtists() : action === "detail" ? tangxinDetail(requestUrl.searchParams.get("id")) : tangxinList(requestUrl));
+    if (provider === "rou") return await (action === "media" ? rouMedia(requestUrl) : action === "detail" ? rouDetail(requestUrl.searchParams.get("id")) : rouList(requestUrl));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

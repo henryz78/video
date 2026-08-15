@@ -167,7 +167,7 @@
 - `mt` / 看蜜桃：已更新，恢复为待接入。**2026-08-14 复查后用户决定跳过（见文件末尾「看蜜桃 / mt 复查结论」）。**
 - `miss` / 看 Miss：页面提供类型、女优、发行商和 API 文档入口；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看 Miss / missav.media」）。**
 - `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。**2026-08-14 已接入并本地验收（见下节「栖影 / 91吃瓜网」）。**
-- `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。
+- `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看肉视频 / rou.video」）。**
 - `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看糖心Vlog / tangxinvlog.pro」）。**
 - `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
 - `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。**2026-08-14 上游破解后用户决定跳过（见下方「好片 / haoqi7.com 破解记录（2026-08-14，未接入）」）。**
@@ -375,3 +375,35 @@
 - worker 端：`tangxinPage`（Referer/UA）、`tangxinMediaUrl`、`parseTangxinCards`、`tangxinPageCount`、`tangxinList`（preset `home`/`videos`/`artist:{name}`；videos 为上游页式分页直接返回该页 24 条，artist 为全量切片 24/页）、`tangxinArtists`（46 位，media_kind `artist`）、`tangxinDetail`（m3u8/博主/日期/时长/标签/简介/猜你喜欢，vod_play_url 为代理 m3u8）、`tangxinMedia`（代理 + m3u8 分片/key 重写）。
 - 前端：3 个 Tab（最新/全部作品/博主）；博主 tab 渲染 46 位圆形头像卡片，点击进该博主作品列表；隐藏搜索框（参考站无搜索）。
 - 验收（headless Chrome，2026-08-15）：首页 12 卡、全部作品第 2/42 页（24/4 条）、博主索引 46 位（头像/作品数/粉丝）、饼干姐姐作品列表 24 卡、详情打开、**1080p AES-128 播放推进**（currentTime 11~15s、1920×1080、buffered 43s+），零 cfnav 依赖。
+
+## 看肉视频 / rou.video（`rou`，2026-08-15 接入）
+
+### 参考站与上游同源证据
+
+- 参考站 `rou.cfnav.me` 登录墙；用户登录态 console 导出 API 契约：`/api/home`（9 sections）、`/api/video/{id}`、`/api/search?q=`、`/api/tag/{tag}`、`/api/cat`，SPA hash 路由 `#/`、`#/cat`、`#/tag/{tag}`、`#/v/{id}`，播放器为 ArtPlayer + MSE（blob src）。
+- **同源铁证**：参考站 `/api/video/{id}` 的 `data.siteDomain` 字段直接返回 `"https://rou.video"`；条目 id 两边逐条一致（首页首条同为 `cmsslmkd30000s6zfbq1icg6h`）；`stream.videoUrl` 与本地从上游 `/v/{id}` 页 `ev` 解密得到的 URL 结构逐字一致（`https://v.rn2xx.xyz/hls/{id}/{id}-720/index.jpg?v=6&exp=...&auth=...`，连 exp 相同）；封面同域 imgproxy（`v.rn221.xyz/m/...`，`czM6Ly9yb3V2L2hscy97aWR9L2NvdmVyLmpwZw.jpg` = base64「rou/hls/{id}/cover.jpg」）。
+- **逐项核对**：搜索「糖心」参考站 totalPage 39 = 上游 39；标签「糖心Vlog」参考站 1804 = 上游 1803（`/cat` count）；`/api/cat` 的 4 groups（gcAV/madouAV/v91/onlyfans，198 标签）与上游 `/cat` pageProps 完全一致（如糖心Vlog count 1804 两边相同）；参考站 9 sections 与上游 `/home` 9 sections 一一对应（最新上传 16、今日热门×5 各 15-16、热门×3 各 15）。
+- 参考站私有接口一律不用：播放走其 `/api/playlist/{id}?q=` + `/api/proxy?url=`（cfnav 代理），封面另有 `coverProxyUrl`（media.cfnav.com）；本地全部直连上游。
+
+### 上游结构（Next.js App Router SSR）
+
+- 首页 `/home`（`/` 仅 9KB 空 pageProps）：`latestVideos[16]`、`dailyHotCNAV[16]`、`dailyHotSelfie[15]`、`dailyHot91[15]`、`dailyOnlyFans[15]`、`dailyJV[15]`、`hotCNAV[15]`、`hotSelfie[15]`、`hot91[15]`、`clickADUDomain`。
+- 条目字段：`{id, vid(null), name(繁), nameZh(简), description, ref(原站URL如 https://xchina.co/video/id-... 或站内 /slug/), tags(繁), published, publisher, createdAt, updatedAt, viewCount, likeCount, dislikeCount, duration(秒), archived, sources:[{resolution:720, folder:"{id}-720"}], coverImageUrl}`。
+- 分类 `/cat`：pageProps `{gcAV[57], madouAV[36], v91[73], onlyfans[32]}`，tag 形如 `{id:"糖心Vlog", count:1804, parent:"國產AV", level:0}`。
+- 标签 `/t/{tag}?order=createdAt&page=N`：26/页，`{tag, tagZh, order, videos, pageNum, totalPage(如糖心Vlog 70), totalVideoNum(1803), tagsOF/tagsForCNAV/tags91(侧栏标签)}`。
+- 搜索 `/search?q={kw}&page=N`：26/页，`{videos, q, t, sort, pageNum, totalPage(39), totalVideoNum(1000 截断), hotSearches[10]}`。
+- 详情 `/v/{id}`：pageProps `{video(同上字段), relatedVideos[8+], siteDomain:"https://rou.video", defaultQuality:720, ev:{d:base64,k:number}}`；**ev 解密 = `atob(d)` 每字节减 k → `JSON.parse` → `{videoUrl, thumbVTTUrl}`**（与用户提供油猴脚本逻辑一致，仅作参考）。
+
+### 媒体链路（签名 HLS，无加密，同源代理转发）
+
+- 封面 `v.rn221.xyz/m/{key}/rs:fit:1280:0:0:0/wm:1/{base64源路径}.jpg`：**imgproxy 直链、无防盗链**（无 Referer 200 image/jpeg，img 标签直连即可）。
+- 播放 `v.rn2xx.xyz/hls/{id}/{id}-720/index.jpg?v=6&exp={1天时效}&auth={签名}`（`.jpg` 伪装 m3u8；码率档 `-720`/`-1080`/`-480` 按视频实际存在，替换不存在的档返回 400）。
+- 清单：`#EXTM3U`、每片 10 秒、**无 EXT-X-KEY（未加密）**；分片为**独立签名 URL**（多域名 `v.rn213.xyz`/`v.rn212.xyz` 等，`.jpg` 伪装 TS，magic `47 44 11 10`）。
+- **无 CORS 头** → 浏览器播放需同源代理：`/provider-api/rou?action=media&url={完整签名URL}`（白名单 host `^v\.rn\d+\.xyz$` + path `^/hls/`，其余 400；m3u8 响应把分片行重写为代理绝对 URL，query 完整保留；thumbVTT 同走代理）。
+- 直测（Node + 浏览器）：m3u8 549 行重写正确、分片 200（~1.95MB）、thumbVTT 200、evil host 400、封面带 Referer 也 200。
+
+### 本地实现（provider `rou`）
+
+- worker 端：`rouPage`（UA）、`rouParseNextData`（`__NEXT_DATA__`）、`rouPageData`、`rouDecodeEv`（字节减密）、`rouAssetUrl`、`rouFormatCount`（万）、`rouNormalize`、`rouVideosResponse`（26/页）、`rouList`（preset `home`/`cat`/`tag:{tag}` + `wd` 搜索）、`rouDetail`（ev 解密 → vod_play_url 代理 m3u8 + relatedVideos 8 条）、`rouMedia`（白名单代理 + m3u8 分片重写）。
+- 前端：3 个 Tab（首页/分类/标签）；首页渲染 9 sections（最新上传 16 + 8 个热门分区，qiying-card 复用）；分类渲染 4 组 198 标签（组内排布）；标签平铺全部 198 标签按 count 降序；点击标签 → 该标签分页列表（`tag:{tag}` preset）；搜索保留（上游 `/search`，26/页，39 页封顶）。
+- 验收（headless Chrome，2026-08-15）：首页 9 sections 137 卡、封面 137/137 直链加载（lazy 需滚动触发）、详情打开、**720p 播放推进**（1280×720、currentTime 5.9s、readyState 4）、分类 4 组 198 标签、糖心Vlog 标签列表 26 卡分页、搜索「糖心」26 卡 39 页、无 JS 错误，零 cfnav 依赖。

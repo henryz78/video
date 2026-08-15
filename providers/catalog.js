@@ -104,6 +104,13 @@ export const PROVIDERS = {
     discoveredFrom: "看糖心Vlog 参考站 API 契约与 tangxinvlog.pro 条目/媒体逐项同源核对",
     capabilities: "首页最新 / 全部作品分页 / 46 博主索引 / 博主作品页 / 详情 / 代理 AES-128 HLS 播放",
   },
+  rou: {
+    id: "rou",
+    name: "看肉视频 公开目录",
+    upstream: "rou.video + v.rn2xx.xyz（imgproxy 封面直链 / 签名 HLS 同源代理）",
+    discoveredFrom: "看肉视频 参考站 API 契约（siteDomain 直接返回 rou.video）与上游 SSR 数据逐项同源核对",
+    capabilities: "首页 9 分区 / 分类树 4 组 / 全量标签 / 搜索 / 详情 / 代理签名 HLS 播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -120,6 +127,7 @@ const ROUTE_CONFIGS = {
   madou: { provider: "madou" },
   miss: { provider: "miss" },
   tx: { provider: "tx", preset: "home" },
+  rou: { provider: "rou", preset: "home" },
 };
 
 export function getProviderForSite(slug) {

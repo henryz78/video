@@ -23,12 +23,12 @@
 | 项目 | 当前状态 |
 |---|---|
 | 本地入口 | 38 个；原 39 个参考入口中的看板娘游戏已按用户决定移除 |
-| 独立 provider | 12 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社 |
-| 真实匹配完成 | 9 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影；看TV 进入部分可用 |
+| 独立 provider | 16 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频 |
+| 真实匹配完成 | 13 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
-| 下一项 | `qiying`、`madou` 已接入并本地验收；`qms`、`hqw`、`mt` 用户决定跳过（风控/登录墙/私有票据）；ASMR 按用户决定暂时跳过；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
+| 下一项 | `qiying`、`madou`、`miss`、`tx`、`rou` 已接入并本地验收；`qms`、`hqw`、`mt` 用户决定跳过（风控/登录墙/私有票据）；ASMR 按用户决定暂时跳过；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收；`best` 待用户提供第四弹脚本 |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
 | 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
@@ -63,7 +63,7 @@
 | 17 | `swag` | SWAG | 影视 / short | — | — | 整站暂缓（含付费） | “短影音”分区为免费，但切换“动态”后明确显示大量“付费”条目；按整站规则连免费短影音也不接。公开封面来自 `public.swag.live`，只保留来源证据。 |
 | 18 | `pmv` | PMV 视频 | 影视 / cinema | PMVHaven | — | 专用已验收 | 已确认参考站 24 位 ID、65006 条目录、标签、封面、详情与 MP4 均来自 PMVHaven；本地直接接公开列表/详情与匿名搜索页面数据，浏览器直连其独立媒体 CDN。 |
 | 19 | `mt` | 看蜜桃 | 影视 / cinema | — | — | 用户跳过 / 不接入 | 参考站为 Next.js SPA：每个视频/封面都经 cfnav 私有时效票据（`__cfnav_media/m/kan-mt/playlist/{token}`、`/api/media/{token}` → "media ticket expired"、封面 `media.cfnav.com/m/kan-mt/image/*`）；上游源站藏在服务端 env（`SOURCE_ORIGIN`）客户端不可见；研究期间参考站自身也无法播放视频。无独立上游可建 adapter，2026-08-14 用户决定跳过。无新证据（真实 SOURCE_ORIGIN 上游 + 公开媒体路径）不重开。 |
-| 20 | `rou` | 看肉视频 | 影视 / cinema | — | — | 待接入 | 待接入。 |
+| 20 | `rou` | 看肉视频 | 影视 / cinema | rou | home | 专用已验收 | 真实上游为 `rou.video`（Next.js SSR）。参考站 `/api/video/{id}` 的 `siteDomain` 直接返回 `https://rou.video`（同源铁证），条目 id 两边逐条一致，搜索「糖心」两边同为 39 页、标签「糖心Vlog」1804/1803、分类树 4 组 198 标签一致。首页 9 sections（最新上传 16 + 今日热门×5 + 热门×3，各 15-16 条）；标签 `/t/{tag}?order=createdAt&page=N` 26/页；搜索 `/search?q=&page=` 26/页 + 10 热词；分类 `/cat` 4 组（国产AV 57/麻豆AV 36/探花91 73/OnlyFans 32）。详情 `/v/{id}` 页 `ev` 字节减密出 `{videoUrl, thumbVTTUrl}`（`v.rn2xx.xyz/hls/{id}/{id}-720/index.jpg?v=6&exp&auth`，`.jpg` 伪装、约 1 天时效、无 EXT-X-KEY 未加密、分片独立签名）。封面 `v.rn221.xyz` imgproxy 直链无防盗链（img 直连）；播放/分片/thumbVTT 无 CORS 经同源代理（host 白名单 `v.rn\d+.xyz`，m3u8 分片行重写为代理绝对 URL）。headless 实测：9 sections 137 卡、封面 137/137、详情、720p 播放推进、分类 198 标签、标签列表分页、搜索 26 卡。零 cfnav 依赖。 |
 | 21 | `fj` | 观番 | 动漫 / anime | HStream | — | 专用已验收 | 目录、搜索、详情、临时 CSRF 播放元数据、多线路 MP4。 |
 | 22 | `kankan` | 爱微社区 | 社区 / feed | — | — | 整站暂缓（VIP / 金币） | 首页与最新、热推目录大量明确标记 VIP 或金币；不是全站免费，按规则整站暂缓。 |
 | 23 | `9s` | 看九色 | 影视 / cinema | — | — | 整站暂缓（含付费） | 分类中明确存在“非付费”，首页亦出现“有偿”条目，说明不是全站免费；按整站规则不接任何免费子集。 |
@@ -101,6 +101,7 @@
 | `kan91` | `91porna.com` + `yd-hls.utxxds.cn` + `tp*.xmbvxj.cn` / `pic.xmbvxj.cn` | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.xmbvxj.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测。 |
 | `qiying` | `agency.nsguiiwz.cc` / `being` / `act` + `public/qiying/*.gz` 本地镜像 + `pic.uforxk.cn` / `imgpublic.ycomesc.live` / `op.vkjyoi.cn` / `bgqpnx.cn` | 目录/搜索/详情图集用导出分片（浏览器 gzip 解压内存过滤）；视频实时抓主站 `/archives/{id}/` 帖子页，解析 DPlayer `data-config` 内服务端签名 m3u8 | HLS.js（AES-128 分片，ts/key 直连 CDN） | 无账号；签名由 91吃瓜网服务端生成，每次点播现抓不落盘 | 主站域名轮换（防失联页多线路，adapter 内置三个镜像）；签名有时效，过期重新点播即可 |
 | `madou` | `madou.club`（WordPress）+ `dash.madou.club` 分享页 | 抓首页/分类/搜索/点赞排行 HTML 解析卡片（标题/封面/观看/点赞/分类）；详情页解析 iframe shareId 与分享页短时效 JWT，拼 m3u8 完整 URL | HLS.js（AES-128，ts/key 直连） | 无账号；分享页每次现抓 100 秒时效 JWT，不落盘 | 上游域名/主题结构可能轮换；JWT 时效短，过期重新点播即可 |
+| `rou` | `rou.video`（Next.js SSR）+ `v.rn2xx.xyz`（imgproxy 封面 / 签名 HLS） | 抓 `/home`/`/cat`/`/t/{tag}`/`/search`/`/v/{id}` 的 `__NEXT_DATA__`；详情 `ev` 字节减密出签名 m3u8；封面直链；播放/分片经同源代理（白名单 `v.rn\d+.xyz`，清单分片行重写） | HLS.js（无加密，分片走代理） | 无账号；签名约 1 天时效，每次打开详情现解密不落盘 | CDN 域名 `v.rnNNN.xyz` 数字后缀会轮换，正则已放宽；上游反爬尚无表现 |
 
 ## 5. 请求与数据契约
 
@@ -285,4 +286,5 @@ npm.cmd run test:cloudflare
 - 2026-08-13 用户决定暂时跳过 `asmr`，不再要求保存页面；当前回到已实现但尚未完成真实网络验收的看 TV，优先逐路验证 41 个 oxax 品牌频道。
 - 2026-08-14 完成 `qiying` / 栖影（91吃瓜网镜像 + 主站签名 HLS）、`madou` / 看麻豆（madou.club + dash.madou.club 100 秒 JWT）、`91` / 看91（91porna.com 全链路）接入与本地验收；`hqw` / 好片技术破解但上游封 IP 过严、`mt` / 看蜜桃无独立上游，用户决定跳过并记录重开条件；`qms` / 秋名山直播因登录墙内流代理跳过。
 - 2026-08-15 完成 `miss` / 看 Miss 接入与本地验收：真实上游 missav.media，全站公开免费，媒体全直链（封面 fourhoi.mrstcdn.store、播放 surrit.mrstcdn.store 多码率 HLS，`.jpeg` 伪装 TS、无加密无 token）；10 分区 Tab + 搜索 + 详情 + hls.js 播放验证通过，零 cfnav 依赖。下一步按优先级处理 `tx` / 看糖心 Vlog。
-- 2026-08-15 完成 `tx` / 看糖心 Vlog 接入与本地验收：真实上游 tangxinvlog.pro（用户提供的油猴脚本仅作上游线索参考，目录/字段/播放链全部按参考站 `tx.cfnav.me` API 契约与上游页面逐项对齐）。同源铁证：参考站 `/api/videos?page=43` 返回 `Upstream HTTP 404 for https://tangxinvlog.pro/videos/43/`；988 部 42 页、第 42 页 4 条（slug/标题/720p/时长/博主）与参考站逐条一致；46 博主、首页 12 条最新一致。播放链 AES-128（`enc.key`+IV）+ Referer 防盗链 + 无 CORS，全部媒体（封面/头像/清单/分片/key）经同源代理（带 Referer/UA，返回 CORS `*`），清单内分片与 key 重写为代理绝对 URL（key 必须重写，否则 hls.js 基于 `/provider-api/tx` 误解析出 404）。参考站无搜索，本地隐藏搜索框。headless 实测：首页 12 卡、全部作品 42 页分页、博主索引 46 位、博主作品列表、详情、1080p AES-128 播放推进全部通过。零 cfnav 依赖。下一步按优先级处理 `rou` / 看肉视频。
+- 2026-08-15 完成 `tx` / 看糖心 Vlog 接入与本地验收：真实上游 tangxinvlog.pro（用户提供的油猴脚本仅作上游线索参考，目录/字段/播放链全部按参考站 `tx.cfnav.me` API 契约与上游页面逐项对齐）。同源铁证：参考站 `/api/videos?page=43` 返回 `Upstream HTTP 404 for https://tangxinvlog.pro/videos/43/`；988 部 42 页、第 42 页 4 条（slug/标题/720p/时长/博主）与参考站逐条一致；46 博主、首页 12 条最新一致。播放链 AES-128（`enc.key`+IV）+ Referer 防盗链 + 无 CORS，全部媒体（封面/头像/清单/分片/key）经同源代理（带 Referer/UA，返回 CORS `*`），清单内分片与 key 重写为代理绝对 URL（key 必须重写，否则 hls.js 基于 `/provider-api/tx` 误解析出 404）。参考站无搜索，本地隐藏搜索框。headless 实测：首页 12 卡、全部作品 42 页分页、博主索引 46 位、博主作品列表、详情、1080p AES-128 播放推进全部通过。零 cfnav 依赖。
+- 2026-08-15 完成 `rou` / 看肉视频接入与本地验收：真实上游 rou.video（Next.js SSR；用户提供的油猴脚本仅作解密逻辑参考）。同源铁证：参考站 `/api/video/{id}` 的 `siteDomain` 字段直接返回 `https://rou.video`，条目 id、搜索 39 页、标签 1804/1803、分类树 198 标签与上游逐项一致。首页 9 sections（最新上传 16 + 今日热门/热门 8 区）；分类 4 组（国产AV 57/麻豆AV 36/探花91 73/OnlyFans 32）；标签/搜索 26 页/26 条。详情页 `ev` 字节减密（`atob(d)` 每字节减 `k`）得 `{videoUrl, thumbVTTUrl}`——签名 HLS（`v.rn2xx.xyz/hls/{id}/{id}-720/index.jpg?v=6&exp&auth`，`.jpg` 伪装、约 1 天时效、未加密、分片独立签名）。封面 imgproxy 直链无防盗链；播放/分片/thumbVTT 无 CORS 经同源代理（host 白名单 `v.rn\d+.xyz`，m3u8 分片行重写为代理绝对 URL）。headless 实测：9 sections 137 卡、封面 137/137、详情、720p 播放推进、分类/标签/搜索全通。零 cfnav 依赖。下一步按优先级处理 `best` / 看 JavPorn（需用户提供第四弹脚本线索）。

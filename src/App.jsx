@@ -270,6 +270,7 @@ function SitePage({ site, go, health, setHealth }) {
     ["fc2", "FC2"], ["heyzo", "HEYZO"], ["siro", "SIRO"],
   ];
   const TX_TABS = [["", "最新"], ["videos", "全部作品"], ["artists", "博主"]];
+  const ROU_TABS = [["home", "首页"], ["cat", "分类"], ["tag", "标签"]];
   const MADOU_TABS = [
     ["", "最新"], ["麻豆传媒", "麻豆传媒"], ["麻豆番外篇", "番外篇"], ["麻豆花絮", "花絮"],
     ["HongKongDoll", "HongKongDoll"], ["PsychopornTW", "PsychopornTW"], ["91制片厂", "91制片厂"],
@@ -284,6 +285,7 @@ function SitePage({ site, go, health, setHealth }) {
     ["KISS糖果屋", "KISS糖果屋"], ["likes", "点赞排行"],
   ];
   const [items, setItems] = useState([]);
+  const [rouData, setRouData] = useState({ sections: null, groups: null });
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [page, setPage] = useState(1);
@@ -312,13 +314,30 @@ function SitePage({ site, go, health, setHealth }) {
     setLoading(true); setError("");
     fetch(`/provider-api/${provider.id}?${params}`, { signal: controller.signal }).then((r) => {
       if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
-    }).then((data) => { setItems(Array.isArray(data.list) ? data.list : []); setHealth("ok"); }).catch((e) => {
+    }).then((data) => {
+      setItems(Array.isArray(data.list) ? data.list : []);
+      if (provider.id === "rou") setRouData({ sections: data.sections || null, groups: data.groups || null });
+      setHealth("ok");
+    }).catch((e) => {
       if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
     }).finally(() => setLoading(false));
     return () => controller.abort();
   }, [page, submitted, category, setHealth, provider?.id, provider?.preset]);
   const submit = (e) => { e.preventDefault(); setPage(1); setSubmitted(query.trim()); };
   useEffect(() => { setPage(1); }, [category, submitted]);
+  const openDetail = async (item) => {
+    if (!item.needs_detail) return setSelected(item);
+    setSelected({ ...item, detail_loading: true });
+    try {
+      const response = await fetch(`/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const detail = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
+      setSelected(detail);
+    } catch (detailError) {
+      setSelected({ ...item, detail_error: detailError.message });
+    }
+  };
+  const specialRou = provider?.id === "rou" && (category === "home" || category === "cat" || category === "tag");
   if (!provider) return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip error">SOURCE PENDING</span></nav>
@@ -333,23 +352,15 @@ function SitePage({ site, go, health, setHealth }) {
     {provider?.id === "madou" && <div className="qiying-tabs">{MADOU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "miss" && <div className="qiying-tabs">{MISS_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "tx" && <div className="qiying-tabs">{TX_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
-    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
+    {provider?.id === "rou" && <div className="qiying-tabs">{ROU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
       {!loading && !error && provider?.id === "tx" && category === "artists" && <div className="tx-artist-grid">{items.map((artist) => <button className="tx-artist-card" key={artist.vod_id} onClick={() => setCategory(artist.vod_id)}><div className="tx-artist-avatar">{artist.vod_pic ? <img src={artist.vod_pic} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>AVATAR</span>}</div><strong>{artist.vod_name}</strong>{artist.vod_remarks && <small>{artist.vod_remarks}</small>}{artist.vod_blurb && <p>{artist.vod_blurb}</p>}</button>)}</div>}
-      {!loading && !error && !(provider?.id === "tx" && category === "artists") && <ContentGrid items={items} mode={site.mode} onOpen={async (item) => {
-        if (!item.needs_detail) return setSelected(item);
-        setSelected({ ...item, detail_loading: true });
-        try {
-          const response = await fetch(`/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
-          const detail = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
-          setSelected(detail);
-        } catch (detailError) {
-          setSelected({ ...item, detail_error: detailError.message });
-        }
-      }} />}
-      {!loading && !error && <div className="pager"><button disabled={page === 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>上一页</button><span>{page}</span><button onClick={() => setPage((x) => x + 1)}>下一页</button></div>}
+      {!loading && !error && !(provider?.id === "tx" && category === "artists") && <ContentGrid items={items} mode={site.mode} onOpen={openDetail} />}
+      {!loading && !error && provider?.id === "rou" && category === "home" && rouData.sections && <div className="rou-sections">{rouData.sections.map((section) => <section key={section.key} className="rou-section"><h3>{section.title}<small>{section.videos.length}</small></h3><div className="qiying-grid">{section.videos.map((card) => <button className="qiying-card" key={card.vod_id} onClick={() => openDetail(card)}><div className="qiying-cover"><img src={card.vod_pic} alt="" loading="lazy" referrerPolicy="no-referrer" /><span className="qiying-counts">{card.vod_remarks}</span></div><div className="qiying-meta"><strong>{card.vod_name}</strong><p>{card.vod_blurb || card.vod_area}</p></div></button>)}</div></section>)}</div>}
+      {!loading && !error && provider?.id === "rou" && (category === "cat" || category === "tag") && rouData.groups && <div className="rou-groups">{category === "cat" ? rouData.groups.map((group) => <section key={group.key} className="rou-group"><h3>{group.title}<small>{group.tags.length}</small></h3><div className="rou-tag-grid">{group.tags.map((tag) => <button key={tag.id} className="rou-tag-card" onClick={() => setCategory(`tag:${tag.id}`)}><strong>{tag.id}</strong><small>{tag.count}</small></button>)}</div></section>) : <div className="rou-tag-grid rou-tags-flat">{rouData.groups.flatMap((group) => group.tags).sort((a, b) => b.count - a.count).map((tag) => <button key={tag.id} className="rou-tag-card" onClick={() => setCategory(`tag:${tag.id}`)}><strong>{tag.id}</strong><small>{tag.count}</small></button>)}</div>}</div>}
+      {!loading && !error && !specialRou && <div className="pager"><button disabled={page === 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>上一页</button><span>{page}</span><button onClick={() => setPage((x) => x + 1)}>下一页</button></div>}
     </section>
     {selected && <DetailModal item={selected} mode={site.mode} provider={provider} onClose={() => setSelected(null)} />}
   </div>;
