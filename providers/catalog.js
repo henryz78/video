@@ -118,6 +118,13 @@ export const PROVIDERS = {
     discoveredFrom: "看肉视频 参考站 API 契约（siteDomain 直接返回 rou.video）与上游 SSR 数据逐项同源核对",
     capabilities: "首页 9 分区 / 分类树 4 组 / 全量标签 / 搜索 / 详情 / 代理签名 HLS 播放",
   },
+  jm: {
+    id: "jm",
+    name: "禁漫天堂 官方新站",
+    upstream: "18mh.net（永久地址）+ 32b.azucyfo.com（免翻墙镜像）+ imgpublic.ycomesc.live 图片 CDN",
+    discoveredFrom: "看禁漫天堂 参考站旧库 18comic.ink 被 CF 全站保护，官方 GitLab 仓库确认 18mh.net 为新站并完整比对分类/章节/图片链",
+    capabilities: "全部/12 分类/排行/热门/最新/搜索 / 详情章节列表 / 章节图片阅读",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -136,6 +143,7 @@ const ROUTE_CONFIGS = {
   miss: { provider: "miss" },
   tx: { provider: "tx", preset: "home" },
   rou: { provider: "rou", preset: "home" },
+  jm: { provider: "jm" },
 };
 
 export function getProviderForSite(slug) {

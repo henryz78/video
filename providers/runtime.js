@@ -905,6 +905,9 @@ const QIYING_HEADERS = {
 const MR_ORIGIN = "https://mrds.com";
 const MR_MIRRORS = ["https://www.mrds66.com", "https://www.mrds.com"];
 
+const JM_ORIGIN = "https://18mh.net";
+const JM_MIRRORS = ["https://32b.azucyfo.com"];
+
 function qiyingImageUrl(url = "") {
   if (!url) return "";
   return url.replace(/^https?:\/\/pic\.[a-z0-9.-]+\.cn/, QIYING_IMG_CDN);
@@ -1138,6 +1141,165 @@ async function mrList(requestUrl) {
     totalPages: total,
     note: q ? "search" : category ? "category" : "latest",
     provider: "mr",
+  }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
+const JM_CATEGORIES = [
+  ["", "全部禁漫"], ["rb", "日本H漫"], ["hg", "韩国H漫"], ["jq", "剧情"], ["xy", "校园"],
+  ["aq", "爱情"], ["bl", "BL"], ["qh", "奇幻"], ["tj", "调教"], ["ll", "乱伦"],
+  ["dp", "短篇"], ["db", "单本"], ["tr", "同人"],
+];
+const JM_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CFNav-Independent/2.0",
+};
+
+function jmImageUrl(url = "") {
+  if (!url) return "";
+  return url.replace(/^https?:\/\/pic\.[a-z0-9.-]+\.cn/, QIYING_IMG_CDN).split("?")[0];
+}
+
+async function jmPage(pathname, mirrors = [JM_ORIGIN, ...JM_MIRRORS]) {
+  let lastError;
+  for (const origin of mirrors) {
+    try {
+      const response = await fetch(new URL(pathname, origin), {
+        headers: JM_HEADERS,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        lastError = new Error(`jm page ${response.status}`);
+        continue;
+      }
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("jm page unavailable");
+}
+
+function jmDecode(value = "") {
+  return decodeHtml(value).replace(/&amp;/g, "&");
+}
+
+function jmParseCards(html) {
+  const items = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<a[^>]+href="(\/comic\/detail\/(\d+))"[^>]*>([\s\S]{0,4000}?)(?:<\/a>|<a\s)/g)) {
+    const id = match[2];
+    const block = match[3];
+    const title = jmDecode((block.match(/alt="([^"]*)"/) || [])[1] || "");
+    const cover = jmImageUrl((block.match(/data-src="([^"]+)"/) || [])[1] || "");
+    const done = /完结|已完结/.test(block) ? "完结" : "";
+    const serial = /连载|更新中/.test(block) ? "连载" : "";
+    if (!id || !title || seen.has(id)) continue;
+    seen.add(id);
+    items.push({ p: id, t: title, r: cover, k: [done || serial || "漫画"], hot: false, jm: true });
+  }
+  return items;
+}
+
+async function jmDetail(id) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await jmPage(`/comic/detail/${id}/`);
+  const title = jmDecode((html.match(/<title>([^<]*)<\/title>/)?.[1] || "").replace(/\s*\|.*$/, "") || `禁漫 ${id}`);
+  const desc = jmDecode((html.match(/<meta name="description" content="([^"]*)"/)?.[1] || ""));
+  const author = jmDecode((html.match(/作者[：:]\s*([^<\n]{1,50})/) || [])[1]?.replace(/\s+/g, " ").trim() || "");
+  const info = html.match(/data-comic-info="([^"]+)"/);
+  let categories = [];
+  let tags = [];
+  if (info) {
+    try {
+      const parsed = JSON.parse(decodeURIComponent(info[1]));
+      categories = parsed.comic_type_name ? [parsed.comic_type_name] : [];
+      tags = (parsed.comic_tag_name || "").split(",").map((t) => t.trim()).filter(Boolean);
+    } catch { /* ignore */ }
+  }
+  const chapters = [];
+  const seenChapters = new Set();
+  for (const match of html.matchAll(/<a[^>]*class=['"][^'"]*detail-page__catalog-item[^'"]*['"][^>]*href="(\/comic\/chapter\/(\d+)\/(\d+))"[^>]*>([\s\S]{0,2000}?)(?:<\/a>|<a\s)/g)) {
+    const chapterId = match[3];
+    if (match[2] !== id || seenChapters.has(chapterId)) continue;
+    seenChapters.add(chapterId);
+    const badge = (match[4].match(/chapter-badge[^>]*>([^<]*)/) || [])[1] || "";
+    const titleText = (match[4].match(/chapter-title[^>]*>([^<]*)/) || [])[1] || "";
+    const name = jmDecode(`${badge.trim()}${titleText.trim() ? " " + titleText.trim() : ""}`.trim()) || `第${chapterId}话`;
+    chapters.push({ id: chapterId, name });
+  }
+  const cover = jmImageUrl((html.match(/data-src="(https:\/\/pic\.[^"]+)/) || [])[1] || "");
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: chapters.length ? `${chapters.length} 话` : "漫画",
+    vod_blurb: [author && `作者：${author}`, categories[0] && `类型：${categories[0]}`].filter(Boolean).join(" · "),
+    vod_content: desc,
+    type_name: categories[0] || "漫画",
+    vod_area: "禁漫天堂",
+    chapters,
+    media_kind: "comic",
+    needs_detail: false,
+    provider: "jm",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function jmChapter(id, chapterId) {
+  if (!/^\d{4,}$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  let html;
+  try {
+    html = await jmPage(`/comic/chapter/${id}/${chapterId}/`);
+  } catch {
+    return json({ message: "章节不存在或已删除" }, { status: 404 });
+  }
+  const title = jmDecode((html.match(/<title>([^<]*)<\/title>/)?.[1] || `第${chapterId}话`).replace(/\s*\|.*$/, ""));
+  const images = [...new Set((html.match(/data-src="(https:\/\/[^"]+)"/g) || []).map((m) => m.replace(/data-src="|"/g, "")))].filter((u) => /pic\.|\.(jpe?g|png|webp|gif)/i.test(u)).map(jmImageUrl);
+  if (!images.length) return json({ message: "此章节没有可读图片" }, { status: 404 });
+  return json({
+    vod_id: id,
+    chapter_id: chapterId,
+    vod_name: title,
+    images,
+    total: images.length,
+    provider: "jm",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function jmList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("page")) || 1);
+  const category = requestUrl.searchParams.get("category") || "";
+  const q = (requestUrl.searchParams.get("q") || "").trim();
+  const scope = requestUrl.searchParams.get("scope") || "all";
+  let pathname;
+  if (q) {
+    pathname = `/comic/search/${encodeURIComponent(q)}/`;
+  } else if (scope === "rank") {
+    pathname = "/comic/rank/";
+  } else if (scope === "hot") {
+    pathname = "/comic/hot/";
+  } else if (scope === "newest") {
+    pathname = "/comic/newest/";
+  } else if (scope === "freshest") {
+    pathname = "/comic/freshest/";
+  } else if (category) {
+    pathname = page <= 1 ? `/comic/all/${category}/` : `/comic/all/${category}/${page}/`;
+  } else {
+    pathname = page <= 1 ? "/comic/all/" : `/comic/all/page/${page}/`;
+  }
+  const html = await jmPage(pathname);
+  const items = jmParseCards(html);
+  let total = 1;
+  const totalMatch = html.match(/dx-filter-total[^>]*>（(\d+)）/);
+  if (totalMatch) total = Number(totalMatch[1]) || 1;
+  const pagerMatch = html.match(/class="pager"[^>]*data-link="([^"]+)"/);
+  const perPage = items.length || 48;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  return json({
+    items,
+    page,
+    totalPages,
+    note: q ? "search" : scope === "rank" ? "rank" : scope === "hot" ? "hot" : scope === "newest" ? "newest" : scope === "freshest" ? "freshest" : category ? "category" : "latest",
+    provider: "jm",
   }, { headers: { "cache-control": "public, max-age=60" } });
 }
 
@@ -2186,6 +2348,11 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
       if (action === "cats") return json(await qiyingCats(await mrPage("/")), { headers: { "cache-control": "public, max-age=600" } });
       if (action === "list" || action === "search") return await mrList(requestUrl);
       return await mrDetail(requestUrl.searchParams.get("id"));
+    }
+    if (provider === "jm") {
+      if (action === "chapter") return await jmChapter(requestUrl.searchParams.get("id"), requestUrl.searchParams.get("chapter"));
+      if (action === "detail") return await jmDetail(requestUrl.searchParams.get("id"));
+      return await jmList(requestUrl);
     }
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));

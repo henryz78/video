@@ -223,6 +223,7 @@ function SourcePanel({ health }) {
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);
   if (provider?.id === "qiying" || provider?.id === "mr") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
+  if (provider?.id === "jm") return <JmPage site={site} go={go} setHealth={setHealth} />;
   const MISS_TABS = [
     ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
     ["monthly-hot", "本月热门"], ["chinese-subtitle", "中文字幕"], ["uncensored-leak", "无码流出"],
@@ -541,6 +542,124 @@ function QiyingModal({ post, onClose, provider }) {
 
 function setPostPlay(post, url) {
   post.play_url = url;
+}
+
+const JM_TABS = [
+  ["", "全部禁漫"], ["rb", "日本H漫"], ["hg", "韩国H漫"], ["jq", "剧情"], ["xy", "校园"],
+  ["aq", "爱情"], ["bl", "BL"], ["qh", "奇幻"], ["tj", "调教"], ["ll", "乱伦"],
+  ["dp", "短篇"], ["db", "单本"], ["tr", "同人"],
+];
+const JM_SCOPES = [["all", "全部"], ["rank", "排行榜"], ["hot", "热门"], ["newest", "最近更新"], ["freshest", "最新上架"]];
+
+function JmPage({ site, go, setHealth }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [submitted, setSubmitted] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [category, setCategory] = useState("");
+  const [scope, setScope] = useState("all");
+  const [selected, setSelected] = useState(null);
+  const [ageAccepted, setAgeAccepted] = useState(() => (location.hostname === "127.0.0.1" && new URLSearchParams(location.search).has("qa")) || localStorage.getItem("cf-age") === "yes");
+  const request = (params) => {
+    setLoading(true);
+    setError("");
+    const qs = new URLSearchParams({ action: "list", ...params });
+    return fetch(`/provider-api/jm?${qs}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "目录加载失败");
+      setItems(body.items || []);
+      setTotalPages(body.totalPages || 1);
+      setLoading(false);
+      setHealth("ok");
+    }).catch((loadError) => {
+      setError(loadError.message || "目录加载失败");
+      setLoading(false);
+      setHealth("error");
+    });
+  };
+  useEffect(() => {
+    const params = { page: 1 };
+    if (submitted) { params.q = submitted; params.category = ""; params.scope = "all"; }
+    else if (scope !== "all") params.scope = scope;
+    else if (category) params.category = category;
+    request(params);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitted, scope, category]);
+  useEffect(() => { setPage(1); }, [submitted, scope, category]);
+  useEffect(() => {
+    if (page === 1) return;
+    const params = { page };
+    if (submitted) { params.q = submitted; params.category = ""; params.scope = "all"; }
+    else if (scope !== "all") params.scope = scope;
+    else if (category) params.category = category;
+    request(params);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+  const submit = (event) => {
+    event.preventDefault();
+    setScope("all");
+    setCategory("");
+    setSubmitted(query.trim());
+  };
+  const openDetail = (comic) => {
+    setSelected({ ...comic, detail_loading: true, images: [], chapter_id: "", reader: false });
+    fetch(`/provider-api/jm?action=detail&id=${encodeURIComponent(comic.p)}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "详情加载失败");
+      setSelected((current) => current && current.p === comic.p ? { ...current, detail_loading: false, chapters: body.chapters || [], d: body.vod_content || "", author: body.vod_blurb || "", type_name: body.type_name || "漫画" } : current);
+    }).catch((detailError) => {
+      setSelected((current) => current && current.p === comic.p ? { ...current, detail_loading: false, detail_error: detailError.message } : current);
+    });
+  };
+  const openChapter = (chapterId) => {
+    const comic = selected;
+    if (!comic) return;
+    setSelected((current) => current && current.p === comic.p ? { ...current, reader: true, chapter_id: chapterId, chapter_loading: true, chapter_error: "" } : current);
+    fetch(`/provider-api/jm?action=chapter&id=${encodeURIComponent(comic.p)}&chapter=${encodeURIComponent(chapterId)}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "章节加载失败");
+      setSelected((current) => current && current.p === comic.p && current.chapter_id === chapterId ? { ...current, chapter_loading: false, images: body.images || [] } : current);
+    }).catch((loadError) => {
+      setSelected((current) => current && current.p === comic.p && current.chapter_id === chapterId ? { ...current, chapter_loading: false, chapter_error: loadError.message } : current);
+    });
+  };
+  return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
+    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
+    <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
+    <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 禁漫天堂 18mh.net</div></section>
+    <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的漫画`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
+    <div className="qiying-tabs">{JM_SCOPES.map(([key, label]) => <button key={key} className={scope === key && !category && !submitted ? "is-active" : ""} onClick={() => { setScope(key); setCategory(""); setSubmitted(""); }}>{label}</button>)}</div>
+    <div className="qiying-tabs">{JM_TABS.map(([key, label]) => <button key={key} className={category === key && scope === "all" && !submitted ? "is-active" : ""} onClick={() => { setCategory(key); setScope("all"); setSubmitted(""); }}>{label}</button>)}</div>
+    <section className="content-section">
+      <div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? "CATEGORY" : scope === "all" ? "LATEST UPDATE" : "RANK / HOT"}</small><h2>{submitted ? `“${submitted}”` : category ? (JM_TABS.find(([k]) => k === category)?.[1] || "分类") : (JM_SCOPES.find(([k]) => k === scope)?.[1] || "全部")}</h2></div><span>{items.length} 条</span></div>
+      {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
+      {error && <div className="error-state"><h3>目录加载失败</h3><p>{error}</p><button onClick={() => request({ page: 1, ...(category ? { category } : {}) })}>重新加载</button></div>}
+      {!loading && !error && <>
+        <div className="qiying-grid">{items.map((comic) => <button className="qiying-card" key={comic.p} onClick={() => openDetail(comic)}>
+          <div className="qiying-cover"><img src={comic.r} alt="" loading="lazy" referrerPolicy="no-referrer" />{comic.k?.[0] && <span className="qiying-counts">{comic.k[0]}</span>}</div>
+          <div className="qiying-meta"><strong>{comic.t || "未命名"}</strong><p>#{comic.p}</p></div>
+        </button>)}</div>
+        {!items.length && <div className="error-state"><h3>没有匹配内容</h3><p>换个关键词或分类试试。</p></div>}
+        {!submitted && !category && scope === "all" && <div className="pager"><button disabled={page <= 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>上一页</button><span>{page} / {totalPages}</span><button disabled={page >= totalPages} onClick={() => setPage((x) => x + 1)}>下一页</button></div>}
+      </>}
+    </section>
+    {selected && <JmModal comic={selected} onClose={() => setSelected(null)} onChapter={openChapter} />}
+  </div>;
+}
+
+function JmModal({ comic, onClose, onChapter }) {
+  const images = comic.images || [];
+  const chapters = comic.chapters || [];
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><article className="qiying-modal">
+    <button className="modal-close" onClick={onClose}>关闭</button>
+    <div className="qiying-player-area">
+      {comic.detail_loading ? <div className="no-stream">正在加载漫画详情…</div> : comic.detail_error ? <div className="no-stream">{comic.detail_error}</div> : comic.chapter_loading ? <div className="no-stream">正在加载章节图片…</div> : comic.chapter_error ? <div className="no-stream">{comic.chapter_error}</div> : images.length ? <div className="jm-reader">{images.map((src, index) => <img key={index} src={src} alt={`第 ${index + 1} 页`} loading="lazy" referrerPolicy="no-referrer" style={{ width: "100%", maxWidth: 640, margin: "0 auto", display: "block" }} />)}</div> : comic.r ? <img src={comic.r} alt="" referrerPolicy="no-referrer" style={{ width: "100%", maxHeight: "60vh", objectFit: "contain", background: "#000" }} /> : <div className="no-stream">暂无封面</div>}
+    </div>
+    <div className="detail-copy"><small>{comic.type_name || "COMIC DETAIL"}</small><h2>{comic.t || "未命名"}</h2><p>{comic.d || "暂无简介"}</p>
+      {chapters.length > 0 && <div className="jm-chapter-strip">{chapters.map((chapter) => <button key={chapter.id} className={comic.chapter_id === chapter.id ? "is-active" : ""} onClick={() => onChapter(chapter.id)}>{chapter.name}</button>)}</div>}
+      <dl><div><dt>编号</dt><dd>#{comic.p}</dd></div><div><dt>来源</dt><dd>禁漫天堂 18mh.net 实时上游</dd></div></dl>
+    </div>
+  </article></div>;
 }
 
 export function App() {

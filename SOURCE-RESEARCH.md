@@ -174,7 +174,7 @@
 - `91` / 看91：独立上游已确认为 `91porna.com`（2026-08-14 全功能实测通过）。目录与看91 参考站完全一致（分类 `/comic/index/video?category=play|now_month_hot|original`、搜索 `/comic/index/search?keyword=`、JSON-LD 与看91 的 `#/watch/{id}` 同 ID；列表/分页/搜索/相关视频 `/comic/av/relvideo`/RSS `/feed/video`/embed `/comic/index/embed?id=` 均验证可用）。播放链路已实测打通：详情页内联混淆脚本 `document.write` 调 `/index/detail_play?img={封面路径}&ads={广告}&u={视频稳定签名}&t={parseInt(now/1000/2100)}`（JSONP 风格，返回混淆 JS），纯 JS 解包 packed 脚本后实时请求得 m3u8；m3u8 为单码率 AES-128 加密清单（显式 IV），`crypt.key` 与 5 秒分片位于 `tp*.xmbvxj.cn`（多台边缘，均已签名，`auth_key` 短时效需实时取流）。封面图在 `pic.xmbvxj.cn`，**图片本身也是 AES-CBC 加密**（固定密钥 `f5d965df75336270` / IV `97b60394abc2fbe1`，PKCS7，`crypto_image.js` 客户端解密，服务端需解密后使用）。`expose.eisees.com` 明文图域实测返回空图不可用。主站 Cloudflare 后面，大陆 DNS 被污染（真实 IP 172.67.181.57 / 104.21.40.76，可用 `dns.google/resolve` DoH 获取；本机 `--resolve` 或正常网络直连即可）。已实现为 provider `kan91`（列表/搜索/分页/详情/封面解密代理/AES-128 HLS 播放），实测 200、CORS 全 `*`，入口状态专用已验收。
 - `mr` / 看每日大赛：约 1677 页、每页 30 条；接口 `/api/meta`、`/api/posts?page=1`，图片为 `media.cfnav.com/m/kan-mr/*`；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看每日大赛 / mrds.com」）。**
 - `mm` / 墨影集：14973 图集、841140 张图片；图片直连 `telegra.ph/file/*`；已更新，恢复为待接入。
-- `jm` / 禁漫天堂：80 本/页，封面来自 `cdn-msp2.18comic.ink`，排行、分类与搜索可见；已更新，恢复为待接入。
+- `jm` / 禁漫天堂：80 本/页，封面来自 `cdn-msp2.18comic.ink`，排行、分类与搜索可见；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看禁漫天堂 / 18mh.net」）。**
 - `book` / 有声读物：书库/音声双模式，书库第一页 50 本，封面直连 `cdn2.createaiasian.com`；已更新，恢复为待接入。
 
 ### 尚无独立上游
@@ -288,6 +288,36 @@
 - worker 端：复用 `qiyingParseCards`/`qiyingCats`/`qiyingExtractDetail`（新增 `siteName` 参数默认「91吃瓜网」，mr 传「每日大赛」）/`qiyingImageUrl`；新增 `MR_ORIGIN = mrds.com` + `MR_MIRRORS = [www.mrds66.com, www.mrds.com]`、`mrPage`（镜像 failover）、`mrDetail`、`mrPlay`（`idx` 选第 N 个视频；帖子被删 404「帖子已从主站删除，仅图集可用」）、`mrList`（列表 `/`、`/page/N/`；分类 `/category/{slug}/` 与 `/{n}/`；搜索 `/search/{kw}/` 仅第一页）。`qiyingCats` 参数化接受已抓 HTML。
 - 浏览器端：`QiyingPage`/`QiyingModal` 参数化 `provider`（api 前缀 `/provider-api/{id}`、来源名），qiying 与 mr 共用同一组件。
 - 验收（headless Chrome，2026-08-15）：列表 27 卡 + 封面 27/27 加载、分类「每日大赛」28 卡、分页 1/1658 → 2/1658（30 卡）、搜索「小千」22 条、详情（图集 + 1 视频按钮）、**播放 readyState 4、1280×720 推进**、页面零 JS 错误（favicon 404 与 miss 健康检查 502 与 mr 无关）。
+
+## 看禁漫天堂 / 18mh.net（`jm`，2026-08-15 接入）
+
+### 参考站与上游关系（重要分歧）
+
+- 参考站 `jm.cfnav.me` 的 `/api/meta` 自述 `sourceType: "18comic-web"`、note「数据来自 18comic 网页端 /album/* /albums /photo/*」，`/api/list` source 为 `https://18comic.ink`（旧库）：id 146 万级（如 1461564「[英雄联盟漫画]星守御姐们的Onlyfans直播秀」）、封面 `cdn-msp2.18comic.ink/media/albums/{id}_3x4.jpg?u=`、分类 10 个（doujin/single/short/another/hanman/meiman/doujin_cosplay/3D/english_site）。参考站 JS（app.js）另有 `/api/album?id=`、`/api/chapter?id=` 详情接口。
+- **18comic.ink 主站全站 Cloudflare challenge**：Node 403、headless Chrome 也停在「请稍候… 安全验证」（`cdn-msp2.18comic.ink` 封面 CDN 仍可直连 200 真 JPEG）。
+- **官方新站 `18mh.net`**：用户油猴脚本（Richy「18mh.net 去广告·隐私保护·保播放」）匹配 `18mh.net` + `jmtt1.net`；GitLab 官方仓库 `18mh-net/18mh-net`（2026-03-19 创建，README 公布：永久地址 18mh.net、免翻墙最新入口 `32b.azucyfo.com`、海外中转 `qkfmoba.cc`、TG `t.me/t_18dm_net`、邮箱 huijiadelu109@gmail.com）确认官方身份。
+- **两库不同源**：18mh.net id 2.6 万级、路径 `/comic/*`；参考站旧库标题（星守御姐们的Onlyfans直播秀）在 18mh.net 搜索/详情均 404。按独立性规则（参考站同源 18comic.ink 无法独立抓取）接官方新站 18mh.net。
+- 付费检查：18mh.net 首页/分类/排行/搜索/详情/章节均无会员/VIP/付费/购买/金币信号，全站公开免费。
+
+### 站点结构（18mh.net，全部 Node 直抓 200）
+
+- 导航：漫画 `/comic`（all/rank/hot/newest/freshest + 12 分类）、小说 `/novel`、视频 `/mv`。
+- 列表 `/comic/all`：48 卡/页（SSR，`ul.dx-novel-list > li > a[href="/comic/detail/{id}"]`，`img[data-src]` 封面 + `alt` 标题 + 完结/连载徽章），总数见 `dx-filter-total（20476）`；分页 `/comic/all/page/N`。
+- 分类 `/comic/all/{slug}`（rb 日本H漫 18882 条、hg 韩国H漫、jq 剧情、xy 校园、aq 爱情、bl BL、qh 奇幻、tj 调教、ll 乱伦、dp 短篇、db 单本、tr 同人）；**分页是 `/comic/all/{slug}/{n}`**（`/page/N` 404）。
+- 排行 `/comic/rank`（220 卡，周/月/年榜 Tab，页面含 JSON-LD `itemListElement` 100 项含 author/genre）、热门 `/comic/hot`、最近更新 `/comic/newest`、最新上架 `/comic/freshest`（各 48 卡）。
+- 搜索 `/comic/search/{kw}`：SSR 卡片，**仅第一页**（任何分页形式均 404）。
+- 详情 `/comic/detail/{id}`：`data-comic-info` JSON（comic_type_name 类型/comic_tag_name 标签）、`<meta name="description">` 简介、章节列表 `<a class="detail-page__catalog-item..." href="/comic/chapter/{id}/{n}">`（内含 `chapter-badge`「第 N 话」+ `chapter-title` 话名；注意 class 属性是**单引号 + 尾空格**、href 前双空格，正则需宽松）。「开始阅读」按钮是 `detail-page__read-btn` 不含 catalog-item class，不会被误抓。**注意**：`a.detail-page__catalog-item` 块超 600 字符（含右侧操作区），`{0,600}?` 上限会漏抓，需 2000。
+- 章节 `/comic/chapter/{id}/{n}`：`<img data-src="...">` 图片列表（54 图/话，懒加载）；标题「{漫画名} 第N话 - 高清漫画在线看」。
+
+### 图片链路
+
+- 封面/章节图都在 `pic.xmbvxj.cn`（与 kan91 同域家族），`?auth_key=` 签名参数**可省略**（无签名 200 同字节）；但**原图是加密字节**（magic `4f e8 97 a4` 非 JPEG）→ 必须重写为 `imgpublic.ycomesc.live{path}`（真 JPEG `ff d8 ff e0` / GIF），并去掉 `?auth_key`。复用 qiying 的 imgpublic CDN 即可。
+
+### 本地实现（provider `jm`）
+
+- worker 端：`JM_ORIGIN = 18mh.net` + `JM_MIRRORS = [32b.azucyfo.com]`、`jmPage`（镜像 failover）、`jmImageUrl`（pic.*.cn → imgpublic + 去 auth_key）、`jmParseCards`（兼容相对/绝对 href、`{0,4000}` 卡片上限）、`jmDetail`（data-comic-info + catalog-item 章节列表）、`jmChapter`（章节图片列表）、`jmList`（scope 参数 all/rank/hot/newest/freshest、category、q）。
+- 浏览器端：新增 `JmPage`（两级 Tab：范围 全部/排行榜/热门/最近更新/最新上架 + 分类 13 项；搜索；分页仅「全部」显示）+ `JmModal`（详情 + 章节条 + 纵向阅读器 `.jm-reader`）。
+- 验收（headless Chrome，2026-08-15）：列表 48 卡、分类「日本H漫」48 卡、排行 220 卡、搜索「姐姐们的调教」12 条、详情 70 章节、**阅读器 54 页全加载（720×3008）**、零 JS 错误（favicon 404 与 miss 健康检查 502 与 jm 无关）。
 
 ## 看麻豆 / madou.club（`madou`，2026-08-14 接入）
 
