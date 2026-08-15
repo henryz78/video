@@ -168,7 +168,7 @@
 - `miss` / 看 Miss：页面提供类型、女优、发行商和 API 文档入口；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看 Miss / missav.media」）。**
 - `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。**2026-08-14 已接入并本地验收（见下节「栖影 / 91吃瓜网」）。**
 - `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。
-- `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。
+- `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看糖心Vlog / tangxinvlog.pro」）。**
 - `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
 - `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。**2026-08-14 上游破解后用户决定跳过（见下方「好片 / haoqi7.com 破解记录（2026-08-14，未接入）」）。**
 - `91` / 看91：独立上游已确认为 `91porna.com`（2026-08-14 全功能实测通过）。目录与看91 参考站完全一致（分类 `/comic/index/video?category=play|now_month_hot|original`、搜索 `/comic/index/search?keyword=`、JSON-LD 与看91 的 `#/watch/{id}` 同 ID；列表/分页/搜索/相关视频 `/comic/av/relvideo`/RSS `/feed/video`/embed `/comic/index/embed?id=` 均验证可用）。播放链路已实测打通：详情页内联混淆脚本 `document.write` 调 `/index/detail_play?img={封面路径}&ads={广告}&u={视频稳定签名}&t={parseInt(now/1000/2100)}`（JSONP 风格，返回混淆 JS），纯 JS 解包 packed 脚本后实时请求得 m3u8；m3u8 为单码率 AES-128 加密清单（显式 IV），`crypt.key` 与 5 秒分片位于 `tp*.xmbvxj.cn`（多台边缘，均已签名，`auth_key` 短时效需实时取流）。封面图在 `pic.xmbvxj.cn`，**图片本身也是 AES-CBC 加密**（固定密钥 `f5d965df75336270` / IV `97b60394abc2fbe1`，PKCS7，`crypto_image.js` 客户端解密，服务端需解密后使用）。`expose.eisees.com` 明文图域实测返回空图不可用。主站 Cloudflare 后面，大陆 DNS 被污染（真实 IP 172.67.181.57 / 104.21.40.76，可用 `dns.google/resolve` DoH 获取；本机 `--resolve` 或正常网络直连即可）。已实现为 provider `kan91`（列表/搜索/分页/详情/封面解密代理/AES-128 HLS 播放），实测 200、CORS 全 `*`，入口状态专用已验收。
@@ -344,3 +344,34 @@
 - worker 端：`missavPage`、`missavAsset`、`parseMissavCards`、`missavPageCount`、`missavList`（preset 支持 `genre:`/`actress:`/`maker:` 前缀 + 分页 + 搜索）、`missavDetail`（字段 + uuid → m3u8 直链，无代理无缓存）。
 - 前端：10 个分区 Tab + 搜索 + 标准 HLS.js 播放（直连 m3u8/ts，零 cfnav 依赖）。
 - 验收（headless Chrome，2026-08-15）：列表 12 卡片、10 tabs 逐个可用、搜索（SNOS）12 条、详情（SNOS-334 · S1 · 肉尊 · 2026-08-07）打开、点播放 → hls.js → videoWidth 640x360、paused:false、time 推进、12 张封面全部 200/ok、页面零错误。
+
+## 看糖心Vlog / tangxinvlog.pro（`tx`，2026-08-15 接入）
+
+### 参考站与上游同源证据
+
+- 参考站 `tx.cfnav.me` 登录墙（Linux.do 登录页），无登录态无法访问内容；用户登录态 console 导出 API 契约（`/api/home`、`/api/videos?page=`、`/api/videos/{slug}`、`/api/artists`、`/api/artists/{name}`），SPA hash 路由 `#/`、`#/videos`、`#/artists`，页脚「内容来自公开源站,仅作聚合展示」。
+- **同源铁证**：参考站 `/api/videos?page=43` 返回 `{"error":"Upstream HTTP 404 for https://tangxinvlog.pro/videos/43/"}`——参考站后端实时抓取 `tangxinvlog.pro`，两边同为 42 页封顶。
+- **逐项核对**：988 部 = 41×24 + 第 42 页 4 条；第 42 页 4 条（标题/720p/时长/博主）与参考站逐条一致（含「人形兔兔」标题双空格细节）；首页 12 条 slug/标题/博主/时长一致；参考站 `西野加奈` 详情 24 条/1 页（参考站截断），上游博主页实为全量（本地直接接上游全量，如饼干姐姐 79 部）。
+- 参考站无搜索（`/api/search` 404）→ 本地隐藏搜索框对齐体验。
+- 上游线索来源：用户提供的油猴下载脚本（`Richy.txt`，tangxinvlog.pro 抓流解密脚本）确认域名/防盗链/AES-128，仅作参考，不复制其逻辑。
+
+### 上游结构（Astro v6.3.1）
+
+- 列表：`/videos/`（24/页）、分页 `/videos/{n}/`（`<nav class="pagination">` `current` 如 `2 / 42`）；首页 `/` 12 条最新；博主页 `/artists/{name}/` 全量一页（header 含作品数/身高/三围/本站粉丝/全网粉丝/简介）。
+- 卡片：`<a class="video-card" href="/videos/{slug}/">` + `<img src="https://t.5gcdn.xyz/videos/{cdnId}/cover.jpg" alt="{标题}">` + `.quality`（1080p）+ `.duration`（MM:SS）+ `.title` + `.meta span`（博主）。
+- 详情：`<video id="player" data-src="https://t.5gcdn.xyz/videos/{cdnId}/index.m3u8">`、`<h1>` 标题、`.row`（博主链接 + 日期 `YYYY-MM-DD` + 时长）、`.tag`、`.video-desc`、猜你喜欢 12 卡。
+- 博主卡片：`<a class="artist-card" href="/artists/{name}/">` + `<img src="/avatars/{name}.jpg" width="120">` + `.name` + 两个 `.stat`（作品数、全网粉丝）。
+
+### 媒体链路（防盗链 + AES-128，必须同源代理）
+
+- 播放清单为 **AES-128 加密**：`#EXT-X-KEY:METHOD=AES-128,URI="enc.key",IV=0x64cf...`，4 秒/片 `segN.ts`（约 706 片），清单内全相对路径。
+- **防盗链**：`t.5gcdn.xyz` 无 CORS 头，且不带 `Referer: https://tangxinvlog.pro/` 即 403（浏览器跨域被 CORS + 403 双拦截）；博主头像同源无 CORS。
+- **代理设计**：全部媒体走 `/provider-api/tx?action=media&path=...`（worker 带 Referer/UA 抓取 + 返回 CORS `*`），path 白名单 `videos/{cdnId}/{file}` 或 `avatars/{name}.jpg`；m3u8 内**分片与 key 均重写为代理绝对 URL**。
+- **关键坑（实测）**：key 行 `URI="enc.key"` 必须一并重写，否则 hls.js 基于 manifest URL（`/provider-api/tx?action=media&...`）把目录解析成 `/provider-api/`，请求 `/provider-api/enc.key` → 404 → 永远卡加载。
+- 直测（Node + 浏览器）：m3u8 200（~66KB）、seg 200（~1.4MB）、key 200（16B）、封面/头像 200 image/jpeg。
+
+### 本地实现（provider `tx`）
+
+- worker 端：`tangxinPage`（Referer/UA）、`tangxinMediaUrl`、`parseTangxinCards`、`tangxinPageCount`、`tangxinList`（preset `home`/`videos`/`artist:{name}`；videos 为上游页式分页直接返回该页 24 条，artist 为全量切片 24/页）、`tangxinArtists`（46 位，media_kind `artist`）、`tangxinDetail`（m3u8/博主/日期/时长/标签/简介/猜你喜欢，vod_play_url 为代理 m3u8）、`tangxinMedia`（代理 + m3u8 分片/key 重写）。
+- 前端：3 个 Tab（最新/全部作品/博主）；博主 tab 渲染 46 位圆形头像卡片，点击进该博主作品列表；隐藏搜索框（参考站无搜索）。
+- 验收（headless Chrome，2026-08-15）：首页 12 卡、全部作品第 2/42 页（24/4 条）、博主索引 46 位（头像/作品数/粉丝）、饼干姐姐作品列表 24 卡、详情打开、**1080p AES-128 播放推进**（currentTime 11~15s、1920×1080、buffered 43s+），零 cfnav 依赖。

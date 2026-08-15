@@ -97,6 +97,13 @@ export const PROVIDERS = {
     discoveredFrom: "看Miss 参考站 OpenAPI 文档与 missav.media 条目/媒体逐项同源核对",
     capabilities: "分区目录 / 搜索 / 详情 / 女优·类型·发行商索引 / 直链多码率 HLS 播放",
   },
+  tx: {
+    id: "tx",
+    name: "糖心Vlog 公开目录",
+    upstream: "tangxinvlog.pro + t.5gcdn.xyz（AES-128 HLS，同源代理转发）",
+    discoveredFrom: "看糖心Vlog 参考站 API 契约与 tangxinvlog.pro 条目/媒体逐项同源核对",
+    capabilities: "首页最新 / 全部作品分页 / 46 博主索引 / 博主作品页 / 详情 / 代理 AES-128 HLS 播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -112,6 +119,7 @@ const ROUTE_CONFIGS = {
   qiying: { provider: "qiying" },
   madou: { provider: "madou" },
   miss: { provider: "miss" },
+  tx: { provider: "tx", preset: "home" },
 };
 
 export function getProviderForSite(slug) {

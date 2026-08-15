@@ -1662,6 +1662,184 @@ async function missavDetail(id) {
   }, { headers: { "cache-control": "public, max-age=180" } });
 }
 
+/* ---------------- tx / 看糖心Vlog (tangxinvlog.pro) ---------------- */
+const TANGXIN_ORIGIN = "https://tangxinvlog.pro";
+const TANGXIN_MEDIA = "https://t.5gcdn.xyz";
+const TANGXIN_HEADERS = {
+  referer: "https://tangxinvlog.pro/",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+};
+
+async function tangxinPage(pathname) {
+  const response = await fetch(new URL(pathname, TANGXIN_ORIGIN), { headers: TANGXIN_HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`tangxinvlog page ${response.status}`);
+  return response.text();
+}
+
+function tangxinMediaUrl(path) {
+  return `/provider-api/tx?action=media&path=${encodeURIComponent(path)}`;
+}
+
+function parseTangxinCards(html) {
+  const cards = [];
+  const seen = new Set();
+  const pattern = /<a class="video-card" href="\/videos\/([0-9a-f]+)\/">/g;
+  for (const match of html.matchAll(pattern)) {
+    const slug = match[1];
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    const block = html.slice(match.index, match.index + 2600);
+    const img = block.match(/<img src="https:\/\/t\.5gcdn\.xyz\/videos\/(\d+)\/cover\.jpg" alt="([^"]*)"/);
+    if (!img) continue;
+    const cdnId = img[1];
+    const title = decodeHtml(img[2]) || slug;
+    const quality = block.match(/<span class="quality">([^<]*)<\/span>/)?.[1] || "";
+    const duration = block.match(/<span class="duration">([^<]*)<\/span>/)?.[1] || "";
+    const artist = block.match(/<div class="meta">\s*<span>([^<]*)<\/span>/)?.[1]?.trim() || "";
+    cards.push({
+      vod_id: slug,
+      vod_name: title,
+      vod_pic: tangxinMediaUrl(`videos/${cdnId}/cover.jpg`),
+      vod_remarks: duration || quality || "VIDEO",
+      vod_blurb: [quality, artist].filter(Boolean).join(" · "),
+      vod_content: artist,
+      vod_area: "tangxinvlog.pro",
+      type_name: quality || "糖心Vlog",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "tx",
+    });
+  }
+  return cards;
+}
+
+function tangxinPageCount(html, page) {
+  const current = html.match(/<span class="current">\s*\d+\s*\/\s*(\d+)\s*<\/span>/);
+  return current ? Math.max(page, Number(current[1])) : page;
+}
+
+async function tangxinList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  let pathname;
+  if (preset === "videos") pathname = page > 1 ? `/videos/${page}/` : "/videos/";
+  else if (preset.startsWith("artist:")) {
+    const name = decodeURIComponent(preset.slice("artist:".length));
+    if (!name) return json({ message: "invalid preset" }, { status: 400 });
+    pathname = `/artists/${encodeURIComponent(name)}/`;
+  } else pathname = "/";
+  const html = await tangxinPage(pathname);
+  const all = parseTangxinCards(html);
+  const list = preset === "videos" ? all : all.slice((page - 1) * 24, page * 24);
+  const pagecount = preset === "videos" ? tangxinPageCount(html, page) : Math.max(1, Math.ceil(all.length / 24));
+  return json({
+    code: 1,
+    page,
+    pagecount,
+    limit: 24,
+    total: pagecount * 24,
+    list,
+    provider: "tx",
+  }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+async function tangxinArtists() {
+  const html = await tangxinPage("/artists/");
+  const artists = [];
+  const pattern = /<a class="artist-card" href="\/artists\/([^"]+)\/">/g;
+  for (const match of html.matchAll(pattern)) {
+    const name = decodeURIComponent(match[1].replace(/\/$/, ""));
+    const block = html.slice(match.index, match.index + 1200);
+    const avatar = block.match(/<img src="([^"]+)"/)?.[1] || "";
+    const stats = [...block.matchAll(/<div class="stat">([^<]*)<\/div>/g)].map((m) => decodeHtml(m[1]));
+    artists.push({
+      vod_id: `artist:${name}`,
+      vod_name: name,
+      vod_pic: avatar ? tangxinMediaUrl(`avatars/${encodeURIComponent(name)}.jpg`) : "",
+      vod_remarks: stats[0] || "",
+      vod_blurb: stats[1] || "",
+      vod_content: "",
+      vod_area: "tangxinvlog.pro",
+      type_name: "糖心博主",
+      media_kind: "artist",
+      needs_detail: false,
+      provider: "tx",
+    });
+  }
+  return json({ code: 1, page: 1, pagecount: 1, limit: 100, total: artists.length, list: artists, provider: "tx" }, { headers: { "cache-control": "public, max-age=300" } });
+}
+
+async function tangxinDetail(id) {
+  if (!/^[0-9a-f]+$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+  const html = await tangxinPage(`/videos/${id}/`);
+  const title = decodeHtml(html.match(/<h1>([\s\S]*?)<\/h1>/)?.[1]?.trim() || "");
+  const m3u8 = html.match(/data-src="https:\/\/t\.5gcdn\.xyz\/videos\/(\d+)\/index\.m3u8"/);
+  if (!m3u8) return json({ message: "video unavailable" }, { status: 404 });
+  const cdnId = m3u8[1];
+  const row = html.match(/<div class="row">([\s\S]*?)<\/div>/)?.[1] || "";
+  const artist = decodeHtml(row.match(/href="\/artists\/[^"]+"[^>]*>([^<]*)<\/a>/)?.[1]?.trim() || "");
+  const dates = [...row.matchAll(/<span>(\d{4}-\d{2}-\d{2})<\/span>/g)].map((m) => m[1]);
+  const durations = [...row.matchAll(/<span>(\d{1,3}:\d{2})<\/span>/g)].map((m) => m[1]);
+  const date = dates[0] || "";
+  const duration = durations[0] || "";
+  const tags = [...html.matchAll(/<span class="tag">([^<]*)<\/span>/g)].map((m) => decodeHtml(m[1])).filter(Boolean);
+  const description = decodeHtml(html.match(/<div class="video-desc">([\s\S]*?)<\/div>/)?.[1]?.trim() || "");
+  const related = parseTangxinCards(html).slice(0, 12);
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: tangxinMediaUrl(`videos/${cdnId}/cover.jpg`),
+    vod_remarks: duration || "VIDEO",
+    vod_blurb: [artist, date, duration].filter(Boolean).join(" · ") || "糖心Vlog",
+    vod_content: description || tags.join(" · "),
+    vod_area: "tangxinvlog.pro",
+    type_name: tags[0] || "糖心Vlog",
+    vod_year: date.slice(0, 4),
+    vod_play_url: tangxinMediaUrl(`videos/${cdnId}/index.m3u8`),
+    media_kind: "video",
+    needs_detail: false,
+    provider: "tx",
+    metadata: { artist, date, duration, tags, related },
+  }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+async function tangxinMedia(requestUrl) {
+  const path = requestUrl.searchParams.get("path") || "";
+  let target = null;
+  if (/^videos\/\d+\/[a-z0-9._-]+$/i.test(path)) target = `${TANGXIN_MEDIA}/${path}`;
+  else if (/^avatars\/[^/]+\.jpg$/i.test(path)) target = `${TANGXIN_ORIGIN}/${path}`;
+  if (!target) return json({ message: "invalid media path" }, { status: 400 });
+  const isPlaylist = /\.m3u8$/i.test(path);
+  const upstream = await fetch(target, { headers: TANGXIN_HEADERS, signal: AbortSignal.timeout(isPlaylist ? 15_000 : 30_000) });
+  if (!upstream.ok) return json({ message: `tangxin media ${upstream.status}` }, { status: 502 });
+  if (isPlaylist) {
+    const text = await upstream.text();
+    const cdnId = path.match(/^videos\/(\d+)\//)[1];
+    const keyUrl = tangxinMediaUrl(`videos/${cdnId}/enc.key`);
+    const rewritten = text.split(/\r?\n/).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      if (trimmed.startsWith("#EXT-X-KEY:")) return trimmed.replace(/URI="[^"]*"/, `URI="${keyUrl}"`);
+      if (trimmed.startsWith("#")) return line;
+      return tangxinMediaUrl(`videos/${cdnId}/${trimmed}`);
+    }).join("\n");
+    return new Response(rewritten, {
+      headers: {
+        "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "cache-control": "public, max-age=120",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  return new Response(upstream.body, {
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/octet-stream",
+      "cache-control": /(cover\.jpg|avatars)/.test(path) ? "public, max-age=86400" : "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -1679,6 +1857,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx"))) : qiyingDetail(requestUrl.searchParams.get("id")));
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));
+    if (provider === "tx") return await (action === "media" ? tangxinMedia(requestUrl) : action === "artists" ? tangxinArtists() : action === "detail" ? tangxinDetail(requestUrl.searchParams.get("id")) : tangxinList(requestUrl));
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });

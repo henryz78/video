@@ -269,6 +269,7 @@ function SitePage({ site, go, health, setHealth }) {
     ["monthly-hot", "本月热门"], ["chinese-subtitle", "中文字幕"], ["uncensored-leak", "无码流出"],
     ["fc2", "FC2"], ["heyzo", "HEYZO"], ["siro", "SIRO"],
   ];
+  const TX_TABS = [["", "最新"], ["videos", "全部作品"], ["artists", "博主"]];
   const MADOU_TABS = [
     ["", "最新"], ["麻豆传媒", "麻豆传媒"], ["麻豆番外篇", "番外篇"], ["麻豆花絮", "花絮"],
     ["HongKongDoll", "HongKongDoll"], ["PsychopornTW", "PsychopornTW"], ["91制片厂", "91制片厂"],
@@ -295,6 +296,15 @@ function SitePage({ site, go, health, setHealth }) {
   useEffect(() => {
     if (!provider) { setItems([]); setLoading(false); setError(""); return; }
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
+    if (provider.id === "tx" && category === "artists") {
+      setLoading(true); setError("");
+      fetch(`/provider-api/tx?action=artists`, { signal: controller.signal }).then((r) => {
+        if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
+      }).then((data) => { setItems(Array.isArray(data.list) ? data.list : []); setHealth("ok"); }).catch((e) => {
+        if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
+      }).finally(() => setLoading(false));
+      return () => controller.abort();
+    }
     const params = new URLSearchParams({ pg: String(page), limit: "24", ac: "detail" });
     if (submitted) params.set("wd", submitted);
     else if (category) params.set("preset", category);
@@ -319,13 +329,15 @@ function SitePage({ site, go, health, setHealth }) {
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className={`status-chip ${health}`}>{health === "ok" ? "SOURCE ONLINE" : "SOURCE CHECK"}</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">独立适配器 · {provider.name}{provider.preset ? ` · ${provider.preset}` : ""}</div></section>
-    <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
+    {provider?.id !== "tx" && <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>}
     {provider?.id === "madou" && <div className="qiying-tabs">{MADOU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "miss" && <div className="qiying-tabs">{MISS_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
-    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>PAGE {page}</span></div>
+    {provider?.id === "tx" && <div className="qiying-tabs">{TX_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
-      {!loading && !error && <ContentGrid items={items} mode={site.mode} onOpen={async (item) => {
+      {!loading && !error && provider?.id === "tx" && category === "artists" && <div className="tx-artist-grid">{items.map((artist) => <button className="tx-artist-card" key={artist.vod_id} onClick={() => setCategory(artist.vod_id)}><div className="tx-artist-avatar">{artist.vod_pic ? <img src={artist.vod_pic} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>AVATAR</span>}</div><strong>{artist.vod_name}</strong>{artist.vod_remarks && <small>{artist.vod_remarks}</small>}{artist.vod_blurb && <p>{artist.vod_blurb}</p>}</button>)}</div>}
+      {!loading && !error && !(provider?.id === "tx" && category === "artists") && <ContentGrid items={items} mode={site.mode} onOpen={async (item) => {
         if (!item.needs_detail) return setSelected(item);
         setSelected({ ...item, detail_loading: true });
         try {
@@ -352,14 +364,14 @@ function ContentGrid({ items, mode, onOpen }) {
 
 function parseStreams(item) {
   const raw = item.vod_play_url || "";
-  if (/^https?:\/\//.test(raw) && !raw.includes("$")) return [{ label: "默认线路", url: raw, group: 0 }];
+  if ((/^https?:\/\//.test(raw) || raw.startsWith("/")) && !raw.includes("$")) return [{ label: "默认线路", url: raw, group: 0 }];
   const groups = raw.split("$$$");
   const output = [];
   groups.forEach((group, groupIndex) => group.split("#").forEach((entry, index) => {
     const splitAt = entry.indexOf("$");
     if (splitAt > 0) {
       const label = entry.slice(0, splitAt); const url = entry.slice(splitAt + 1);
-      if (/^https?:\/\//.test(url)) output.push({ label: label || `线路 ${index + 1}`, url, group: groupIndex });
+      if (/^https?:\/\//.test(url) || url.startsWith("/")) output.push({ label: label || `线路 ${index + 1}`, url, group: groupIndex });
     }
   }));
   return output;
