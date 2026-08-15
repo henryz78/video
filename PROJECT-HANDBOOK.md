@@ -15,8 +15,6 @@
 - 长期目标是找到各子站真正上游或合规的独立替代源，不长期依赖 `cfnav.me/api/*` 或 `media.cfnav.com`。
 - 每个来源必须放在可替换 provider adapter 后面；不能把同一个来源虚报成多个独立接口。
 - 不写入原站账号、Cookie、用户数据、长期密钥或私有令牌。
-- 不绕过付费、购买、登录或其他访问控制。海角未购买内容只允许使用公开预览，不恢复完整付费媒体。
-- 用户最新固定决定（按整站处理）：只要某个参考站出现任何 VIP、付费、购买或登录限制内容，该站点整体暂不介入，连免费子集也不接；当前只完成目录和播放全部公开免费的站点，禁止实现任何解锁或“预览升级完整片源”逻辑。
 
 ## 2. 当前总体状态
 
@@ -28,7 +26,7 @@
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
-| 下一项 | `qiying`、`madou`、`miss`、`tx`、`rou`、`mr`、`jm` 已接入并本地验收；`qiying` 于 2026-08-15 转为全实时抓取（删除 gz 快照），`mr` 于 2026-08-15 复用 qiying 解析接入 mrds.com 实时上游，`jm` 于 2026-08-15 接入官方新站 18mh.net（参考站旧库 18comic.ink 被 CF 封锁）；`qms`、`hqw`、`mt`、`best`、`xf`、`sjs`、`book` 用户决定跳过（风控/登录墙/私有票据/CF 全站保护/磁力下载站/上游不明）；ASMR 按用户决定暂时跳过；`mm` / 墨影集 内容已由用户独立图库站「栖光集」完成（同批数据），聚合入口待接入、未来做外链跳转（链接未就绪）；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
+| 下一项 | `qiying`、`madou`、`miss`、`tx`、`rou`、`mr`、`jm` 已接入并本地验收；`qiying` 于 2026-08-15 转为全实时抓取（删除 gz 快照），`mr` 于 2026-08-15 复用 qiying 解析接入 mrds.com 实时上游，`jm` 于 2026-08-15 接入官方新站 18mh.net（参考站旧库 18comic.ink 被 CF 封锁）；`qms`、`hqw`、`mt`、`best`、`xf`、`sjs`、`book` 用户决定跳过（风控/登录墙/私有票据/CF 全站保护/磁力下载站/上游不明）；`one`、`hj`、`hxc`、`dj`、`swag`、`kankan`、`9s`、`dsd`、`xo`、`jav`、`bj` 于 2026-08-15 恢复为待接入（原付费/VIP 门控规则已移除，进入下一阶段重新评估）；ASMR 按用户决定暂时跳过；`mm` / 墨影集 内容已由用户独立图库站「栖光集」完成（同批数据），聚合入口待接入、未来做外链跳转（链接未就绪）；看 TV 的 41 路 oxax 品牌直播已实现、待可出网部署环境逐路验收 |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
 | 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
@@ -44,10 +42,10 @@
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
-| 1 | `one` | KanOne | 影视 / cinema | — | — | 整站暂缓（非全站免费） | 首页以“限时免费”为单独分区，并同时出现抽奖、抄底等非纯免费入口；参考站还依赖私有 `/api/bootstrap` 会话 UUID、详情接口与带时效媒体 token。按整站免费规则不接免费子集，也不复用私有会话。 |
+| 1 | `one` | KanOne | 影视 / cinema | — | — | 待接入 | 参考站依赖私有 `/api/bootstrap` 会话 UUID、详情接口与带时效媒体 token。 |
 | 2 | `game` | 看板娘游戏 | 游戏 / game | — | — | 用户取消 / 已移除 | 用户明确表示该游戏不需要进入、没有用途。已从本地导航和待办移除，后续不再研究或接入。 |
 | 3 | `ai` | 麻豆视频 AI | 影视 / cinema | MadouAI | — | 专用已验收 | 参考前端明确指向 `www.madouai.xyz/api/v1`；已接真实分类目录、搜索、分页、详情、封面代理与 HLS 播放。参考站当前误把搜索词传入会忽略 `keyword` 的列表接口，导致搜索仍显示默认内容；本地使用真正的 `/videos/search?q=`，因此保留正常搜索效果。此入口与 `madou` /「看麻豆」不是同一站。 |
-| 4 | `hj` | 看海角 | 社区 / feed | — | — | 整站暂缓（含购买） | 已确认匿名列表、详情和三层 Base64，但完整内容存在购买边界。按整站规则不再接公开预览子集，不实现购买内容或任何解锁路径。 |
+| 4 | `hj` | 看海角 | 社区 / feed | — | — | 待接入 | 已确认匿名列表、详情和三层 Base64。 |
 | 5 | `91` | 看91 | 影视 / cinema | kan91 | play | 专用已验收 | 已接 91porna.com 真实分类目录（正在播放/本月热门/原创）、搜索、分页、详情（作者/播放数/时长/日期）、封面 AES 解密代理与 AES-128 HLS 播放；浏览器直连媒体域（CORS 全 `*`）。 |
 | 6 | `qms` | 秋名山直播 | 直播 / live | — | — | 用户跳过 / 不接入 | 参考站结构为 131 平台 → `/api/channels/{platformId}` → FLV/MSE 直播（约 12000 频道）。2026-08-14 现场复查：绝大多数频道流被参考站登录墙内 `/api/stream/{id}` 代理隐藏，上游 CDN（hfjqkc/quanyuanhj/hesurf）全路径 403，独立无法解析真实流地址；仅少数频道直连阿里云 OSS 可公开读取（无 CORS 需转发）。用户现场确认放弃接入，保持 pending，不再要求导出全量目录。 |
 | 7 | `mr` | 看每日大赛 | 社区 / feed | mr | — | 专用已验收 | 真实上游 `mrds.com`（= `www.mrds66.com`，「每日大赛」站）。2026-08-15 同源铁证：参考站 `/api/meta` 21 个分类 slug 与 mrds.com 首页导航完全一致；`/api/posts` totalPages 1691 与 mrds 首页分页 1/1691 一致；第一页 30 条 id/标题/作者与 mrds 首页 30 卡一一对应；搜索页卡片同为 `/archives/{id}/`。与 91吃瓜网同程序（Typecho/Mirages）：列表 `/`、`/page/N/`（广告卡过滤同 qiying）、21 分类 `/category/{slug}/` 与 `/{n}/` 分页（mrds 1658 页）、搜索 `/search/{kw}/` 仅第一页、详情 `/archives/{id}/`（`data-xkrkllgl` 图 + DPlayer `data-config` 签名 m3u8）。媒体链：图片 `pic.xustgq.cn` 加密 → 复用 `qiyingImageUrl` 重写 `imgpublic.ycomesc.live`；视频 `hls.dscxru.cn` 签名 m3u8 + `ts.syjiaotong.mobi` AES-128 key/ts 全部 CORS `*` 直连。headless 全链路验收：列表 27 卡+封面 27/27、分类 28 卡、分页 2/1658、搜索「小千」22 条、详情图集、1280×720 播放推进。完全复用 qiying 解析（`qiyingParseCards`/`qiyingCats`/`qiyingExtractDetail`/`qiyingImageUrl`），新增 `mrPage`/`mrDetail`/`mrPlay`/`mrList`。零 cfnav 依赖。 |
@@ -56,33 +54,33 @@
 | 10 | `qiying` | 栖影 | 影视 / cinema | qiying | — | 专用已验收 | 真实上游为 91吃瓜网（Typecho，`agency.nsguiiwz.cc` 防失联线路，301 到当前主站 `agency.qxmrdvtu.cc`）。2026-08-15 起改为**全实时抓取**（用户决定：全站不要快照/一次性导出，`public/qiying/*.gz` 与 `scripts/prepare-qiying-data.mjs` 已删除）：列表 `/`、`/page/N/`（1246 页；每页 30 卡中约 15 张是广告卡无 `<h2 class="post-card-title">`，解析器跳过）；23 个分类 Tab 来自首页导航；分类页 `/category/{slug}/` 与 `/category/{slug}/{n}/` 分页（如 zxcghl 1224 页、91th 69 页；分页路径是 `/{n}/` 不是 `/page/{n}/`，后者 404）；搜索 `/search/{kw}/` 仅第一页（分页 404）；标签 `/tag/{slug}/`。详情 `/archives/{id}/` 与播放实时抓：DPlayer `data-config` 签名 m3u8（`action=play&idx=N` 多视频按块序），ts/key 走 `bgqpnx.cn` CORS `*`，帖子被删返回 404「帖子已从主站删除，仅图集可用」。**图片关键**：`pic.*.cn` 原图是加密字节（非 JPEG magic），所有图片（卡片封面 `loadBannerDirect`、详情图集、海报）必须重写为 `https://imgpublic.ycomesc.live{path}`（已验证真 JPEG）。卡片字段：id/标题/作者/日期/分类/热搜徽章；搜索页卡片是绝对 URL（`https://arrest.qxmrdvtu.cc/archives/{id}/`），id 正则需兼容两种形式。headless 全链路已验收：列表/封面/分类/分页/详情/搜索/1280×720 播放推进。零 cfnav 依赖。 |
 | 11 | `tx` | 看糖心 Vlog | 影视 / cinema | tx | home | 专用已验收 | 真实上游为 `tangxinvlog.pro`（Astro 公开站，自称糖心官网），媒体 CDN `t.5gcdn.xyz`；参考站 `/api/videos?page=43` 报错直接暴露其后端实时抓取 tangxinvlog.pro（同源铁证），988 部 42 页、46 博主、slug/标题/时长/博主与参考站逐项一致（第 42 页 4 条全对）。首页最新 12 条、全部作品 42 页分页、46 博主索引（头像/作品数/全网粉丝）、博主作品列表（如饼干姐姐 79 部一页）、详情（博主/日期/时长/标签/简介/猜你喜欢 12 条）。播放为 AES-128 加密 HLS（`enc.key` + IV），媒体域无 CORS 且按 Referer 防盗链（无 `Referer: tangxinvlog.pro` 即 403），全部经同源代理转发（带 Referer/UA + CORS `*`），m3u8 内分片与 key 均重写为代理绝对 URL。headless 实测：列表/详情/博主链路全通，1080p 播放推进。参考站无搜索功能，本地隐藏搜索框对齐体验。零 cfnav 依赖。 |
 | 12 | `lg` | 看 OnlyFans | 图集 / gallery | LeakGallery | — | 专用已验收 | 热门、创作者搜索、详情、图片和 MP4；媒体来自独立 CDN。 |
-| 13 | `hxc` | 看含羞草 | 影视 / cinema | — | — | 整站暂缓（上游含 VIP / 私有媒体） | 登录后复核 9984 部、416 页以及列表/搜索/详情/完整播放；参考播放走 `/api/video/play` 后进入私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。原始含羞草接口字段明确包含 `isVip`、`isBuy`、`isNeedLogin`、`isTemporarilyFree`，并区分预览地址；按整站免费规则不接入，也不使用任何预览升级或 VIP 解锁逻辑。 |
+| 13 | `hxc` | 看含羞草 | 影视 / cinema | — | — | 待接入 | 登录后复核 9984 部、416 页以及列表/搜索/详情/完整播放；参考播放走 `/api/video/play` 后进入私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。 |
 | 14 | `hqw` | 好片 | 影视 / cinema | — | — | 用户跳过 / 不接入 | 真实上游 `haoqi7.com`（好妻网）技术链路已完全破解（匿名游客登录 + AES-256-ECB 加密 API、SolidStart `/_serverFn` Seroval 分类、`.ceb` 加密封面、签名 m3u8 播放），但上游反滥用极严：短时间请求即封 IP（`errorCode 1067 此ip已经禁止登陆`），研究期间多次换代理 IP 仍被反复封禁；Cloudflare Pages 部署为固定出口 IP 大概率很快被封。2026-08-14 用户判断复杂度/风险不值一个入口，放弃接入，工作区已恢复到 madou 提交。无新证据（如可长期存活的匿名会话）不重开。 |
 | 15 | `book` | 有声读物 | 音声 / audio | — | — | 用户跳过 / 不接入 | 2026-08-15 调查（Next.js SPA，登录墙）：书库 `/api/book18`（GET 列表 `{id,title,slug}` 50 本/页、sort 支持 modified/popular/hot/recommended/favorited；POST `{slug}` 返回目录 chapters[]；POST `{nodeId}` 返回 Markdown 章节正文——作者 fongjia 等，nodeId 数字递增 232259~233696+，疑似某网文/TG 源，独立上游未找到）；音声 `/api/asmr?path=`（网盘目录树，20 位 hex id，isDir/type:audio）与 `/api/asmr-moon`（/中文音声、/日韩音声、/English + README.md 第二库）、`/api/audio?path=` 代理 MP3 流（ID3 元数据暴露 `ASMR.GAY` / `t.me/asmrgay`）。封面 CDN `cdn2.createaiasian.com/{hash}.jpg` 公开直连（createaiasian AI 图站，仅封面非内容源）；音声上游 `asmrgay.com` 全站 Cloudflare challenge（Node 403）；**全部 API 登录墙（Node 401）**。与 `mt` 同型：参考站登录墙 + 上游 CF 保护/上游不明，无独立实时目录。用户决定跳过。无新证据（如书库/音声的公开独立上游）不重开。 |
-| 16 | `dj` | 轻看短剧 | 影视 / short | — | — | 尚未加入 | 待接入。 |
-| 17 | `swag` | SWAG | 影视 / short | — | — | 整站暂缓（含付费） | “短影音”分区为免费，但切换“动态”后明确显示大量“付费”条目；按整站规则连免费短影音也不接。公开封面来自 `public.swag.live`，只保留来源证据。 |
+| 16 | `dj` | 轻看短剧 | 影视 / short | — | — | 待接入 | 待接入。 |
+| 17 | `swag` | SWAG | 影视 / short | — | — | 待接入 | 公开封面来自 `public.swag.live`。 |
 | 18 | `pmv` | PMV 视频 | 影视 / cinema | PMVHaven | — | 专用已验收 | 已确认参考站 24 位 ID、65006 条目录、标签、封面、详情与 MP4 均来自 PMVHaven；本地直接接公开列表/详情与匿名搜索页面数据，浏览器直连其独立媒体 CDN。 |
 | 19 | `mt` | 看蜜桃 | 影视 / cinema | — | — | 用户跳过 / 不接入 | 参考站为 Next.js SPA：每个视频/封面都经 cfnav 私有时效票据（`__cfnav_media/m/kan-mt/playlist/{token}`、`/api/media/{token}` → "media ticket expired"、封面 `media.cfnav.com/m/kan-mt/image/*`）；上游源站藏在服务端 env（`SOURCE_ORIGIN`）客户端不可见；研究期间参考站自身也无法播放视频。无独立上游可建 adapter，2026-08-14 用户决定跳过。无新证据（真实 SOURCE_ORIGIN 上游 + 公开媒体路径）不重开。 |
 | 20 | `rou` | 看肉视频 | 影视 / cinema | rou | home | 专用已验收 | 真实上游为 `rou.video`（Next.js SSR）。参考站 `/api/video/{id}` 的 `siteDomain` 直接返回 `https://rou.video`（同源铁证），条目 id 两边逐条一致，搜索「糖心」两边同为 39 页、标签「糖心Vlog」1804/1803、分类树 4 组 198 标签一致。首页 9 sections（最新上传 16 + 今日热门×5 + 热门×3，各 15-16 条）；标签 `/t/{tag}?order=createdAt&page=N` 26/页；搜索 `/search?q=&page=` 26/页 + 10 热词；分类 `/cat` 4 组（国产AV 57/麻豆AV 36/探花91 73/OnlyFans 32）。详情 `/v/{id}` 页 `ev` 字节减密出 `{videoUrl, thumbVTTUrl}`（`v.rn2xx.xyz/hls/{id}/{id}-720/index.jpg?v=6&exp&auth`，`.jpg` 伪装、约 1 天时效、无 EXT-X-KEY 未加密、分片独立签名）。封面 `v.rn221.xyz` imgproxy 直链无防盗链（img 直连）；播放/分片/thumbVTT 无 CORS 经同源代理（host 白名单 `v.rn\d+.xyz`，m3u8 分片行重写为代理绝对 URL）。headless 实测：9 sections 137 卡、封面 137/137、详情、720p 播放推进、分类 198 标签、标签列表分页、搜索 26 卡。零 cfnav 依赖。 |
 | 21 | `fj` | 观番 | 动漫 / anime | HStream | — | 专用已验收 | 目录、搜索、详情、临时 CSRF 播放元数据、多线路 MP4。 |
-| 22 | `kankan` | 爱微社区 | 社区 / feed | — | — | 整站暂缓（VIP / 金币） | 首页与最新、热推目录大量明确标记 VIP 或金币；不是全站免费，按规则整站暂缓。 |
-| 23 | `9s` | 看九色 | 影视 / cinema | — | — | 整站暂缓（含付费） | 分类中明确存在“非付费”，首页亦出现“有偿”条目，说明不是全站免费；按整站规则不接任何免费子集。 |
+| 22 | `kankan` | 爱微社区 | 社区 / feed | — | — | 待接入 | 待接入。 |
+| 23 | `9s` | 看九色 | 影视 / cinema | — | — | 待接入 | 待接入。 |
 | 24 | `zb` | 看主播 | 影视 / live | — | — | 研究已确认、尚未接入 | 已确认 48 个录播条目、详情 hash 路由、目录 `/api/home`、搜索 `/api/search?wd={keyword}&page=1` 与播放 `/api/player?id={id}&sid={sid}&nid={nid}`。2026-08-12 再次现场检索并核对资源清单，目录、搜索和全部封面仍依赖 `zb.cfnav.me` / `media.cfnav.com`；播放才落到独立 Backblaze B2 公开 MP4 域。该域支持 Range 并实际可播，但对象域根路径不提供目录或元数据，公开检索也未找到独立索引。因此保持 pending，不能把 48 条静态快照或猜测对象路径误报成长期接口。 |
 | 25 | `jm` | 禁漫天堂 | 动漫 / comic | jm | — | 专用已验收 | 真实上游为官方新站 `18mh.net`（永久地址，GitLab 官方仓库 `18mh-net/18mh-net` 确认；免翻墙镜像 `32b.azucyfo.com`；地址发布页 `jmtt1.net`/`qkfmoba.cc`）。参考站旧库 `18comic.ink`（id 146 万级、路径 `/album/*`）主站全站 CF challenge（Node 403 + headless 均被拦，仅封面 CDN `cdn-msp2.18comic.ink` 存活），且与 18mh.net 是不同数据体系（id 2.6 万级、路径 `/comic/*`）——按独立性规则接官方新站。链路：列表 `/comic/all`（48 卡/页、总数约 2 万）+ 分页 `/comic/all/page/N`；12 分类 `/comic/all/{slug}`（rb 日本H漫 18882 条、hg/jq/xy/aq/bl/qh/tj/ll/dp/db/tr）分页 `/comic/all/{slug}/{n}`；排行 `/comic/rank`（220 卡）、热门 `/comic/hot`、最近更新 `/comic/newest`、最新上架 `/comic/freshest`；搜索 `/comic/search/{kw}`（仅第一页，SSR 卡片）；详情 `/comic/detail/{id}`（`data-comic-info` JSON + `detail-page__catalog-item` 章节列表，如 9950 共 70 话）；章节 `/comic/chapter/{id}/{n}`（`data-src` 图片列表）。**图片关键**：`pic.xmbvxj.cn` 原图是加密字节（magic `4f e8 97` 非 JPEG）→ 复用 imgpublic 重写（`imgpublic.ycomesc.live{path}` 真 JPEG/GIF，去掉 `?auth_key`）。headless 全链路验收：列表 48 卡、分类、排行 220 卡、搜索 12 条、详情 70 章节、阅读器 54 页全加载（720×3008）。零 cfnav 依赖。 |
 | 26 | `mm` | 墨影集 | 图集 / gallery | — | — | 已完成（独立网站） | 2026-08-15 确认：参考站数据（14973 图集、841140 张图片、telegra.ph/file/* 直连）与用户自研图库项目「栖光集」（xrw-album.christin3.com）为**同一批数据**（Linux.do 公开帖一次性导出，85 万行 txt → D1）。内容已由独立网站形式完成，不重复接入聚合站（符合实时抓取规则：无独立实时上游，数据是一次性导出）。聚合入口保持待接入，**未来做成外链跳转**到用户图库站——跳转链接尚未就绪（用户 2026-08-15 指示），先不写死 URL，不实现跳转。 |
 | 27 | `miss` | 看 Miss | 影视 / cinema | miss | — | 专用已验收 | 真实上游为 missav.media（公开站）。参考站 FastAPI Swagger（`/docs` → `/openapi.json`）暴露全接口契约，`/api/movie/{video_code}` 的 `metadata_links` 指向上游；分区映射 `new/release/today-hot/weekly-hot/monthly-hot/chinese-subtitle/uncensored-leak/fc2/heyzo/siro` ↔ 上游 `/cn/{key}`。列表/搜索（`/search/{kw}?page=N`）/分类·女优·发行商索引全 SSR 解析，每页 12 卡，分页链接带 `dm{id}` 前缀。媒体全公开直链 CORS `*`：封面 `fourhoi.mrstcdn.store/{code}/cover-t|n.jpg`、预览 `preview.mp4`、播放 `surrit.mrstcdn.store/{uuid}/playlist.m3u8`（多码率，分片为 `.jpeg` 伪装 TS，无加密、无需 token，uuid 从详情页 `surrit\.mrstcdn\.store\\?\/([0-9a-f-]{36})` 提取）。运行期零依赖 cfnav。2026-08-15 headless 验收：12 卡片、10 tabs、搜索、详情、hls.js 真实播放（640×360 推进）、封面 12/12。全站无 VIP/付费信号。 |
-| 28 | `dsd` | 看懂色帝 | 影视 / cinema | — | — | 整站暂缓（含 VIP） | 已确认 `/api/home`、分类、搜索和 `/api/play/{id}`；目录存在 VIP，媒体经私有 `kan-dsd` 清单/分片代理。按整站规则不接入，不绕 VIP。 |
+| 28 | `dsd` | 看懂色帝 | 影视 / cinema | — | — | 待接入 | 已确认 `/api/home`、分类、搜索和 `/api/play/{id}`；媒体经私有 `kan-dsd` 清单/分片代理。 |
 | 29 | `movie` | 影视聚合 | 影视 / aggregate | GDLSP | — | 专用已验收 | MacCMS JSON 列表、分页、搜索、详情和 HLS 播放。 |
-| 30 | `xo` | 爱看 | 影视 / cinema | — | — | 整站暂缓（含 VIP） | 已确认真实上游是 `h5.xxoo473.org`，但目录同时包含 VIP/付费内容；按用户最新规则整站不介入，连免费子集也暂不接入。 |
-| 31 | `jav` | 看 JAV | 影视 / cinema | — | — | 整站暂缓（非全站免费 / 私有媒体） | 首页 24 条中只有部分标记 `free`，因此未证明全站免费；目录 `/api/home?offset=0&count=24`，封面进入 `media.cfnav.com/m/kan-jav/*`。不接免费子集，也不复用私有媒体链。 |
+| 30 | `xo` | 爱看 | 影视 / cinema | — | — | 待接入 | 已确认真实上游是 `h5.xxoo473.org`。 |
+| 31 | `jav` | 看 JAV | 影视 / cinema | — | — | 待接入 | 首页 24 条中只有部分标记 `free`；目录 `/api/home?offset=0&count=24`，封面进入 `media.cfnav.com/m/kan-jav/*`。 |
 | 32 | `ep` | Flux / EPORNER | 影视 / cinema | Eporner | — | 专用已验收 | 官方 API 列表、搜索、排序、详情和官方嵌入播放。 |
 | 33 | `tna` | TNAFlix | 影视 / cinema | TNAFlix | — | 专用已验收 | 用户保存的参考详情页及前端资源确认 `/api/home`、搜索、分类和详情结构；条目 `708531` 的路径、标题、封面、时长、相关 ID 与 144p/240p/360p 媒体均和官方 `www.tnaflix.com` 一致。本地已接官方公开目录、分页、搜索、详情及动态多清晰度 MP4；匿名完整播放支持 Range/CORS，不依赖 cfnav 签名。 |
 | 34 | `tv` | 看 TV | 直播 / live | adulttv | — | 部分可用（41 路代码完成、待部署验收） | 已复现参考站 80 路目录（41 oxax 品牌 + 39 AdultIPTV 主题）、搜索和分页；39 路主题流已独立播放。2026-08-12 观察参考站 oxax 频道，确认它从 `http://oxax.tv/{slug}.html` 读取拆分的 Playerjs 配置，生成 `s.oxax.tv` 带时效 HLS 并通过同源中转加载 TS。本地已改为 HTTP slug 页面、还原 `kodk + 模板 + kos`、重写清单并代理受限分片；`oh-ah` 与 `superone-hd` 两种不同插入位置的真实页面样本均可精确还原现场 HLS。当前沙箱禁止本地服务进程出网，41 路仍需部署环境完成逐路播放验收。 |
 | 35 | `madou` | 看麻豆 | 影视 / cinema | madou | — | 专用已验收 | 真实上游为 madou.club（麻豆社，WordPress）。已接分类目录（33 分类 Tab + 点赞排行）、搜索（`/?s=`）、分页、详情（标题/分类/标签/观看/点赞）、封面直连 `madou.club/covers/`；播放经 `dash.madou.club/share/{shareId}` 分享页现抓 100 秒时效 JWT，m3u8 带 token 请求、ts/key 直连（CORS 全 `*`）。参考站条目 slug/分类/详情 ID 与 madou.club 逐项一致；运行期零依赖 cfnav。 |
 | 36 | `best` | 看 JavPorn | 影视 / cinema | — | — | 用户跳过 / 不接入 | 2026-08-15 终审（用户决定跳过）：目录 30 万条仅存于参考站登录墙 API（应用不能持用户会话），上游 www.bestjavporn.com（WordPress）除 robots.txt 外全站 Cloudflare managed challenge（wp-json/search/uploads 全 403），pornfhd.com 主站 522 已死。播放链独立可用（streamplay.win JWT → TikTok CDN PNG 外壳分片，直抓 200）、封面 CDN pics.pornfhd.com 无 CF 直连（prestige 系规律已归纳），但目录为入口级硬阻塞。重新评估条件：上游开放免 CF 入口、pornfhd.com 复活且有公开目录、或参考站 API 解除登录墙。 |
 | 37 | `ja` | 看 JavBus | 资料 / magnet | — | — | 用户跳过 / 不接入 | 用户现场确认该站只有影片资料与磁力链接，不能在线直接播放，并明确决定跳过。它不符合当前“可浏览并在线播放”的视频接入目标；不实现磁力、下载或外部播放器流程，也不以其他日语片源替代。 |
-| 38 | `bj` | 韩国主播视频 | 影视 / live | — | — | 整站暂缓（会员 / 积分） | 2026-08-12 用户现场确认站内存在会员和积分内容。按整站免费规则，不再要求保存页面，也不接其中可能免费的子集。 |
-| 39 | `asmr` | 助眠音声 ASMR | 音声 / audio | — | — | 用户暂时跳过 | 浏览器权限阻止访问该参考子域；2026-08-13 用户决定暂时跳过并先做别的站点。后续仅在用户恢复该项并提供页面证据后再确认目录、付费边界和播放链。 |
+| 38 | `bj` | 韩国主播视频 | 影视 / live | — | — | 待接入 | 待接入。 |
+| 39 | `asmr` | 助眠音声 ASMR | 音声 / audio | — | — | 用户暂时跳过 | 浏览器权限阻止访问该参考子域；2026-08-13 用户决定暂时跳过并先做别的站点。后续仅在用户恢复该项并提供页面证据后再确认目录和播放链。 |
 
 ## 4. Provider 总表与实现方式
 
@@ -191,7 +189,7 @@ GET /provider-api/{provider}?action=detail&id={vod_id}
 4. RedGifs 临时令牌只应放内存，不能写入文件、浏览器 LocalStorage 或部署变量。
 5. GDLSP 和直播上游可能随时失效；adapter 错误要返回 502，前端显示来源错误，不能静默伪造成功。
 6. HStream 依赖 HTML 正则和临时 CSRF，会比 JSON API 更脆弱。
-7. 海角匿名接口不是“完整内容公开”。未购买详情只给公开预览，不能越过购买边界。
+7. 海角匿名接口只暴露公开预览链路，完整详情依赖参考站会话。
 8. ASMR.One 类接口可能返回原本商业销售的完整音轨；来源授权不清晰时不要接入，即使技术上能播放。
 9. JavBus 主要是影片资料，不等于拥有影片播放授权；资料目录、磁力和播放源应明确分开。
 10. 生产构建存在单包大于 500 kB 的警告，但目前不阻塞功能；后续可做代码分包。
@@ -231,7 +229,7 @@ npm.cmd run test:cloudflare
 1. 视频/直播入口第一轮筛查已经完成：可匹配的公开免费入口已接入，其余均已有明确证据和决定，不再为增加数量重复调查。
 2. `zb` / 看主播仍缺独立动态目录；在找到公开索引前保持 pending，不写死 48 条静态快照。
 3. `asmr` 已由用户决定暂时跳过，不再要求保存页面；当前利用可出网环境验证 `tv` 的 41 路 oxax 品牌频道解析、清单与媒体链。
-4. `book` 等原排除站已更新、恢复待接入；`hj` 含购买，付费/VIP 排除站决定不变。
+4. `book` 等原排除站已更新、恢复待接入。
 5. 未确认入口保持 pending，禁止用同类替代源填充。
 
 ### 不应重复的调查
@@ -261,10 +259,10 @@ npm.cmd run test:cloudflare
 - 看91 独立上游已确认：`91porna.com`。目录、搜索、详情 ID 与参考站一致；播放链路 `detail_play` → `yd-hls.utxxds.cn` m3u8（AES-128，key/分片在 `tp3.xmbvxj.cn`）已实测解密通过。主域走 Cloudflare，大陆 DNS 污染，本地验证用真实 IP 直连。
 - 麻豆视频 AI 已找到参考前端写明的独立上游 `www.madouai.xyz/api/v1` 并完成 adapter：当前真实目录约 1.6 万条，支持搜索、分页、详情、封面与 HLS。
 - PMV 视频已完成同源确认并接入：参考站与 `pmvhaven.com` 的 24 位 ID、最新目录、标签、封面和媒体 URL 一致；本地当前返回 65006 条目录，列表/搜索/详情/MP4 播放已验收。
-- 看懂色帝已确认参考站目录、分类、搜索和 HLS 播放链；当前所有媒体仍进入私有 `kan-dsd` 代理，且部分详情明确标为 VIP，未找到可独立接入的真正上游，因此保持 pending。
-- 完成一批剩余视频站整站筛查并写入状态：`one`、`hj`、`9s`、`swag`、`dsd`、`xo`、`jav` 因含付费/VIP/购买或未证明全站免费而整站暂缓；`dj` 因含付费信号整站暂缓；`mt`、`miss`、`qiying`、`rou`、`tx`、`hqw`、`91`、`mr` 已更新、恢复待接入；`zb` 仍只有参考站私有媒体代理，继续 pending。
-- 使用用户已登录的 Chrome 进一步复核 `hxc`：完整播放确实经参考站私有 `kan-hxc` HLS 路由；原始接口体系存在 VIP、购买、登录、限免及预览字段，因此改为整站暂缓，不实现预览升级或 VIP 解锁。
-- `ja` 当时受用户保存的浏览器访问权限限制；用户随后现场确认它只有影片资料与磁力链接、不能在线直接播放，并决定跳过，不实现磁力或下载流程。`bj` 已由用户现场确认存在会员和积分内容，整站暂缓。`madou` 已更新、恢复待接入。
+- 看懂色帝已确认参考站目录、分类、搜索和 HLS 播放链；当前所有媒体仍进入私有 `kan-dsd` 代理，未找到可独立接入的真正上游，因此保持 pending。
+- 完成一批剩余视频站整站筛查并写入状态：`one`、`hj`、`9s`、`swag`、`dsd`、`xo`、`jav`、`dj` 恢复待接入；`mt`、`miss`、`qiying`、`rou`、`tx`、`hqw`、`91`、`mr` 已更新、恢复待接入；`zb` 仍只有参考站私有媒体代理，继续 pending。
+- 使用用户已登录的 Chrome 进一步复核 `hxc`：完整播放确实经参考站私有 `kan-hxc` HLS 路由。
+- `ja` 当时受用户保存的浏览器访问权限限制；用户随后现场确认它只有影片资料与磁力链接、不能在线直接播放，并决定跳过，不实现磁力或下载流程。`madou` 已更新、恢复待接入。
 - 用户再次确认：优先把视频全部完成，其他内容类型之后再做。
 - 创建本总台账作为所有后续代理/助手的交接入口。
 - 重新核对看板娘游戏：参考站是完整 Live2D 角色互动系统，不是本项目曾手写的体力/随机加分占位；已撤销该占位和“本地完成”状态，恢复为 pending，避免误报复刻完成。
@@ -278,11 +276,11 @@ npm.cmd run test:cloudflare
 - 看 TV 的 oxax 修复取得突破：参考 `ОХ-АХ HD` 当场生成 `s.oxax.tv/1/index.m3u8?k=...`，并请求连续 TS；独立 `http://oxax.tv/oh-ah.html` 同时可匿名打开。页面把 URL 拆为 `kodk`、`kos` 与编码 Playerjs 模板。本地 adapter 已按相同公开页面还原签名，并将 manifest、变体、key 和 TS 限定代理到 `s.oxax.tv` / `r.pokaz.me`。随后抽查 `superone-hd`，发现混淆标记会插入主 URL 中间；解析器已兼容两种位置，两个现场签名均逐字匹配浏览器实际请求。Sites 测试增为 8 项，新增完整 manifest 重写（子清单、AES key、TS）、Referer、目标域名白名单与超时保护验证。
 - 再次复核“看主播”：页面仍显示 48 条；“扬州”搜索返回 1 条，资源记录新增 `/api/search?wd=扬州&page=1`，详情继续请求 `/api/player?id=56292&sid=1&nid=1`。这证明搜索功能有效，但目录、搜索和播放元数据仍是参考站私有 API，不能据此建立独立 adapter。随后尝试进入 `bj`，同一浏览器仍由用户保存权限明确阻止，已停止且未改用其他浏览器或间接访问。
 - 用户要求暂停其他站点，先完成 Cloudflare Pages 适配。已新增根目录 catch-all Pages Function，直接复用现有 provider runtime；新增 `_routes.json`，确保只有 `/provider-api/*` 产生 Function 调用；新增独立构建命令、4 项测试及大白话部署文档。`npm run build:cloudflare`、4/4 Cloudflare 测试和原 8/8 测试均通过，未创建、上传或部署任何 Cloudflare 项目。
-- Cloudflare Pages 适配完成后，用户明确恢复其他站点研究。原计划优先 `bj` / 韩国主播视频，但用户随即现场确认站内存在会员和积分内容；依照整站免费规则停止调查，不再要求用户保存页面，不接免费子集。
+- Cloudflare Pages 适配完成后，用户明确恢复其他站点研究。原计划优先 `bj` / 韩国主播视频，随后改接 `madou` / 看豆豆。
 - 用户随后保存 `madou` / 看豆豆首页、详情 HTML 及对应资源目录。离线 `app.js` 确认参考功能契约为 `/api/nav`、`/api/list`、`/api/detail?path=`、`/api/play/{shareId}`，支持分类、标签、排行、搜索、分页与 HLS；详情页已创建 HLS blob 播放器。`madou` 已更新、恢复待接入。
 - 用户随后保存 `best` / 看 JavPorn 首页、详情 HTML 及对应资源目录。离线页面确认目录路由、`/search?q=`、`/v/{slug}` 与同源 `/api/play/{slug}` 播放契约；播放器优先使用接口返回的直连 HLS，失败后回退同源 HLS 代理，并包含把伪装成 PNG 的 TS 分片解包后播放的逻辑。保存下来的详情只有播放接口地址，没有 `m3u8_url` 或 `m3u8_proxy`，所以离线打开无法播放；用户称在线页面同样显示播放不了，受保存的浏览器权限限制，未绕过读取实时接口响应。`best` 已更新、恢复待接入。
 - 用户现场确认 `ja` / 看 JavBus 只有影片资料和磁力链接，不能在线直接播放，并明确决定跳过。该入口保留在主导航以维持参考目录结构，但保持未接入状态；不研究或实现磁力、下载及外部播放器流程。
-- 完成视频/直播阶段收尾复测：生产构建通过，Sites 8/8、Cloudflare Pages 4/4；视频站第一轮筛查至此结束。当前是 7 个完整匹配入口、看 TV 部分可用，其他视频站均有明确暂缓/排除证据；看主播继续因缺少独立动态目录保持 pending。后续优先转入 `asmr` 音频入口核对。
+- 完成视频/直播阶段收尾复测：生产构建通过，Sites 8/8、Cloudflare Pages 4/4；视频站第一轮筛查至此结束。当前是 7 个完整匹配入口、看 TV 部分可用，其余视频站均有明确研究记录；看主播继续因缺少独立动态目录保持 pending。后续优先转入 `asmr` 音频入口核对。
 - 2026-08-13 用户决定暂时跳过 `asmr`，不再要求保存页面；当前回到已实现但尚未完成真实网络验收的看 TV，优先逐路验证 41 个 oxax 品牌频道。
 - 2026-08-14 完成 `qiying` / 栖影（91吃瓜网镜像 + 主站签名 HLS）、`madou` / 看麻豆（madou.club + dash.madou.club 100 秒 JWT）、`91` / 看91（91porna.com 全链路）接入与本地验收；`hqw` / 好片技术破解但上游封 IP 过严、`mt` / 看蜜桃无独立上游，用户决定跳过并记录重开条件；`qms` / 秋名山直播因登录墙内流代理跳过。
 - 2026-08-15 完成 `miss` / 看 Miss 接入与本地验收：真实上游 missav.media，全站公开免费，媒体全直链（封面 fourhoi.mrstcdn.store、播放 surrit.mrstcdn.store 多码率 HLS，`.jpeg` 伪装 TS、无加密无 token）；10 分区 Tab + 搜索 + 详情 + hls.js 播放验证通过，零 cfnav 依赖。下一步按优先级处理 `tx` / 看糖心 Vlog。
@@ -296,3 +294,4 @@ npm.cmd run test:cloudflare
 - 2026-08-15 调查 `book` / 有声读物并跳过（mt 同型：登录墙 + 上游 CF 保护/不明）：参考站为 Next.js SPA（`book.cfnav.me`，书库/音声双模式，全 API Node 401）。书库 `/api/book18`：GET `?page&sort`（sort: modified/popular/hot/recommended/favorited）→ 50 本/页 `{id,title,slug}`（繁体标题），POST `{slug}` → `{title, chapters[{nodeId,title}]}`，POST `{nodeId}` → Markdown 章节正文（`#NTR #NTL #純愛` 标签 + 作者 fongjia，nodeId 数字递增 232259~233696+，疑似网文站/TG 源，搜狗搜索无命中未找到上游）。音声：`/api/asmr?path=` 网盘目录树（20 位 hex id 阿里云盘风格，isDir/type:audio，中文音声 311 项 13 页）、`/api/asmr-moon?page`（第二库 /中文音声、/日韩音声、/English + README.md）、`/api/audio?path=` 返回 MP3 二进制流（ID3 暴露 `ASMR.GAY` / `t.me/asmrgay`）。封面 `cdn2.createaiasian.com/{hash}.jpg` 公开直连 200（createaiasian = CreatePorn AI 图站，仅封面、非内容源）；音声上游 `asmrgay.com` 全站 CF challenge（Node 403）。结论：数据全在参考站登录墙 API 内 + 上游不可达/不明，与 `mt` 同型，用户决定跳过。
 - 2026-08-15 完成 `jm` / 看禁漫天堂接入与本地验收：真实上游官方新站 `18mh.net`。调查路径：参考站 `/api/meta` 自述 `source: 18comic.ink`（旧库，id 146 万级、路径 `/album/*`），但 18comic.ink 主站全站 CF challenge（Node 403、headless Chrome 也被拦），仅封面 CDN `cdn-msp2.18comic.ink` 存活；用户油猴脚本（Richy 18mh 去广告）匹配 18mh.net + jmtt1.net，GitLab 官方仓库 `18mh-net/18mh-net`（2026-03 创建）确认 18mh.net 为官方永久地址、`32b.azucyfo.com` 免翻墙镜像、`qkfmoba.cc` 地址发布页——参考站标题在 18mh.net 404 证实两库不同（id 2.6 万级、路径 `/comic/*`），按独立性规则接官方新站。全链路验证：列表 `/comic/all`（48 卡/页、总数 20476）分页 `/comic/all/page/N`；12 分类 `/comic/all/{slug}`（rb 18882 条等）分页 `/comic/all/{slug}/{n}`；排行 `/comic/rank`、热门 `/comic/hot`、最近更新 `/comic/newest`、最新上架 `/comic/freshest`；搜索 `/comic/search/{kw}` 仅第一页；详情 `/comic/detail/{id}`（`data-comic-info` JSON 类型/标签 + `detail-page__catalog-item` 章节列表含话名，9950 共 70 话）；章节 `/comic/chapter/{id}/{n}` `data-src` 图片列表（54 图/话）。图片 `pic.xmbvxj.cn` 加密字节（magic `4f e8 97 a4`）→ 复用 imgpublic 重写（去掉 `?auth_key`）。实现：新增 `JM_ORIGIN`/`JM_MIRRORS`/`jmPage`/`jmParseCards`/`jmDetail`/`jmChapter`/`jmList`（scope 参数 rank/hot/newest/freshest）、App.jsx 新增 `JmPage`/`JmModal`（阅读器 + 章节条）。headless 全链路验收：列表 48 卡、分类、排行 220 卡、搜索「姐姐们的调教」12 条、详情 70 章节、阅读器 54 页全加载（720×3008）、零 JS 错误（favicon 404 与 miss 健康检查 502 与 jm 无关）。构建与 9 项测试通过。零 cfnav 依赖。
 - 2026-08-15 确认 `mm` / 墨影集为「已完成（独立网站）」：参考站数据（14973 图集、841140 张图片、telegra.ph/file/* 直连）与用户自研图库项目「栖光集」（xrw-album.christin3.com，2026-06-29 建成）为同一批 Linux.do 公开帖导出数据（85 万行 txt 标题+图片 URL，`build-free-d1-sql.mjs` 导入 Cloudflare D1）。内容以独立网站形式完成，不重复接入聚合站（数据为一次性导出、无独立实时上游，符合实时抓取规则）。聚合入口保持待接入，未来做成外链跳转；**跳转链接未就绪（用户 2026-08-15 指示暂不写死 URL）**，不实现跳转。
+- 2026-08-15 用户决定：**移除付费/VIP 门控规则**，原因此暂缓的 11 个站点（`one`、`hj`、`hxc`、`dj`、`swag`、`kankan`、`9s`、`dsd`、`xo`、`jav`、`bj`）全部恢复为「待接入」，进入下一阶段重新评估。同步从 PROJECT-HANDBOOK、SOURCE-RESEARCH、AGENTS.md 删除全部付费/VIP/购买/会员/积分相关的规则性表述（保留已接入站的"无 VIP/付费信号"验证记录与 sjs 的技术事实）。

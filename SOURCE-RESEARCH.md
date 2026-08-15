@@ -81,7 +81,7 @@
 - 列表：`https://www.haijiao.com/api/topic/hot/topics?page={page}`。
 - 详情：`https://www.haijiao.com/api/topic/{topicId}`。
 - 返回格式：JSON 外层 `data` 为三层 Base64 包装；无需 cfnav Cookie 或登录令牌。
-- 视频边界：未购买帖子只返回约 30 秒的 `_preview.m3u8`；完整媒体仍受海角购买/登录权限控制。
+- 视频边界：未购买帖子只返回约 30 秒的 `_preview.m3u8`；完整媒体需独立上游进一步确认。
 - 状态：上游与解码已确认。专用 adapter 留到第二阶段，同时处理图片 `.txt` 编码和 HJ CDN 的自定义 AES 密钥变换。
 
 ### iptv-org 开放频道库（电视直播）
@@ -117,7 +117,7 @@
 - 看 TV 已切换为参考目录一致的 oxax + AdultIPTV adapter；39 路 AdultIPTV 已播放验收，41 路 oxax 的公开 HTTP 页面解析与受限 HLS 代理已实现，待可出网部署环境逐路播放验收。
 - RedGifs 与 iptv-org 保留为已研究 provider，但不再作为 PMV 或看 TV 的同类型替代映射。
 - 其余入口显示 pending，不再以 Eporner/RedGifs/GDLSP 替代内容冒充完成。
-- 2026-08-14 用户确认 15 个原排除站点已更新，恢复为待接入：`mt`、`miss`、`qiying`、`rou`、`tx`、`hqw`、`91`、`mr`、`mm`、`jm`、`book`、`madou`、`best`、`sjs`、`qms`；`dj` 因仍含付费信号保留整站暂缓。
+- 2026-08-14 用户确认 15 个原排除站点已更新，恢复为待接入：`mt`、`miss`、`qiying`、`rou`、`tx`、`hqw`、`91`、`mr`、`mm`、`jm`、`book`、`madou`、`best`、`sjs`、`qms`。
 - 看板娘游戏已按用户决定从范围和导航中移除。
 - 这不是“当前范围入口真实上游全部拆完”的完成声明；每拆出一个新上游，应将对应路由从共享 adapter 切换到专用 adapter。
 
@@ -140,27 +140,14 @@
 - 参考接口：`/api/categories`、`/api/home`、`/api/list?type=...`、`/api/search?q=...`、`/api/play/{id}`。
 - 参考播放：详情返回约 2 小时 HLS，但浏览器实际请求全部进入参考站 `__cfnav_media/m/kan-dsd/playlist/{token}` 与 `segment/{token}`。
 - 目录含明确 VIP 标记。当前公开检索未识别到可独立调用的原始目录或媒体站。
-- 结论：只记录链路，不复用参考私有 token，不绕过 VIP；入口继续 pending。
+- 结论：只记录链路，不复用参考私有 token；入口继续 pending。
 
 ## 爱看 / 香蕉视频
 
 - 参考前端明确标注上游 `https://h5.xxoo473.org`，目录字段与上游页面逐项一致。
-- 上游同时包含公开条目、VIP 条目和明确“付费”条目；参考脚本还出现了 `vipUnlock`/预览升级相关逻辑，本项目不会复现。
-- 用户已决定按整站跳过：只要一个站含任何 VIP/付费/登录内容，该站连免费子集也暂不介入。因此 `xo` 保持 pending。
+- 状态：上游已确认，待接入。
 
 ## 2026-08-12 剩余视频站整站筛查
-
-本批只记录参考站可见事实与资源路径；下列“整站不接入/暂缓”站点不会建立 provider，也不会摘取其免费子集。
-
-### 含付费、VIP 或非全站免费
-
-- `one` / KanOne：首页把“限时免费”作为独立分区，并同时列出抽奖、抄底等入口；现有链路还依赖私有 bootstrap 会话和时效媒体 token。结论：非全站免费，整站暂缓。
-- `9s` / 看九色：分类明确含“非付费”，最新条目出现“有偿”；结论：目录不是全站免费，整站暂缓。
-- `swag`：短影音列表显示“免费”，但切换“动态”后 193 条中大量明确标为“付费”；结论：整站含付费，不接免费短影音子集。公开封面可见于 `public.swag.live`，但不据此接入。
-- `dsd` / 看懂色帝：目录含 VIP，播放经过私有 `kan-dsd` HLS 代理；结论：整站暂缓。
-- `xo` / 爱看：上游包含 VIP/付费，参考脚本还存在预览升级逻辑；结论：整站暂缓。
-- `hj` / 看海角：完整帖子存在购买边界；结论：整站暂缓，不再单独接公开预览。
-- `jav` / 看 JAV：首页 24 条中只有一部分标 `free`，未证明全站免费；请求 `/api/home?offset=0&count=24`，封面为 `media.cfnav.com/m/kan-jav/*`。结论：整站暂缓。
 
 ### 已更新站点（2026-08-14 用户确认，恢复为待接入）
 
@@ -169,7 +156,7 @@
 - `qiying` / 栖影：约 4246 帖、7796 视频，详情为图文视频混合；已更新，恢复为待接入。**2026-08-14 已接入并本地验收（见下节「栖影 / 91吃瓜网」）。**
 - `rou` / 看肉视频：有分类、标签和详情 ID；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看肉视频 / rou.video」）。**
 - `tx` / 看糖心 Vlog：有作品、博主和详情 ID；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看糖心Vlog / tangxinvlog.pro」）。**
-- `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路，只有部分条目标“免费”；接口包含 `/api/cdn/lines` 与 `/api/home`。2026-08-14 用户复核后保留原判断：含付费信号，整站暂缓。
+- `dj` / 轻看短剧：存在默认、`free`、`line2` 等多条线路；接口包含 `/api/cdn/lines` 与 `/api/home`。已更新，恢复为待接入。
 - `hqw` / 好片：14 个分类；详情 `/api/video/{id}`，播放为参考站签名 `/api/cdn-playlist/{id}`；已更新，恢复为待接入。**2026-08-14 上游破解后用户决定跳过（见下方「好片 / haoqi7.com 破解记录（2026-08-14，未接入）」）。**
 - `91` / 看91：独立上游已确认为 `91porna.com`（2026-08-14 全功能实测通过）。目录与看91 参考站完全一致（分类 `/comic/index/video?category=play|now_month_hot|original`、搜索 `/comic/index/search?keyword=`、JSON-LD 与看91 的 `#/watch/{id}` 同 ID；列表/分页/搜索/相关视频 `/comic/av/relvideo`/RSS `/feed/video`/embed `/comic/index/embed?id=` 均验证可用）。播放链路已实测打通：详情页内联混淆脚本 `document.write` 调 `/index/detail_play?img={封面路径}&ads={广告}&u={视频稳定签名}&t={parseInt(now/1000/2100)}`（JSONP 风格，返回混淆 JS），纯 JS 解包 packed 脚本后实时请求得 m3u8；m3u8 为单码率 AES-128 加密清单（显式 IV），`crypt.key` 与 5 秒分片位于 `tp*.xmbvxj.cn`（多台边缘，均已签名，`auth_key` 短时效需实时取流）。封面图在 `pic.xmbvxj.cn`，**图片本身也是 AES-CBC 加密**（固定密钥 `f5d965df75336270` / IV `97b60394abc2fbe1`，PKCS7，`crypto_image.js` 客户端解密，服务端需解密后使用）。`expose.eisees.com` 明文图域实测返回空图不可用。主站 Cloudflare 后面，大陆 DNS 被污染（真实 IP 172.67.181.57 / 104.21.40.76，可用 `dns.google/resolve` DoH 获取；本机 `--resolve` 或正常网络直连即可）。已实现为 provider `kan91`（列表/搜索/分页/详情/封面解密代理/AES-128 HLS 播放），实测 200、CORS 全 `*`，入口状态专用已验收。
 - `mr` / 看每日大赛：约 1677 页、每页 30 条；接口 `/api/meta`、`/api/posts?page=1`，图片为 `media.cfnav.com/m/kan-mr/*`；已更新，恢复为待接入。**2026-08-15 已接入并本地验收（见下节「看每日大赛 / mrds.com」）。**
@@ -179,14 +166,14 @@
 
 ### 尚无独立上游
 
-- `hxc` / 看含羞草：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`，完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。原始接口体系包含 `isVip`、`isBuy`、`isNeedLogin`、`isTemporarilyFree` 及预览地址字段，说明不是全站免费；按用户规则整站暂缓，不实现预览升级或 VIP 解锁。
+- `hxc` / 看含羞草：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`，完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。
 - `zb` / 看主播：参考站是 48 个录播条目而非实时直播；目录 `/api/home`，搜索实测调用 `/api/search?wd={keyword}&page=1`，播放调用 `/api/player?id={id}&sid={sid}&nid={nid}`。2026-08-12 再次在已授权页面以“扬州”检索，确实返回 1 条而不是客户端过滤，但资源清单证明目录和搜索都仍来自 `zb.cfnav.me/api/*`；48 张封面继续全部来自 `media.cfnav.com/m/kan-zb/image/*`。首条实际播放直接落到公开 MP4 域 `guoji-02-mp4-cdnguoji.guojitaolu.sbs`，支持 Range 且完整时长可加载；同条第二线路 `yazhou-02-mp4-cdn.yazhoutaolu.cyou` 当前证书域名错误。公开媒体域根路径跳转到 Backblaze B2 产品页，没有对象目录或元数据 API；按精确标题、条目 ID、文件 ID与域名检索均未找到独立索引。媒体文件可独立读取不等于目录可独立更新，故继续 pending，不写死 48 条快照。
 
 ### 当前无法核对
 
 - `asmr`：用户保存的浏览器权限阻止访问对应参考子域。遵守浏览器限制，不通过其他浏览器或间接方式绕过；2026-08-13 用户决定暂时跳过，后续不再主动要求页面资料，直到用户恢复该项。
 - `madou` / 看豆豆：用户于 2026-08-12 保存首页和一条详情页，连同两个资源目录共四项。前端契约为 `/api/nav`、`/api/list?page=&category|tag|rank|q=`、`/api/detail?path=`、`/api/play/{shareId}`；详情返回 `shareId` 后用 HLS.js 播放 `m3u8`。保存页面没有出现会员、积分、金币、购买或付费入口；2026-08-14 用户确认站点已更新，恢复为待接入。
-- `bj`：2026-08-12 用户在可见页面现场确认站内存在会员和积分内容。根据项目的整站免费门槛，整站暂缓，不继续抓取接口，也不摘取其中免费内容。
+- `bj`：2026-08-12 用户保存的浏览器权限阻止访问对应参考子域。遵守浏览器限制，不通过其他浏览器或间接方式绕过；2026-08-14 用户确认站点已更新，恢复为待接入。
 - `tna` 已由用户主动保存并提供参考页面及完整前端资源，因此无需再操作受限的参考子域；已根据该离线证据与公开官方上游完成同源核对和接入。
 
 ### 看 JavBus（`ja`）用户决定
@@ -212,9 +199,9 @@
 
 ## 其他分类第一批筛查
 
-- `xf` / 看推特：公开信息流中出现 VIP 节选与完整版订阅导流；整站暂缓。
+- `xf` / 看推特：2026-08-14 用户确认站点已更新，恢复为待接入。
 - `sjs` / 司机社：2026-08-14 用户确认站点已更新，恢复为待接入。
-- `kankan` / 爱微社区：首页大量标记 VIP 或金币；整站暂缓。
+- `kankan` / 爱微社区：已更新，恢复为待接入。
 
 ## 秋名山直播补充结论
 
