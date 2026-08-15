@@ -246,22 +246,25 @@
 
 ### 图片链路
 
-- 主站帖子页图片属性 `data-xkrkllgl`（主站页只含部分图，如 120333 仅 8 张，而完整图集 18 张）；图集以参考站镜像数据为准。
-- 图片域直连验证：`pic.uforxk.cn`（主站）、`pic.xustgq.cn`、`imgpublic.ycomesc.live`（镜像数据图集，新旧路径均可），均 200 + CORS `*`。
+- 主站帖子页图片属性 `data-xkrkllgl`（主站页只含部分图，如 120333 仅 8 张，而完整图集 18 张）；图集以主站帖子页实时解析为准（2026-08-15 起不再用镜像数据）。
+- **2026-08-15 关键发现**：`pic.*.cn`（pic.uforxk.cn / pic.xustgq.cn 等）直连返回的是**加密字节**（magic `3e aa 70 8e 8e 51 91 ed`，非 JPEG `ff d8 ff`），浏览器 `<img>` 解码失败；正确通道是 `https://imgpublic.ycomesc.live{path}`（真 JPEG `ff d8 ff e0`，CORS OK）。所有图片（列表封面 `loadBannerDirect('...')`、详情图集、海报）必须经 `qiyingImageUrl()` 重写为 imgpublic CDN。
 
-### 参考站数据镜像（一次性导出，运行期零依赖）
+### 实时目录（2026-08-15 起，替代一次性镜像）
 
-- `qiying.cfnav.me/media-data/v2/` 登录墙后（Node 401）；用户浏览器登录态经 Console 脚本导出 `qiying-full.json`（catalog 23368 条 + details 96 桶 + mode_images 22763 + mode_videos 6099）。
-- catalog 字段 `p,i,v,c,r,t,d,a,u,m,k,g`；detail 分片 `details/details-{pid%96}.json`，每条 `{p, i:[{i,p,w,h}], v:[{i,p,w,h,d,s,c}]}`。
-- **2026-08-14 复核（按日分层 + 随机抽样实测主站）**：catalog 里 4383 条为有标题活动帖（日期 2026-07 起，主站 100% 存在，3369 条带视频、共 4024 个视频）；18985 条为无标题废弃存档（主站 100% 已删 404，无可用内容）。本地列表过滤无标题条目，只展示与参考站一致的活动目录。
-- `scripts/prepare-qiying-data.mjs` 将其分片为 `public/qiying/{catalog,details-000..095,mode_images,mode_videos}.json.gz + manifest.json`（总计约 2.9MB gzip）；刷新数据 = 重新导出后重跑该脚本。
+- 用户决定（2026-08-15）：**全站禁止快照/一次性导出数据文件，一律实时抓取**。`public/qiying/*.gz`（2.9MB 镜像）与 `scripts/prepare-qiying-data.mjs` 已删除。
+- 实时端点全部实测可抓（Node/PowerShell 200）：
+  - 列表 `/`、`/page/N/`：共 1246 页 × 30 卡；**每页 30 卡中约 15 张是广告卡**（`post-card-ads` class、无 `<h2 class="post-card-title">`、gif 封面），解析器按无标题过滤，首页展示 15 条真实帖子。
+  - 分类 `/category/{slug}/` 与分页 `/category/{slug}/{n}/`（**注意是 `/{n}/` 不是 `/page/{n}/`，后者 404**）：23 个分类从首页导航解析（zxcghl/今日吃瓜 1224 页、mjmsjb/体育直播、sstp/实时偷拍、rsdg/最高点击、zdtop/91周榜、ydtop/91月榜、bcdg/必吃大瓜、whhl/网红黑料、mxhl/明星黑料、qwys/社会奇闻、mrds/每日大赛、dydj/AI短剧、lpsd/深夜撸片、hjll/海角乱伦、91th/91探花 69 页、crdm/成人动漫、xsjlb/师生专栏、fclv/反差靓女、tgqg/投稿求瓜、gcwh/网黄合集、aikj/明星AI、zptp/自拍偷拍、lqzk/猎奇重口）。
+  - 搜索 `/search/{kw}/`：仅第一页可用（`/search/{kw}/{n}/` 404）；实测「哪吒」12 条。
+  - 标签 `/tag/{slug}/`：第一页可用（如热搜 20 卡）。
+  - 卡片字段：`p`(id)、`t`(标题，去热搜徽章)、`r`(封面，imgpublic 重写后)、`a`(作者)、`u`(datePublished ISO)、`k`(分类数组)、`hot`(热搜徽章布尔)。**搜索页卡片链接是绝对 URL**（`https://arrest.qxmrdvtu.cc/archives/{id}/`），id 正则需兼容相对/绝对两种形式。
+  - 上游所有域名（nsguiiwz.cc/being/act）301 重定向到当前主站 `agency.qxmrdvtu.cc`（防失联机制，fetch 自动跟随）。
 
 ### 本地实现（provider `qiying`）
 
-- 浏览器端：`catalog.json.gz` 内存解压（过滤无标题存档）→ 列表/搜索/分类 Tab/分页/计数；详情图集与视频条取 detail 分片；图片直连 `imgpublic.ycomesc.live`。
-- worker 端：`qiyingPage`（主站多线路 failover 抓帖子页）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频，支持多 DPlayer 块）、`qiyingDetail`、`qiyingPlay`（`idx` 参数选第 N 个视频；主站无页面时返回 404「帖子已从主站删除，仅图集可用」）。
-- 验证（2026-08-14）：有标题帖主站存在率 20/20、视频签名率 19/19；多视频帖顺序与主站 DPlayer 块逐一对应（120231 镜像 9 = 主站 9、120218 镜像 7 = 主站 7，哈希一致）；分类页 `/category/{slug}/` 抽查 6 个全部 200；标签页 `/tag/黑丝/`、`/tag/口交/` 200（32 卡片）；镜像分类名与主站 slug 对应（美加墨世界杯/优选投放区→体育直播、擦边短剧→AI短剧 为参考站保留的旧名，与参考站显示一致）。
-- 验收（headless Chrome）：列表 24 卡片、封面 24/24 加载、26 分类 Tab、搜索"海角" 156 条、详情图集 18 图翻页、单视频/多视频（idx=1 播放第 2 个）实测播放推进、readyState 4、1280×720、页面零错误。
+- 浏览器端（2026-08-15 重写）：实时列表（15 卡/页 + 分页 1/1246）、23 分类 Tab（点击即实时抓 `/category/{slug}/`）、搜索（实时抓 `/search/{kw}/`）、详情（实时抓 `/archives/{id}/`）；封面/图集直连 `imgpublic.ycomesc.live`；移除全部 gz 解压代码。
+- worker 端：`qiyingPage`（主站多线路 failover 抓页面）、`qiyingParseCards`（列表/分类/搜索卡片解析，跳过广告卡）、`qiyingCats`（导航分类）、`qiyingExtractDetail`（解析 `data-xkrkllgl` 图片与 `data-config` 签名视频，支持多 DPlayer 块）、`qiyingImageUrl`（pic.*.cn → imgpublic.ycomesc.live）、`qiyingDetail`、`qiyingPlay`（`idx` 参数选第 N 个视频；主站无页面时返回 404「帖子已从主站删除，仅图集可用」）。
+- 验收（headless Chrome，2026-08-15）：列表 15 卡、封面全加载（1280×1300px）、分类 30 卡、分类分页 2/1224、详情（图集+视频按钮）、搜索「哪吒」12 条、清除回 15 卡、播放 readyState 4 且 1280×720 推进、页面零错误。
 
 ## 看麻豆 / madou.club（`madou`，2026-08-14 接入）
 

@@ -896,10 +896,16 @@ async function kan91Image(requestUrl) {
 
 const QIYING_ORIGIN = "https://agency.nsguiiwz.cc";
 const QIYING_MIRRORS = ["https://being.nsguiiwz.cc", "https://act.nsguiiwz.cc"];
+const QIYING_IMG_CDN = "https://imgpublic.ycomesc.live";
 const QIYING_HEADERS = {
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CFNav-Independent/2.0",
 };
+
+function qiyingImageUrl(url = "") {
+  if (!url) return "";
+  return url.replace(/^https?:\/\/pic\.[a-z0-9.-]+\.cn/, QIYING_IMG_CDN);
+}
 
 async function qiyingPage(pathname, mirrors = [QIYING_ORIGIN, ...QIYING_MIRRORS]) {
   let lastError;
@@ -939,9 +945,9 @@ function qiyingExtractDetail(html, id) {
     if (seenImages.has(url)) continue;
     if (/hc237\/|uploads\/default\/other|\/gif$|zw\.png|banner\.png|avatar|\.gif/i.test(url)) continue;
     seenImages.add(url);
-    images.push(url);
+    images.push(qiyingImageUrl(url));
   }
-  const fallbackImages = [...new Set(html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/g) || [])];
+  const fallbackImages = [...new Set((html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/g) || []).map((u) => qiyingImageUrl(u)))];
   if (!images.length) images.push(...fallbackImages);
 
   const videos = [];
@@ -955,7 +961,7 @@ function qiyingExtractDetail(html, id) {
       // Malformed player config blocks are ignored; page fallbacks below still apply.
     }
   }
-  const poster = images[0] || html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/)?.[0] || "";
+  const poster = images[0] || qiyingImageUrl(html.match(/https:\/\/pic\.[a-z0-9.-]+\.cn\/upload_01\/xiao\/[^"'<>\\\s]+\.(?:jpe?g|png|webp)/)?.[0] || "");
 
   return {
     title,
@@ -984,6 +990,7 @@ async function qiyingDetail(id) {
     type_name: detail.categories[0] || "91吃瓜",
     vod_area: "91吃瓜网",
     media_gallery: detail.images,
+    videos: detail.videos.map((video) => ({ url: video.url, type: video.type })),
     vod_play_url: primary?.url || "",
     media_kind: detail.videos.length ? "video" : "gallery",
     needs_detail: false,
@@ -1006,6 +1013,63 @@ async function qiyingPlay(id, index) {
   return json({ vod_id: id, video: video.url, poster: detail.poster || detail.images[0] || "", provider: "qiying" }, {
     headers: { "cache-control": "no-store" },
   });
+}
+
+function qiyingParseCards(html) {
+  const items = [];
+  for (const part of html.split(/<article itemscope itemtype="http:\/\/schema.org\/BlogPosting"/).slice(1)) {
+    const block = part.slice(0, part.indexOf("</article>"));
+    if (block.indexOf('class="post-card"') < 0) continue;
+    const titleBlock = block.match(/<h2 class="post-card-title"[^>]*>([\s\S]*?)<\/h2>/);
+    if (!titleBlock) continue;
+    const id = block.match(/content="[^"]*\/archives\/(\d+)\//)?.[1] || block.match(/href="[^"]*\/archives\/(\d+)\//)?.[1];
+    if (!id) continue;
+    const hot = /class="wraps">\s*热搜/.test(titleBlock[1]);
+    const title = qiyingDecodeHtmlEntities(titleBlock[1].replace(/<div class="wrap">[\s\S]*?<\/div>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+    const cover = qiyingImageUrl(block.match(/loadBannerDirect\('([^']+)'/)?.[1] || "");
+    const author = qiyingDecodeHtmlEntities(block.match(/<span itemprop="author"[^>]*>\s*([^<]*?)\s*<\/span>/)?.[1] || "").trim().replace(/•\s*$/, "").trim();
+    const date = block.match(/itemprop="datePublished" content="([^"]+)"/)?.[1] || "";
+    const infoBlock = block.match(/<div class="post-card-info">([\s\S]*?)<\/div>/)?.[1] || "";
+    const categories = [...infoBlock.matchAll(/<span>([^<]+)<\/span>/g)].map((m) => m[1].split(/[,，]\s*/)).flat().filter(Boolean);
+    items.push({ p: id, t: title, r: cover, a: author, u: date, k: categories, hot });
+  }
+  return items;
+}
+
+async function qiyingCats() {
+  const html = await qiyingPage("/");
+  const cats = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<a[^>]*href="(\/category\/[a-z0-9-]+\/)"[^>]*>([^<]{1,40})<\/a>/g)) {
+    const slug = match[1].replace(/^\/category\//, "").replace(/\/$/, "");
+    const name = qiyingDecodeHtmlEntities(match[2].trim());
+    if (!name || seen.has(slug)) continue;
+    seen.add(slug);
+    cats.push({ slug, name });
+  }
+  return cats;
+}
+
+async function qiyingList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("page")) || 1);
+  const category = requestUrl.searchParams.get("category") || "";
+  const q = (requestUrl.searchParams.get("q") || "").trim();
+  let pathname;
+  if (q) pathname = `/search/${encodeURIComponent(q)}/`;
+  else if (category) pathname = page <= 1 ? `/category/${category}/` : `/category/${category}/${page}/`;
+  else pathname = page <= 1 ? "/" : `/page/${page}/`;
+  const html = await qiyingPage(pathname);
+  const items = qiyingParseCards(html);
+  const pager = html.match(/page-info">\s*(\d+)\s*\/\s*(\d+)/);
+  const current = Number(pager?.[1]) || 1;
+  const total = q ? Math.max(1, Math.ceil(items.length / 30)) : Number(pager?.[2]) || Math.max(current, page);
+  return json({
+    items,
+    page: current,
+    totalPages: total,
+    note: q ? "search" : category ? "category" : "latest",
+    provider: "qiying",
+  }, { headers: { "cache-control": "public, max-age=60" } });
 }
 
 const MADOU_ORIGIN = "https://madou.club";
@@ -2042,7 +2106,12 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
     if (provider === "kan91") return await (action === "image" ? kan91Image(requestUrl) : action === "detail" ? kan91Detail(requestUrl.searchParams.get("id")) : kan91List(requestUrl));
-    if (provider === "qiying") return await (action === "play" ? qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx"))) : qiyingDetail(requestUrl.searchParams.get("id")));
+    if (provider === "qiying") {
+      if (action === "play") return await qiyingPlay(requestUrl.searchParams.get("id"), Number(requestUrl.searchParams.get("idx")));
+      if (action === "cats") return json(await qiyingCats(), { headers: { "cache-control": "public, max-age=600" } });
+      if (action === "list" || action === "search") return await qiyingList(requestUrl);
+      return await qiyingDetail(requestUrl.searchParams.get("id"));
+    }
     if (provider === "madou") return await (action === "play" ? madouPlay(requestUrl.searchParams.get("id")) : action === "detail" ? madouDetail(requestUrl.searchParams.get("id")) : madouList(requestUrl));
     if (provider === "miss") return await (action === "detail" ? missavDetail(requestUrl.searchParams.get("id")) : missavList(requestUrl));
     if (provider === "tx") return await (action === "media" ? tangxinMedia(requestUrl) : action === "artists" ? tangxinArtists() : action === "detail" ? tangxinDetail(requestUrl.searchParams.get("id")) : tangxinList(requestUrl));

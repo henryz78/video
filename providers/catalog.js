@@ -78,10 +78,10 @@ export const PROVIDERS = {
   },
   qiying: {
     id: "qiying",
-    name: "91吃瓜网 镜像 + 主站",
-    upstream: "agency.nsguiiwz.cc / being / act + 本地静态目录 + pic.uforxk.cn / ycomesc CDN",
-    discoveredFrom: "栖影 数据分片导出与 91吃瓜网 防失联页主站域名的同源核对",
-    capabilities: "本地图帖目录 / 分类 / 搜索 / 详情图集 / 主站签名 HLS 播放",
+    name: "91吃瓜网 实时上游",
+    upstream: "agency.nsguiiwz.cc / being / act（301 → agency.qxmrdvtu.cc）+ imgpublic.ycomesc.live 图片 CDN + op.vkjyoi.cn / bgqpnx.cn 视频 CDN",
+    discoveredFrom: "栖影 参考条目与 91吃瓜网 防失联页主站域名同源核对（2026-08-15 转全实时，删除 gz 镜像）",
+    capabilities: "实时列表/分页 / 23 分类 / 搜索 / 详情图集 / 主站签名 HLS 播放",
   },
   madou: {
     id: "madou",

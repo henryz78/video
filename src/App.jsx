@@ -2,47 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import { getProviderForSite, PROVIDERS } from "../providers/catalog.js";
 
-const QIYING_IMG_CDN = "https://imgpublic.ycomesc.live";
-const QIYING_BUCKETS = 96;
-
-async function qiyingGunzip(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`qiying data ${response.status}`);
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  if (!(bytes[0] === 0x1f && bytes[1] === 0x8b)) return JSON.parse(new TextDecoder().decode(buffer));
-  const stream = new Response(buffer).body.pipeThrough(new DecompressionStream("gzip"));
-  return JSON.parse(await new Response(stream).text());
-}
-
-function qiyingAssetPath(path) {
-  if (!path) return "";
-  if (/^https?:\/\//.test(path)) return path;
-  return `${QIYING_IMG_CDN}${path}`;
-}
-
-const qiyingStore = { catalog: null, details: new Map(), promise: null };
-function qiyingLoadCatalog() {
-  if (qiyingStore.catalog) return Promise.resolve(qiyingStore.catalog);
-  if (qiyingStore.promise) return qiyingStore.promise;
-  qiyingStore.promise = qiyingGunzip("/qiying/catalog.json.gz").then((data) => {
-    qiyingStore.catalog = data.filter((post) => Boolean(post.t));
-    return qiyingStore.catalog;
-  }).catch((error) => { qiyingStore.promise = null; throw error; });
-  return qiyingStore.promise;
-}
-function qiyingLoadDetail(pid) {
-  const bucket = Number(pid) % QIYING_BUCKETS;
-  const cached = qiyingStore.details.get(bucket);
-  if (cached) return Promise.resolve(cached);
-  const bucketFile = `/qiying/details-${String(bucket).padStart(3, "0")}.json.gz`;
-  const promise = qiyingGunzip(bucketFile).then((records) => {
-    qiyingStore.details.set(bucket, records);
-    return records;
-  });
-  return promise;
-}
-
 // Homepage metadata is transcribed from the user-saved 2026-08-12 reference snapshot.
 // NODE 02 is intentionally absent: the user explicitly excluded the game entry.
 const SITE_BLUEPRINTS = [
@@ -425,14 +384,6 @@ function qiyingFormatTime(value) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-function qiyingCategoryTabs(posts) {
-  const counts = new Map();
-  for (const post of posts) {
-    for (const category of post.k || []) counts.set(category, (counts.get(category) || 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-}
-
 function QiyingPage({ site, go, setHealth }) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -441,42 +392,59 @@ function QiyingPage({ site, go, setHealth }) {
   const [submitted, setSubmitted] = useState("");
   const [category, setCategory] = useState("");
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [cats, setCats] = useState([]);
   const [selected, setSelected] = useState(null);
   const [ageAccepted, setAgeAccepted] = useState(() => (location.hostname === "127.0.0.1" && new URLSearchParams(location.search).has("qa")) || localStorage.getItem("cf-age") === "yes");
-  useEffect(() => {
-    let cancelled = false;
-    qiyingLoadCatalog().then((data) => {
-      if (cancelled) return;
-      setPosts(data);
+  const request = (params) => {
+    setLoading(true);
+    setError("");
+    const qs = new URLSearchParams({ action: "list", ...params });
+    return fetch(`/provider-api/qiying?${qs}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "目录加载失败");
+      setPosts(body.items || []);
+      setTotalPages(body.totalPages || 1);
       setLoading(false);
       setHealth("ok");
     }).catch((loadError) => {
-      if (cancelled) return;
-      setError(loadError.message || "本地目录加载失败");
+      setError(loadError.message || "目录加载失败");
       setLoading(false);
       setHealth("error");
     });
+  };
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/provider-api/qiying?action=cats").then((response) => response.json()).then((body) => { if (!cancelled) setCats(body || []); }).catch(() => {});
+    request({ page: 1 });
     return () => { cancelled = true; };
-  }, [setHealth]);
-  const tabs = useMemo(() => [["", "全部"], ...qiyingCategoryTabs(posts)], [posts]);
-  const filtered = useMemo(() => {
-    const keyword = submitted.trim().toLowerCase();
-    return posts.filter((post) => {
-      if (category && !(post.k || []).includes(category)) return false;
-      if (!keyword) return true;
-      const haystack = `${post.t || ""} ${(post.a || "")} ${(post.g || []).join(" ")}`.toLowerCase();
-      return haystack.includes(keyword);
-    });
-  }, [posts, category, submitted]);
-  const pages = Math.max(1, Math.ceil(filtered.length / 24));
-  const items = filtered.slice((page - 1) * 24, page * 24);
-  useEffect(() => { setPage(1); }, [category, submitted]);
-  const submit = (event) => { event.preventDefault(); setPage(1); setSubmitted(query.trim()); };
+  }, []);
+  const tabs = [["", "全部"], ...cats.map((cat) => [cat.slug, cat.name])];
+  const openCategory = (key) => {
+    setCategory(key);
+    setSubmitted("");
+    setQuery("");
+    setPage(1);
+    request(key ? { category: key, page: 1 } : { page: 1 });
+  };
+  const submit = (event) => {
+    event.preventDefault();
+    setCategory("");
+    setPage(1);
+    const keyword = query.trim();
+    setSubmitted(keyword);
+    request(keyword ? { q: keyword, page: 1 } : { page: 1 });
+  };
+  const gotoPage = (next) => {
+    setPage(next);
+    if (submitted) request({ q: submitted, page: next });
+    else if (category) request({ category, page: next });
+    else request({ page: next });
+  };
   const openDetail = (post) => {
     setSelected({ ...post, pid: post.p, detail_loading: true });
-    qiyingLoadDetail(post.p).then((records) => {
-      const detail = records.find((record) => Number(record.p) === Number(post.p));
-      setSelected((current) => current && current.p === post.p ? { ...current, detail_loading: false, detail_record: detail || null } : current);
+    fetch(`/provider-api/qiying?action=detail&id=${encodeURIComponent(post.p)}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+      if (!ok) throw new Error(body?.message || "详情加载失败");
+      setSelected((current) => current && current.p === post.p ? { ...current, detail_loading: false, images: body.media_gallery || [], videos: body.videos || [], d: body.vod_content || "", play_url: body.vod_play_url || "" } : current);
     }).catch((detailError) => {
       setSelected((current) => current && current.p === post.p ? { ...current, detail_loading: false, detail_error: detailError.message } : current);
     });
@@ -484,28 +452,24 @@ function QiyingPage({ site, go, setHealth }) {
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
-    <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">本地镜像目录 · 主站签名播放 · 91吃瓜网</div></section>
-    <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的图文内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
-    <div className="qiying-tabs">{tabs.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => setCategory(key)}>{label}<small>{key ? tabsCount(posts, key) : posts.length}</small></button>)}</div>
+    <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 主站签名播放 · 91吃瓜网</div></section>
+    <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的图文内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); setCategory(""); setPage(1); request({ page: 1 }); }}>清除</button>}</form>
+    <div className="qiying-tabs">{tabs.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => openCategory(key)}>{label}</button>)}</div>
     <section className="content-section">
-      <div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category || "最新图文"}</h2></div><span>{filtered.length} 条</span></div>
+      <div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? "CATEGORY" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (cats.find((cat) => cat.slug === category)?.name || "分类") : "最新图文"}</h2></div><span>{posts.length} 条</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
-      {error && <div className="error-state"><h3>本地目录加载失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
+      {error && <div className="error-state"><h3>目录加载失败</h3><p>{error}</p><button onClick={() => request({ page: 1 })}>重新加载</button></div>}
       {!loading && !error && <>
-        <div className="qiying-grid">{items.map((post) => <button className="qiying-card" key={post.p} onClick={() => openDetail(post)}>
-          <div className="qiying-cover"><img src={qiyingAssetPath(post.r)} alt="" loading="lazy" referrerPolicy="no-referrer" /><span className="qiying-counts">{post.i ? `${post.i} 图` : ""}{post.i && post.v ? " · " : ""}{post.v ? `${post.v} 视频` : ""}</span></div>
-          <div className="qiying-meta"><strong>{post.t || "未命名"}</strong><p>{[post.a, qiyingFormatTime(post.u || post.c)].filter(Boolean).join(" · ") || "最新资源"}</p></div>
+        <div className="qiying-grid">{posts.map((post) => <button className="qiying-card" key={post.p} onClick={() => openDetail(post)}>
+          <div className="qiying-cover"><img src={post.r} alt="" loading="lazy" referrerPolicy="no-referrer" />{post.hot && <span className="qiying-counts">热搜</span>}</div>
+          <div className="qiying-meta"><strong>{post.t || "未命名"}</strong><p>{[post.a, qiyingFormatTime(post.u)].filter(Boolean).join(" · ") || "最新资源"}</p></div>
         </button>)}</div>
-        {!items.length && <div className="error-state"><h3>没有匹配内容</h3><p>换个关键词或分类试试。</p><button onClick={() => { setQuery(""); setSubmitted(""); setCategory(""); }}>清除筛选</button></div>}
-        <div className="pager"><button disabled={page === 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>上一页</button><span>{page} / {pages}</span><button disabled={page >= pages} onClick={() => setPage((x) => x + 1)}>下一页</button></div>
+        {!posts.length && <div className="error-state"><h3>没有匹配内容</h3><p>换个关键词或分类试试。</p><button onClick={() => { setQuery(""); setSubmitted(""); setCategory(""); setPage(1); request({ page: 1 }); }}>清除筛选</button></div>}
+        <div className="pager"><button disabled={page <= 1} onClick={() => gotoPage(page - 1)}>上一页</button><span>{page} / {totalPages}</span><button disabled={page >= totalPages} onClick={() => gotoPage(page + 1)}>下一页</button></div>
       </>}
     </section>
     {selected && <QiyingModal post={selected} onClose={() => setSelected(null)} />}
   </div>;
-}
-
-function tabsCount(posts, key) {
-  return posts.filter((post) => (post.k || []).includes(key)).length;
 }
 
 function QiyingModal({ post, onClose }) {
@@ -515,9 +479,8 @@ function QiyingModal({ post, onClose }) {
   const [playLoading, setPlayLoading] = useState(false);
   const [currentVideo, setCurrentVideo] = useState(0);
   const mediaRef = useRef(null);
-  const record = post.detail_record;
-  const images = (record?.i || []).map((item) => qiyingAssetPath(item.p)).filter(Boolean);
-  const videos = record?.v || [];
+  const images = post.images || [];
+  const videos = post.videos || [];
   const currentImage = images[imageIndex];
   useEffect(() => {
     setImageIndex(0);
@@ -561,16 +524,16 @@ function QiyingModal({ post, onClose }) {
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><article className="qiying-modal">
     <button className="modal-close" onClick={onClose}>关闭</button>
     <div className="qiying-player-area">
-      {post.detail_loading ? <div className="no-stream">正在加载图文详情…</div> : post.detail_error ? <div className="no-stream">{post.detail_error}</div> : playing && post.play_url ? <video ref={mediaRef} controls playsInline autoPlay poster={qiyingAssetPath(record?.v?.[0]?.c || post.r)} referrerPolicy="no-referrer" style={{ width: "100%", maxHeight: "72vh", background: "#000" }} /> : images.length ? <img src={currentImage} alt="" referrerPolicy="no-referrer" style={{ width: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : <div className="no-stream">此帖子没有公开媒体</div>}
+      {post.detail_loading ? <div className="no-stream">正在加载图文详情…</div> : post.detail_error ? <div className="no-stream">{post.detail_error}</div> : playing && post.play_url ? <video ref={mediaRef} controls playsInline autoPlay poster={images[0] || post.r} referrerPolicy="no-referrer" style={{ width: "100%", maxHeight: "72vh", background: "#000" }} /> : images.length ? <img src={currentImage} alt="" referrerPolicy="no-referrer" style={{ width: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : <div className="no-stream">此帖子没有公开媒体</div>}
       {images.length > 1 && !playing && <div className="qiying-image-nav"><button onClick={() => setImageIndex((x) => (x + images.length - 1) % images.length)}>上一张</button><span>{imageIndex + 1} / {images.length}</span><button onClick={() => setImageIndex((x) => (x + 1) % images.length)}>下一张</button></div>}
       {playError && <div className="qiying-play-error">{playError}</div>}
     </div>
-    <div className="detail-copy"><small>{[post.k?.[0], post.a, qiyingFormatTime(post.u || post.c)].filter(Boolean).join(" · ") || "91吃瓜"}</small><h2>{post.t || "未命名"}</h2><p>{post.d || "暂无简介"}</p>
+    <div className="detail-copy"><small>{[post.k?.[0], post.a, qiyingFormatTime(post.u)].filter(Boolean).join(" · ") || "91吃瓜"}</small><h2>{post.t || "未命名"}</h2><p>{post.d || "暂无简介"}</p>
       {videos.length > 0 && <div className="qiying-video-strip">{videos.map((video, index) => <button key={video.i || index} className={playing && currentVideo === index ? "is-active" : ""} onClick={() => startPlay(index)}>
-        {playLoading && currentVideo === index ? "解析中…" : `播放视频${videos.length > 1 ? ` ${index + 1}` : ""}`}<small>{video.d ? `${video.d} 秒` : ""}{video.w ? ` · ${video.w}x${video.h}` : ""}</small>
+        {playLoading && currentVideo === index ? "解析中…" : `播放视频${videos.length > 1 ? ` ${index + 1}` : ""}`}
       </button>)}</div>}
       {(post.g || []).length > 0 && <div className="qiying-tags">{(post.g || []).map((tag) => <span key={tag}>{tag}</span>)}</div>}
-      <dl><div><dt>编号</dt><dd>{post.p}</dd></div><div><dt>分类</dt><dd>{(post.k || []).join(" / ") || "—"}</dd></div><div><dt>来源</dt><dd>91吃瓜网镜像 + 主站签名</dd></div></dl>
+      <dl><div><dt>编号</dt><dd>{post.p}</dd></div><div><dt>分类</dt><dd>{(post.k || []).join(" / ") || "—"}</dd></div><div><dt>来源</dt><dd>91吃瓜网实时上游 + 主站签名</dd></div></dl>
     </div>
   </article></div>;
 }
