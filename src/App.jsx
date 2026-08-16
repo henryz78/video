@@ -356,7 +356,7 @@ function DetailModal({ item, mode, provider, onClose }) {
   useEffect(() => {
     const media = mediaRef.current;
     if (!media || !active) return;
-    const isHls = /\.m3u8(?:$|\?)/i.test(active.url);
+    const isHls = /\.m3u8(?:$|\?)/i.test(active.url) || (!/\.(mp4|webm|ogg|m4v|mp3|m4a|aac)(?:$|\?)/i.test(active.url) && Hls.isSupported());
     const appleNative = isHls && /(iphone|ipod|ipad|mac)/i.test(navigator.userAgent) && media.canPlayType("application/vnd.apple.mpegurl");
     if (!isHls || appleNative) {
       media.src = active.url;
@@ -364,9 +364,10 @@ function DetailModal({ item, mode, provider, onClose }) {
       return () => { media.removeAttribute("src"); media.load(); };
     }
     if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, lowLatencyMode: mode === "live" });
+      const hls = new Hls({ enableWorker: true });
       hls.loadSource(active.url); hls.attachMedia(media);
       hls.on(Hls.Events.MANIFEST_PARSED, () => media.play().catch(() => {}));
+      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) console.error("hls fatal:", data.type, data.details); });
       return () => hls.destroy();
     }
   }, [active, mode, item.detail_loading]);

@@ -1643,7 +1643,7 @@ function adultTvCatalog() {
     type_name: "主题源",
     media_kind: "video",
     needs_detail: false,
-    vod_play_url: new URL(path, "https://cdn.adultiptv.net/").href,
+    vod_play_url: oxaxProxyUrl(new URL("http://local"), slug, "", "manifest").replace("http://local", ""),
     live_provider: "adultiptv",
     live_path: path,
     provider: "adulttv",
@@ -1658,7 +1658,7 @@ function adultTvCatalog() {
     type_name: "主题源",
     media_kind: "video",
     needs_detail: false,
-    vod_play_url: new URL(`${path}.m3u8`, "https://cdn.adultiptv.net/").href,
+    vod_play_url: oxaxProxyUrl(new URL("http://local"), slug, "", "manifest").replace("http://local", ""),
     live_provider: "adultiptv",
     live_path: `${path}.m3u8`,
     provider: "adulttv",
@@ -1731,10 +1731,10 @@ async function resolveOxaxStream(channelSlug) {
 
 const OXAX_MEDIA_HOSTS = new Set(["s.oxax.tv", "r.pokaz.me"]);
 
-function allowedOxaxMediaUrl(value) {
+function allowedAdultTvMediaUrl(value) {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "https:" && OXAX_MEDIA_HOSTS.has(parsed.hostname) ? parsed : null;
+    return parsed.protocol === "https:" && (OXAX_MEDIA_HOSTS.has(parsed.hostname) || parsed.hostname === "cdn.adultiptv.net") ? parsed : null;
   } catch {
     return null;
   }
@@ -1765,28 +1765,43 @@ function rewriteOxaxManifest(manifest, sourceUrl, requestUrl, id) {
 async function adultTvMedia(requestUrl) {
   const id = requestUrl.searchParams.get("id") || "";
   if (!/^[a-z0-9-]+$/i.test(id)) return json({ message: "invalid id" }, { status: 400 });
-  const channel = adultTvCatalog().find((item) => item.vod_id === id && item.live_provider === "oxax");
+  const channel = adultTvCatalog().find((item) => item.vod_id === id);
   if (!channel) return json({ message: "channel unavailable" }, { status: 404 });
   const type = requestUrl.searchParams.get("type") || "manifest";
   if (!new Set(["manifest", "segment"]).has(type)) return json({ message: "invalid media type" }, { status: 400 });
-  let source = allowedOxaxMediaUrl(requestUrl.searchParams.get("url") || "");
+  let source = allowedAdultTvMediaUrl(requestUrl.searchParams.get("url") || "");
   if (!source && type === "manifest") {
-    const resolved = await resolveOxaxStream(id);
-    source = allowedOxaxMediaUrl(resolved.stream);
+    if (channel.live_provider === "oxax") {
+      const resolved = await resolveOxaxStream(id);
+      source = allowedAdultTvMediaUrl(resolved.stream);
+    } else {
+      source = new URL(channel.live_path, "https://cdn.adultiptv.net/").href;
+    }
   }
   if (!source) return json({ message: "invalid media source" }, { status: 400 });
 
   const upstream = await fetch(source, {
     headers: {
       accept: type === "manifest" ? "application/vnd.apple.mpegurl, application/x-mpegURL, */*" : "*/*",
-      referer: `http://oxax.tv/${id}.html`,
+      referer: channel.live_provider === "oxax" ? `http://oxax.tv/${id}.html` : "https://cdn.adultiptv.net/",
       "user-agent": "Mozilla/5.0 CFNav-Independent/2.0",
     },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!upstream.ok) return json({ message: `oxax media ${upstream.status}` }, { status: 502 });
+  if (!upstream.ok) return json({ message: `adulttv media ${upstream.status}` }, { status: 502 });
   if (type === "manifest") {
-    const rewritten = rewriteOxaxManifest(await upstream.text(), source, requestUrl, id);
+    let rewritten;
+    if (channel.live_provider === "oxax") {
+      rewritten = rewriteOxaxManifest(await upstream.text(), source, requestUrl, id);
+    } else {
+      // AdultIPTV CDN only serves real TS segments at the ROOT path (mycamtv/
+      // subpath segment requests fall back to a playlist and stall hls.js);
+      // rewrite every segment line to https://cdn.adultiptv.net/{basename}.
+      rewritten = (await upstream.text()).split(/\r?\n/).map((line) => {
+        if (!line || line.startsWith("#")) return line;
+        return `https://cdn.adultiptv.net/${line.split("/").pop()}`;
+      }).join("\n");
+    }
     return new Response(rewritten, {
       headers: {
         "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
@@ -1812,7 +1827,7 @@ async function adultTvDetail(id) {
   let stream = "";
   let title = item.vod_name;
   if (item.live_provider === "adultiptv") {
-    stream = new URL(item.live_path, "https://cdn.adultiptv.net/").href;
+    stream = oxaxProxyUrl(new URL("http://local"), item.vod_id, "", "manifest").replace("http://local", "");
   } else {
     try {
       const resolved = await resolveOxaxStream(item.vod_id);
@@ -1837,7 +1852,8 @@ async function adultTvList(requestUrl) {
   const filtered = search ? all.filter((item) => `${item.vod_name} ${item.vod_content} ${item.vod_id}`.toLowerCase().includes(search)) : all;
   const limit = 24;
   const list = filtered.slice((page - 1) * limit, page * limit);
-  return json({ code: 1, page, pagecount: Math.max(1, Math.ceil(filtered.length / limit)), limit, total: filtered.length, list, provider: "adulttv" }, {
+  const pagecount = Math.max(1, Math.ceil(filtered.length / limit));
+  return json({ code: 1, page, pagecount, totalPages: pagecount, limit, total: filtered.length, list, provider: "adulttv" }, {
     headers: { "cache-control": search ? "public, max-age=60" : "public, max-age=180" },
   });
 }
