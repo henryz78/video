@@ -125,6 +125,13 @@ export const PROVIDERS = {
     discoveredFrom: "看禁漫天堂 参考站旧库 18comic.ink 被 CF 全站保护，官方 GitLab 仓库确认 18mh.net 为新站并完整比对分类/章节/图片链",
     capabilities: "全部/12 分类/排行/热门/最新/搜索 / 详情章节列表 / 章节图片阅读",
   },
+  hj: {
+    id: "hj",
+    name: "海角社区 公开 API",
+    upstream: "www.haijiao.com/api（三层 Base64 匿名接口）+ pic.hj*.top 加密图片 + ts10.hj*.top 视频 CDN（wasm jquery_key 密钥变换）",
+    discoveredFrom: "看海角 参考站 decode.js（严格参考 Richy(2).txt 的三层 atob 契约）与官方 web 端 /js/jquery.js wasm 逆向核对",
+    capabilities: "热门/分区树/分区帖子/搜索 / 详情图文 / 加密图解码 / 预览视频（wasm 变换 AES-128 HLS）",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -144,6 +151,7 @@ const ROUTE_CONFIGS = {
   tx: { provider: "tx", preset: "home" },
   rou: { provider: "rou", preset: "home" },
   jm: { provider: "jm" },
+  hj: { provider: "hj" },
 };
 
 export function getProviderForSite(slug) {

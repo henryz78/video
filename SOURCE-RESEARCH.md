@@ -76,13 +76,20 @@
 - 2026-08-12 复核 `tv.cfnav.me`：目录为 80 路（41 `oxax` + 39 `adultiptv`）。参考站 AdultIPTV 详情直接返回 `https://cdn.adultiptv.net/{topic}.m3u8`；MyCamTV 使用 `https://cdn.adultiptv.net/mycamtv/{topic}.m3u8`；实测清单和连续 TS 分片可从本地浏览器直接请求。
 - oxax 详情页实时生成 `https://s.oxax.tv/{channel}/index.m3u8?k=...`，另有 `r.pokaz.me` 备用，签名不能写死。后续确认参考源页实际是可匿名访问的 `http://oxax.tv/{slug}.html`，不是原 adapter 使用的 `https://oxax.tv/{数字}`。源页以 `kodk`、`kos` 和编码 Playerjs 模板拆分签名；本地现已还原该组合，并加入只允许 `s.oxax.tv` / `r.pokaz.me` 的 HLS 清单与分片代理。`oh-ah` 和 `superone-hd` 的混淆标记插入位置不同，本地两项样本测试均可逐字还原浏览器现场请求的完整签名 URL。
 
-### 海角原站匿名接口（阶段一已确认）
+### 海角原站匿名接口（`hj`，2026-08-16 已接入）
 
-- 列表：`https://www.haijiao.com/api/topic/hot/topics?page={page}`。
+- 列表：`https://www.haijiao.com/api/topic/hot/topics?page={page}`（20/页，total 上限 1000）。
 - 详情：`https://www.haijiao.com/api/topic/{topicId}`。
-- 返回格式：JSON 外层 `data` 为三层 Base64 包装；无需 cfnav Cookie 或登录令牌。
-- 视频边界：未购买帖子只返回约 30 秒的 `_preview.m3u8`；完整媒体需独立上游进一步确认。
-- 状态：上游与解码已确认。专用 adapter 留到第二阶段，同时处理图片 `.txt` 编码和 HJ CDN 的自定义 AES 密钥变换。
+- 返回格式：JSON 外层 `data` 为三层 Base64 包装（`JSON.parse(atob(atob(atob(text))))`），与参考站 `decode.js`（hj.cfnav.me/js/core/decode.js）逐字一致；无需 cfnav Cookie 或登录令牌。
+- 视频边界：未购买帖子只返回约 30 秒的 `_i_preview.m3u8`（25 片 × 1.25s）；全片 `video_time_length` 字段标分钟，`sale.amount` 金币购买。与参考站同样受限。
+- **图片 `.txt` 解密（无 AES）**：`pic.hj*.top/hjstore/images/...{hash}_mini.jpg.txt`（缩略）与 `{hash}.jpg.txt`（全图）为自定义 base64（字母表 `ABCD*EFGHIJKLMNOPQRSTUVWX#YZabcdefghijklmnopqrstuvwxyz1234567890`，`*`=标准 `+`、`#`=标准 `/`）；decode 输出即 `data:image/jpeg;base64,...`（JPEG magic `ff d8 ff db`，18KB 样本）。实现 `hjImgDecode` 自实现字母表 → 字节 → UTF-8 修正。
+- **视频播放**：m3u8 `https://ts10.hj260302818.top/hjstore/video/{date}/{hash}/{id}_i_preview.m3u8` → 200 + CORS `*`、AES-128（`#EXT-X-KEY:METHOD=AES-128,URI="enc_{attachId}.key",IV=0x...`）、ts 相对路径 `{attachId}Y…_i{n}.ts` 25 片。
+- **key 变换（wasm）**：`.key` 返回包装 key（16B `6c6bbb5b45f346beb39b4068d9ad3568`）；真 key = 官方 wasm `jquery_key(key_ptr,16,r_ptr,r_len)`（`https://www.haijiao.com/js/jquery.wasm`，12825B，emscripten 单函数，imports 仅 env `{_abort_js, emscripten_resize_heap}` + wasi `{fd_close,fd_write,fd_seek}`；`/js/jquery.js` 是 createModule 封装）；`r` = fetch m3u8 同目录 `.jpg` 文本 atob（固定字符串 = 上游泄露的 MongoDB 凭据，两个视频验证一致——**不写死进代码**，`action=key` 每次现抓）。真 key 样本 `0104d53c2a9724849cb4210cb4c45b52`，AES-128-CBC(真key, IV) 解出合法 TS `47 40 11 10`（PID 17）。
+- 分区树 `/api/topic/nodes_by_ver/v2?ver=`（128 节点，`{nodeId,parentId,name,icon}`）、分区帖子 `/api/topic/node/topics?type=1&nodeId=X&page=N`、搜索 `/api/topic/searchV2?q=&page=&limit=`（total 上限 10000）。
+- 详情字段：`{topicId, user{nickname,avatar,vip}, node{nodeId,name}, title, type, money_type, liteContent, viewCount, commentCount, likeCount, createTime, attachments[{id,remoteUrl,category:"images"|"video",coverUrl,video_time_length}], hasVideo, hasPic, hasAudio, is_cream, is_top, is_hot, is_original, content(HTML), sale{amount,buyCount,is_buy}, reward, doors, folderId, currentUserPurchased}`；`/api/address/{id}` → 400（参数不对，未继续）；匿名详情无 keyPath。
+- 官方站 `/home` 为 Vue SPA（app.88b7fde2.js + chunk 映射），`/` 是防失联跳转页。
+- 实现：worker 端 `hjB64Decode`/`hjImgDecode`/`hjEnsureWasm`（wasm base64 内嵌、模块级缓存）/`hjKeyTransform`/`hjApi`/`hjList`/`hjCats`/`hjDetail`/`hjPlay`/`hjImg`/`hjKey`/`hjPlaylist`；`action=media` 重写 m3u8（KEY 行 URI → `/provider-api/hj?action=key&u=&j=`、ts 行 → 绝对直连）；前端复用 QiyingPage/QiyingModal（QiyingModal startPlay 改动态 provider）。catalog 注册 `hj`。
+- 验收（headless Chrome，2026-08-16）：列表 20 卡、封面 8/8 加载、详情 14 图、**1080×1920 播放推进**（3.46s→7.46s、readyState 4）、分区「伦理之爱」20 卡、搜索「视频」20 卡、零 JS 错误。构建与 9 项测试通过。零 cfnav 依赖。
 
 ### iptv-org 开放频道库（电视直播）
 

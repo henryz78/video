@@ -222,7 +222,7 @@ function SourcePanel({ health }) {
 
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);
-  if (provider?.id === "qiying" || provider?.id === "mr") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
+  if (provider?.id === "qiying" || provider?.id === "mr" || provider?.id === "hj") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
   if (provider?.id === "jm") return <JmPage site={site} go={go} setHealth={setHealth} />;
   const MISS_TABS = [
     ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
@@ -513,7 +513,7 @@ function QiyingModal({ post, onClose, provider }) {
   const startPlay = (index = 0) => {
     setPlayLoading(true); setPlayError("");
     setCurrentVideo(index);
-    fetch(`${provider?.id === "mr" ? "/provider-api/mr" : "/provider-api/qiying"}?action=play&id=${encodeURIComponent(post.p)}&idx=${index}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
+    fetch(`/provider-api/${provider?.id}?action=play&id=${encodeURIComponent(post.p)}&idx=${index}`).then((response) => response.json().then((body) => ({ ok: response.ok, body }))).then(({ ok, body }) => {
       if (!ok) throw new Error(body?.message || "播放解析失败");
       setPlayLoading(false);
       setPostPlay(post, body.video);
