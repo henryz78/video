@@ -666,7 +666,7 @@ export function App() {
   const [route, go] = useRoute();
   const [health, setHealth] = useState("checking");
   useEffect(() => {
-    Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
+    Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
       const ready = results.filter((result) => result.status === "fulfilled");
       setHealth(ready.length === results.length ? "ok" : ready.length ? "checking" : "error");
     });

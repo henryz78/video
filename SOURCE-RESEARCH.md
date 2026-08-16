@@ -386,9 +386,16 @@
 - 结论：无独立公开上游可建 adapter，与 qms/hqw 同类（cfnav 私有媒体封装）。用户 2026-08-14 决定跳过，保持 pending，不写代码。
 - **重开条件**：获得真实 `SOURCE_ORIGIN` 上游域名 + 公开媒体路径的新证据。
 
-## 看 Miss / missav.media（`miss`，2026-08-15 接入）
+## 看 Miss / missav.media（`miss`，2026-08-15 接入，2026-08-16 上游 CF 挑战阻塞）
 
-### 参考站与上游同源证据
+### 2026-08-16 上游 CF 挑战调查（用户要求查明参考站为何能过 CF）
+
+- **现状**：missav.media/.ai/.ws/.fans/.live/123.com/njavtv.com 全部返回 Cloudflare「Just a moment」托管挑战 403。实测矩阵：完整浏览器指纹头（sec-ch-ua/UA/Accept-Language/Sec-Fetch-*）→ 403；headless Chrome（真实引擎）→ 卡「请稍候…/安全验证」页（8s 无解）；DoH（cloudflare-dns.com）解析 A 记录正常（172.64.x.x / 104.26.x.x = CF 边缘）→ 排除 DNS 污染；missav.com 已被扣押并变 **ThisAV**（title "ThisAV - 世界最高の無料アダルト エンターテイメント サイト"，无 missav 卡片）。
+- **参考站路线（已查明架构）**：`miss.cfnav.me` 是 **FastAPI 后端**，`/openapi.json` 契约：`/api/catalog`、`/api/home`、`/api/list/{section_key}`、`/api/movie/{video_code}`、`/api/search`、`/api/genres`、`/api/actresses`、`/api/makers`、`/proxy/hls`、`/proxy/cover/{video_code}`、`/proxy/preview/{video_code}` —— 即**服务器端代抓 missav + `/proxy/*` 媒体代理**，浏览器端零直连上游。参考站存活但本机 403 ⇒ CF 挑战按出口 IP/指纹放行差异（参考站部署在海外服务器或走 cfnav 通道；其 FastAPI 无浏览器会话也能工作，排除"登录会话"假设，最可能是**出口 IP 不在 CF 风控名单**）。
+- **未验证项（交给可开真实浏览器 + 登录态的 agent）**：(a) 用户浏览器直连 missav.ai 是否 200（验证 CF 是否仅拦截本机出口）；(b) 海外 IP（如代理/VPS）请求 missav.ai 是否放行；(c) 参考站 `/api/movie/{code}` 在登录态下的响应是否仍含 missav 直链 metadata_links；(d) 是否有未套 CF 的 missav 新镜像（域名轮换频繁）。
+- **决策**：记录为「上游 CF 挑战阻塞」，与 hqw/sjs/qms 同型但路线可查（参考站 FastAPI 代抓 → 若海外 IP 可过 CF，可考虑独立的海外代理方案；需先由另一 agent 确认 (b)）。
+
+### 参考站与上游同源证据（2026-08-15，当时 .media 无 CF 可直接抓）
 
 - 参考站 `miss.cfnav.me` 登录墙（Node 401）。用户浏览器登录态打开 `/docs` 暴露 **FastAPI Swagger**：`/openapi.json` 列出 `/api/catalog`、`/api/home`、`/api/list/{section_key}`、`/api/movie/{video_code}`、`/api/search`、`/api/genres`、`/api/actresses`、`/api/makers`、`/proxy/hls`、`/proxy/cover/{video_code}`、`/proxy/preview/{video_code}`。
 - **真实上游 `missav.media`（公开站，MissAV）**：参考站 `/api/movie/{video_code}` 返回的 `metadata_links` 指向 missav.media；条目 video_code、封面、预览、m3u8 与 missav.media 逐项一致。
