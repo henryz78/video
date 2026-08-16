@@ -74,6 +74,7 @@
 - 用户流程是平台列表 → 获取某平台实时频道 → 直播播放器，页面状态含“正在获取直播信号”和“正在直播”。
 - 已观察到请求 `https://qms.cfnav.me/api/platforms`；尚需继续确认其真正上游与后续频道/流接口。
 - 2026-08-12 复核 `tv.cfnav.me`：目录为 80 路（41 `oxax` + 39 `adultiptv`）。参考站 AdultIPTV 详情直接返回 `https://cdn.adultiptv.net/{topic}.m3u8`；MyCamTV 使用 `https://cdn.adultiptv.net/mycamtv/{topic}.m3u8`；实测清单和连续 TS 分片可从本地浏览器直接请求。
+- 2026-08-16 修正 `cdn.adultiptv.net` 的分片路由特性：真实 TS 分片**只在根路径**提供（`/milf-*.ts`=640KB `47 40 00 10`），`mycamtv/` 子路径分片请求全部 200 回退为 pornstar 清单（1107B）→ hls.js 挂死。本地 manifest 代理现把每个分片行重写为 `https://cdn.adultiptv.net/{basename}`；批量探测 39 路：24 路根路径流正常、13/15 路 mycamtv 重写后可播、asian-girls/blowjob 两路 CDN 上已下线。
 - oxax 详情页实时生成 `https://s.oxax.tv/{channel}/index.m3u8?k=...`，另有 `r.pokaz.me` 备用，签名不能写死。后续确认参考源页实际是可匿名访问的 `http://oxax.tv/{slug}.html`，不是原 adapter 使用的 `https://oxax.tv/{数字}`。源页以 `kodk`、`kos` 和编码 Playerjs 模板拆分签名；本地现已还原该组合，并加入只允许 `s.oxax.tv` / `r.pokaz.me` 的 HLS 清单与分片代理。`oh-ah` 和 `superone-hd` 的混淆标记插入位置不同，本地两项样本测试均可逐字还原浏览器现场请求的完整签名 URL。
 
 ### 海角原站匿名接口（`hj`，2026-08-16 已接入）
