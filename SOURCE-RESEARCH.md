@@ -81,7 +81,8 @@
 - 列表：`https://www.haijiao.com/api/topic/hot/topics?page={page}`（20/页，total 上限 1000）。
 - 详情：`https://www.haijiao.com/api/topic/{topicId}`。
 - 返回格式：JSON 外层 `data` 为三层 Base64 包装（`JSON.parse(atob(atob(atob(text))))`），与参考站 `decode.js`（hj.cfnav.me/js/core/decode.js）逐字一致；无需 cfnav Cookie 或登录令牌。
-- 视频边界：未购买帖子只返回约 30 秒的 `_i_preview.m3u8`（25 片 × 1.25s）；全片 `video_time_length` 字段标分钟，`sale.amount` 金币购买。与参考站同样受限。
+- 视频边界：未购买帖子只返回约 30 秒的 `_i_preview.m3u8`（25 片 × 1.25s）；`video_time_length` 字段标秒数，`sale.amount` 金币购买。
+- **完整正片（2026-08-16 验证，匿名可拉、无需金币/登录）**：preview 文件名用附件 id（`{attachId}_i_preview.m3u8`）但 ts 分片名用**另一词干**（`{attachId2}Y{hash}_i{n}.ts`）；完整 m3u8 = 同目录 `{attachId2}Y{hash}_i.m3u8`（= ts 名 LCP + `.m3u8`，`hjTsStem` 实现）。两帖实测：2227731 → `13839670Y6Y1dNJG_i.m3u8` 200、1664.4s、1338 片；2232393 → `13875705kWCmgZhI_i.m3u8` 200、992s（= `video_time_length` 991s）。KEY 行（`enc_{attachId2}.key`）与 IV 与 preview 相同。注意 `{attachId}_i.m3u8`（preview 名去 `_preview`）404——反推必须走 ts 分片名。
 - **图片 `.txt` 解密（无 AES）**：`pic.hj*.top/hjstore/images/...{hash}_mini.jpg.txt`（缩略）与 `{hash}.jpg.txt`（全图）为自定义 base64（字母表 `ABCD*EFGHIJKLMNOPQRSTUVWX#YZabcdefghijklmnopqrstuvwxyz1234567890`，`*`=标准 `+`、`#`=标准 `/`）；decode 输出即 `data:image/jpeg;base64,...`（JPEG magic `ff d8 ff db`，18KB 样本）。实现 `hjImgDecode` 自实现字母表 → 字节 → UTF-8 修正。
 - **视频播放**：m3u8 `https://ts10.hj260302818.top/hjstore/video/{date}/{hash}/{id}_i_preview.m3u8` → 200 + CORS `*`、AES-128（`#EXT-X-KEY:METHOD=AES-128,URI="enc_{attachId}.key",IV=0x...`）、ts 相对路径 `{attachId}Y…_i{n}.ts` 25 片。
 - **key 变换（wasm）**：`.key` 返回包装 key（16B `6c6bbb5b45f346beb39b4068d9ad3568`）；真 key = 官方 wasm `jquery_key(key_ptr,16,r_ptr,r_len)`（`https://www.haijiao.com/js/jquery.wasm`，12825B，emscripten 单函数，imports 仅 env `{_abort_js, emscripten_resize_heap}` + wasi `{fd_close,fd_write,fd_seek}`；`/js/jquery.js` 是 createModule 封装）；`r` = fetch m3u8 同目录 `.jpg` 文本 atob（固定字符串 = 上游泄露的 MongoDB 凭据，两个视频验证一致——**不写死进代码**，`action=key` 每次现抓）。真 key 样本 `0104d53c2a9724849cb4210cb4c45b52`，AES-128-CBC(真key, IV) 解出合法 TS `47 40 11 10`（PID 17）。
@@ -91,7 +92,7 @@
 - 实现：worker 端 `hjB64Decode`/`hjImgDecode`/`hjEnsureWasm`（wasm base64 内嵌、模块级缓存）/`hjKeyTransform`/`hjApi`/`hjList`/`hjCats`/`hjDetail`/`hjPlay`/`hjImg`/`hjKey`/`hjPlaylist`；`action=media` 重写 m3u8（KEY 行 URI → `/provider-api/hj?action=key&u=&j=`、ts 行 → 绝对直连）；前端复用 QiyingPage/QiyingModal（QiyingModal startPlay 改动态 provider）。catalog 注册 `hj`。
 - 验收（headless Chrome，2026-08-16）：列表 20 卡、封面 8/8 加载、详情 14 图、**1080×1920 播放推进**（3.46s→7.46s、readyState 4）、分区「伦理之爱」20 卡、搜索「视频」20 卡、零 JS 错误。构建与 9 项测试通过。零 cfnav 依赖。
 
-### 海角油猴脚本线索（`C:\Users\z6798\Downloads\Richy.txt`，2026-07-23.3，2026-08-16 用户提供，已记录未实施）
+### 海角油猴脚本线索（`C:\Users\z6798\Downloads\Richy.txt`，2026-07-23.3，2026-08-16 用户提供；**已验证有效并实施**）
 
 - 用户的海角专用脚本「m3u8提取+去广告-原位播放+跳转/历史版」，匹配 `*://haijiao.com/*` 与 `*://*/post/details*`。功能：剪贴板劫持拦截（`#copy-input` 隐藏复制框 + focus/select/setSelectionRange/execCommand/Clipboard API 五重钩子）、全站去广告（CSS + MutationObserver + 落地弹窗清理，保留登录/VIP/支付业务弹窗）、sessionStorage 历史、m3u8 捕获（XHR + fetch 双通道 + Performance 兜底）。
 - **m3u8 评分体系**（分数越高越像完整正片）：100 = `/api/address/` 反推主 m3u8（脚本旧逻辑核心，最可信；我们实测 `/api/address/{id}` 400，其正确参数未复现）、90 = topic 附件/预览反推完整源、80 = media、70 = DOM/播放器 hook、50 = 普通 m3u8、40 = 正文文本扫到、20 = Performance、10 = 疑似预览、0 = 不可用。
@@ -99,7 +100,7 @@
 - **candidatesFromPreviewUrl（预览→完整片候选）**：`xxx_i_preview.m3u8 → xxx_i.m3u8`、去 `-preview`/`.preview`/`_pre`/`/preview/` 等变体，逐个 fetch 验证是合法 playlist（`#EXTM3U`）后记为完整源。
 - **isLikelyPreviewPlaylist**：`#EXTINF` 总时长 ≤45s 且 ts 数 ≤50 判为试看（老帖 URL 常无 preview 字样）。
 - `decodeEncryptString`：三层 `atob`（与我们的 `hjB64Decode` 一致）。
-- **启示（未实施）**：完整正片 m3u8 很可能 = preview 路径去掉 `_preview` 后缀（`xxx_i.m3u8`），与 preview 同目录同 key；脚本运行在用户登录/购买环境下，未验证匿名是否可拉、是否需签名/鉴权。用户指示此项"到时候再弄"，仅记录。
+- **验证结论（2026-08-16，已实施）**：候选 `xxx_i.m3u8`（preview 名去 `_preview`）实测 404；**正确反推 = ts 分片名 LCP + `.m3u8`**（`getRealVideoSrc` 分支），且**匿名可拉、无需签名/登录**。实现：`hjPlaylist` 先拉 preview playlist → `hjTsStem` 求 ts 名 LCP → 探测 `{stem}.m3u8`，合法即用完整片、否则回退 preview。headless 验收播放越过 preview 31s 极限（duration 1664s、推进至 45.2s）。`/api/address/`（评分 100 的最可信源）正确参数仍未复现，未采用。
 
 ### iptv-org 开放频道库（电视直播）
 

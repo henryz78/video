@@ -2469,10 +2469,9 @@ async function hjDetail(id) {
     seconds: att.video_time_length || 0,
   }));
   const sale = decoded.sale || null;
-  const paid = sale && sale.amount > 0 && !sale.is_buy;
   const minutes = videos[0]?.seconds ? Math.round(videos[0].seconds / 60) : 0;
   const remarks = videos.length
-    ? `${paid ? `预览 30 秒` : "视频"}${minutes ? ` · 全片约 ${minutes} 分钟` : ""}`
+    ? `${minutes ? `视频 · ${minutes} 分钟` : "视频"}`
     : images.length ? `${images.length} 图` : "";
   return json({
     vod_id: id,
@@ -2560,10 +2559,27 @@ async function hjKey(requestUrl) {
 async function hjPlaylist(requestUrl) {
   const raw = requestUrl.searchParams.get("u") || "";
   if (!raw.includes("hjstore/video/")) return json({ message: "invalid playlist url" }, { status: 400 });
-  const upstream = await fetch(raw, { headers: HJ_HEADERS, signal: AbortSignal.timeout(20_000) });
-  if (!upstream.ok) return json({ message: `hj playlist ${upstream.status}` }, { status: 502 });
-  const text = await upstream.text();
-  const base = new URL(raw);
+  const preview = await fetch(raw, { headers: HJ_HEADERS, signal: AbortSignal.timeout(20_000) });
+  if (!preview.ok) return json({ message: `hj playlist ${preview.status}` }, { status: 502 });
+  let sourceUrl = raw;
+  let text = await preview.text();
+  if (text.includes("#EXTM3U")) {
+    const stem = hjTsStem(text);
+    if (stem) {
+      const guessed = raw.slice(0, raw.lastIndexOf("/") + 1) + stem + ".m3u8";
+      try {
+        const full = await fetch(guessed, { headers: HJ_HEADERS, signal: AbortSignal.timeout(20_000) });
+        if (full.ok) {
+          const fullText = await full.text();
+          if (fullText.includes("#EXTM3U")) {
+            sourceUrl = guessed;
+            text = fullText;
+          }
+        }
+      } catch {}
+    }
+  }
+  const base = new URL(sourceUrl);
   const jpgUrl = raw.replace(/\.m3u8(?:$|\?)/, ".jpg");
   const rewritten = text.split(/\r?\n/).map((line) => {
     const trimmed = line.trim();
@@ -2583,6 +2599,22 @@ async function hjPlaylist(requestUrl) {
       "access-control-allow-origin": "*",
     },
   });
+}
+
+function hjTsStem(playlistText) {
+  const names = playlistText.split(/\r?\n/).map((line) => line.trim())
+    .filter((line) => /\.ts(\?|$)/i.test(line))
+    .map((line) => line.split("?")[0].split("/").pop().replace(/\.ts$/i, ""))
+    .filter(Boolean);
+  if (!names.length) return "";
+  let lcp = names[0];
+  for (let i = 1; i < names.length; i++) {
+    let j = 0;
+    while (j < lcp.length && j < names[i].length && lcp.charAt(j) === names[i].charAt(j)) j++;
+    lcp = lcp.slice(0, j);
+    if (!lcp) return "";
+  }
+  return lcp;
 }
 
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
