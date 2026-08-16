@@ -91,6 +91,16 @@
 - 实现：worker 端 `hjB64Decode`/`hjImgDecode`/`hjEnsureWasm`（wasm base64 内嵌、模块级缓存）/`hjKeyTransform`/`hjApi`/`hjList`/`hjCats`/`hjDetail`/`hjPlay`/`hjImg`/`hjKey`/`hjPlaylist`；`action=media` 重写 m3u8（KEY 行 URI → `/provider-api/hj?action=key&u=&j=`、ts 行 → 绝对直连）；前端复用 QiyingPage/QiyingModal（QiyingModal startPlay 改动态 provider）。catalog 注册 `hj`。
 - 验收（headless Chrome，2026-08-16）：列表 20 卡、封面 8/8 加载、详情 14 图、**1080×1920 播放推进**（3.46s→7.46s、readyState 4）、分区「伦理之爱」20 卡、搜索「视频」20 卡、零 JS 错误。构建与 9 项测试通过。零 cfnav 依赖。
 
+### 海角油猴脚本线索（`C:\Users\z6798\Downloads\Richy.txt`，2026-07-23.3，2026-08-16 用户提供，已记录未实施）
+
+- 用户的海角专用脚本「m3u8提取+去广告-原位播放+跳转/历史版」，匹配 `*://haijiao.com/*` 与 `*://*/post/details*`。功能：剪贴板劫持拦截（`#copy-input` 隐藏复制框 + focus/select/setSelectionRange/execCommand/Clipboard API 五重钩子）、全站去广告（CSS + MutationObserver + 落地弹窗清理，保留登录/VIP/支付业务弹窗）、sessionStorage 历史、m3u8 捕获（XHR + fetch 双通道 + Performance 兜底）。
+- **m3u8 评分体系**（分数越高越像完整正片）：100 = `/api/address/` 反推主 m3u8（脚本旧逻辑核心，最可信；我们实测 `/api/address/{id}` 400，其正确参数未复现）、90 = topic 附件/预览反推完整源、80 = media、70 = DOM/播放器 hook、50 = 普通 m3u8、40 = 正文文本扫到、20 = Performance、10 = 疑似预览、0 = 不可用。
+- **getRealVideoSrc（ts 分片名反推主 m3u8）**：master playlist 优先取子 m3u8；media playlist 用全部分片名求最长公共前缀（LCP）→ `{prefix}.m3u8`：老帖 `1159940.ts/1159941.ts → 115994.m3u8`，新帖 `xxx_i0.ts/xxx_i1.ts → xxx_i.m3u8`。
+- **candidatesFromPreviewUrl（预览→完整片候选）**：`xxx_i_preview.m3u8 → xxx_i.m3u8`、去 `-preview`/`.preview`/`_pre`/`/preview/` 等变体，逐个 fetch 验证是合法 playlist（`#EXTM3U`）后记为完整源。
+- **isLikelyPreviewPlaylist**：`#EXTINF` 总时长 ≤45s 且 ts 数 ≤50 判为试看（老帖 URL 常无 preview 字样）。
+- `decodeEncryptString`：三层 `atob`（与我们的 `hjB64Decode` 一致）。
+- **启示（未实施）**：完整正片 m3u8 很可能 = preview 路径去掉 `_preview` 后缀（`xxx_i.m3u8`），与 preview 同目录同 key；脚本运行在用户登录/购买环境下，未验证匿名是否可拉、是否需签名/鉴权。用户指示此项"到时候再弄"，仅记录。
+
 ### iptv-org 开放频道库（电视直播）
 
 - API：`channels.json`、`streams.json`、`logos.json`。
