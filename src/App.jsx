@@ -253,7 +253,6 @@ function SitePage({ site, go, health, setHealth }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
-  const [ageAccepted, setAgeAccepted] = useState(() => (location.hostname === "127.0.0.1" && new URLSearchParams(location.search).has("qa")) || localStorage.getItem("cf-age") === "yes");
   const abortRef = useRef();
   useEffect(() => {
     if (!provider) { setItems([]); setLoading(false); setError(""); return; }
@@ -299,13 +298,11 @@ function SitePage({ site, go, health, setHealth }) {
   };
   const specialRou = provider?.id === "rou" && (category === "home" || category === "cat" || category === "tag");
   if (!provider) return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
-    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip error">SOURCE PENDING</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">参考站真实接口核对中 · 暂不返回替代内容</div></section>
     <section className="content-section"><div className="error-state"><h3>这个入口尚未接入</h3><p>为保证与参考项目的内容和使用效果一致，此处不再使用其他站点的数据作为临时替代。</p><button onClick={() => go("/")}>返回导航</button></div></section>
   </div>;
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
-    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className={`status-chip ${health}`}>{health === "ok" ? "SOURCE ONLINE" : "SOURCE CHECK"}</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">独立适配器 · {provider.name}{provider.preset ? ` · ${provider.preset}` : ""}</div></section>
     {provider?.id !== "tx" && <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>}
@@ -397,7 +394,6 @@ function QiyingPage({ site, go, setHealth, provider }) {
   const [totalPages, setTotalPages] = useState(1);
   const [cats, setCats] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [ageAccepted, setAgeAccepted] = useState(() => (location.hostname === "127.0.0.1" && new URLSearchParams(location.search).has("qa")) || localStorage.getItem("cf-age") === "yes");
   const request = (params) => {
     setLoading(true);
     setError("");
@@ -452,7 +448,6 @@ function QiyingPage({ site, go, setHealth, provider }) {
     });
   };
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
-    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 主站签名播放 · {provider?.name || "实时上游"}</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的图文内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); setCategory(""); setPage(1); request({ page: 1 }); }}>清除</button>}</form>
@@ -562,7 +557,6 @@ function JmPage({ site, go, setHealth }) {
   const [category, setCategory] = useState("");
   const [scope, setScope] = useState("all");
   const [selected, setSelected] = useState(null);
-  const [ageAccepted, setAgeAccepted] = useState(() => (location.hostname === "127.0.0.1" && new URLSearchParams(location.search).has("qa")) || localStorage.getItem("cf-age") === "yes");
   const request = (params) => {
     setLoading(true);
     setError("");
@@ -624,7 +618,6 @@ function JmPage({ site, go, setHealth }) {
     });
   };
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
-    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button><button className="ghost" onClick={() => go("/")}>返回塔台</button></div></div>}
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">实时上游目录 · 禁漫天堂 18mh.net</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`搜索 ${site.name} 的漫画`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
@@ -665,6 +658,7 @@ function JmModal({ comic, onClose, onChapter }) {
 export function App() {
   const [route, go] = useRoute();
   const [health, setHealth] = useState("checking");
+  const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
     Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
       const ready = results.filter((result) => result.status === "fulfilled");
@@ -672,5 +666,7 @@ export function App() {
     });
   }, []);
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
-  return <div className="app"><Header go={go} health={health} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} health={health} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer></div>;
+  return <div className="app"><Header go={go} health={health} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} health={health} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
+    {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
+  </div>;
 }
