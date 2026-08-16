@@ -3,4 +3,5 @@ node_modules/
 dist/
 *.log
 .codex-dev.*.log
-.DS_Store
+.DS_Storerou-response.json
+*-response.json
