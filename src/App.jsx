@@ -2,47 +2,49 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import { getProviderForSite, PROVIDERS } from "../providers/catalog.js";
 
-// Homepage metadata is transcribed from the user-saved 2026-08-12 reference snapshot.
-// NODE 02 is intentionally absent: the user explicitly excluded the game entry.
+// Homepage metadata follows the live 2026-08-17 reference portal. Provider routing
+// remains slug-based in providers/catalog.js; the two new entries intentionally stay pending.
 const SITE_BLUEPRINTS = [
-  [1, "one", "KanOne", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "简洁流畅的视频浏览与播放", "cinema", "direct", "1,352", true],
-  [3, "ai", "麻豆视频(AI)", "影视", "video", "orange", "#FF985C", "255, 152, 92", "AI 视频分类、搜索与播放", "cinema", "direct", "3,541"],
-  [4, "hj", "看海角", "社区", "community", "blue", "#63A8FF", "99, 168, 255", "轻量内容聚合入口", "feed", "direct", "3,059"],
-  [5, "91", "看91", "影视", "video", "orange", "#FFAD78", "255, 173, 120", "简洁影院，热门短视频与分类浏览", "cinema", "relay", "2,752"],
-  [6, "qms", "秋名山直播", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "聚合直播频道与低延迟播放", "live", "relay", "2,593"],
-  [7, "mr", "看每日大赛", "社区", "community", "lime", "#72D68C", "114, 214, 140", "数据源镜像阅读与本地解密展示", "feed", "relay", "2,312"],
-  [8, "xf", "看推特", "图集", "gallery", "cyan", "#48D8C8", "72, 216, 200", "图文与视频浏览器", "feed", "direct", "1,973"],
-  [9, "sjs", "司机社（SJS）", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "主题分类、资源检索与帖子阅读", "feed", "direct", "1,528"],
-  [10, "qiying", "栖影", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "安静简洁的观影入口", "cinema", "direct", "1,467"],
-  [11, "tx", "看糖心Vlog", "影视", "video", "pink", "#FF76A8", "255, 118, 168", "视频内容浏览入口", "cinema", "relay", "1,330"],
-  [12, "lg", "看OnlyFans", "图集", "gallery", "blue", "#849BFF", "132, 155, 255", "简洁的图集浏览体验", "gallery", "direct", "1,309"],
-  [13, "hxc", "看含羞草", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "高清影视内容，分类浏览", "cinema", "relay", "1,095"],
-  [14, "hqw", "好妻网", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "精选视频与短片浏览", "cinema", "direct", "1,076"],
-  [15, "book", "有声读物", "动漫", "anime", "pink", "#F178D1", "241, 120, 209", "书籍阅读与中文音声播放", "audio", "direct", "1,013"],
-  [16, "dj", "轻看短剧", "影视", "video", "cyan", "#48D8C8", "72, 216, 200", "短剧内容，快速开看", "short", "direct", "874"],
-  [17, "swag", "成人社交（SWAG）", "影视", "video", "orange", "#FF985C", "255, 152, 92", "短视频与分类内容浏览", "short", "direct", "871"],
-  [18, "mt", "看蜜桃", "影视", "video", "cyan", "#63C7F2", "99, 199, 242", "高清成人影视，每日更新", "cinema", "relay", "747"],
-  [19, "pmv", "成人音乐剪辑（PMV）", "影视", "video", "red", "#FF6B63", "255, 107, 99", "音乐剪辑与高清播放", "cinema", "direct", "737"],
-  [20, "rou", "看肉视频", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "简洁观影与内容发现", "cinema", "relay", "734"],
-  [21, "fj", "观番", "动漫", "anime", "blue", "#849BFF", "132, 155, 255", "简洁的番剧在线观看", "anime", "direct", "662"],
-  [22, "kankan", "爱微社区", "社区", "community", "red", "#FF7F8F", "255, 127, 143", "社区内容与热门资源", "feed", "direct", "632"],
-  [23, "zb", "看主播", "影视", "video", "pink", "#F178D1", "241, 120, 209", "主播视频目录与连续播放", "live", "direct", "569"],
-  [24, "9s", "看九色", "影视", "video", "violet", "#C187FF", "193, 135, 255", "原创高清内容，分类丰富", "cinema", "relay", "566"],
-  [25, "jm", "禁漫天堂", "动漫", "anime", "pink", "#FF76A8", "255, 118, 168", "漫画内容浏览入口", "comic", "direct", "564"],
-  [26, "mm", "墨影集", "图集", "gallery", "cyan", "#63C7F2", "99, 199, 242", "沉浸式个人影集", "gallery", "direct", "535"],
-  [27, "miss", "看Miss", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "聚合视频内容入口", "cinema", "direct", "529"],
-  [28, "dsd", "看懂色帝", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "精选影视内容入口", "cinema", "relay", "462"],
-  [29, "movie", "影视聚合", "影视", "video", "violet", "#C187FF", "193, 135, 255", "影视内容聚合与检索", "aggregate", "direct", "455"],
-  [30, "xo", "爱看", "社区", "community", "amber", "#F6C453", "246, 196, 83", "精选内容与发现", "cinema", "relay", "437"],
-  [31, "jav", "日本成人影像（JAV）", "影视", "video", "red", "#FF6B63", "255, 107, 99", "简洁的视频片库", "cinema", "direct", "433"],
-  [32, "ep", "高清成人影片（EPORNER）", "影视", "video", "orange", "#FFAD78", "255, 173, 120", "高清片库，支持多清晰度播放", "cinema", "direct", "419"],
-  [33, "tna", "成人视频片库（TNAFlix）", "影视", "video", "lime", "#BDFC48", "189, 252, 72", "多清晰度视频目录与搜索", "cinema", "direct", "408"],
-  [34, "madou", "看麻豆", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "麻豆影视，分类与排行浏览", "cinema", "relay", "396"],
-  [35, "best", "看JavPorn", "影视", "video", "amber", "#F6C453", "246, 196, 83", "精选热门影视内容", "cinema", "direct", "390"],
-  [36, "tv", "电视直播（TV）", "影视", "video", "lime", "#91E85B", "145, 232, 91", "直播频道与电视内容", "live", "direct", "388"],
-  [37, "ja", "看JavBus", "影视", "video", "lime", "#91E85B", "145, 232, 91", "JavBus 内容浏览入口", "cinema", "relay", "379"],
-  [38, "bj", "韩国主播视频（SKBJ）", "影视", "video", "lime", "#72D68C", "114, 214, 140", "画廊与视频内容聚合", "live", "direct", "372"],
-  [39, "asmr", "助眠音声（ASMR）", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "沉浸式 ASMR 音视频助眠内容", "audio", "direct", "329"],
+  [1, "sf", "私房 TV", "影视", "video", "red", "#FF6B63", "255, 107, 99", "私房影视与频道内容浏览", "cinema", "direct", "1,430", true],
+  [2, "98", "98堂", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "分类清晰的高清视频浏览站", "cinema", "direct", "1,149", true],
+  [3, "ai", "麻豆视频(AI)", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "AI 视频分类、搜索与播放", "cinema", "direct", "4,519"],
+  [4, "hj", "看海角", "社区", "community", "amber", "#F6C453", "246, 196, 83", "轻量内容聚合入口", "feed", "direct", "4,285"],
+  [5, "91", "看91", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "简洁影院，热门短视频与分类浏览", "cinema", "relay", "3,955"],
+  [6, "mr", "看每日大赛", "社区", "community", "orange", "#FFAD78", "255, 173, 120", "数据源镜像阅读与本地解密展示", "feed", "relay", "3,256"],
+  [7, "qms", "秋名山直播", "影视", "video", "orange", "#FF985C", "255, 152, 92", "聚合直播频道与低延迟播放", "live", "relay", "3,066"],
+  [8, "xf", "看推特", "图集", "gallery", "blue", "#849BFF", "132, 155, 255", "图文与视频浏览器", "feed", "direct", "2,817"],
+  [9, "one", "KanOne", "影视", "video", "pink", "#F178D1", "241, 120, 209", "简洁流畅的视频浏览与播放", "cinema", "direct", "2,306"],
+  [10, "qiying", "栖影", "影视", "video", "lime", "#72D68C", "114, 214, 140", "安静简洁的观影入口", "cinema", "direct", "1,995"],
+  [11, "sjs", "司机社（SJS）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "主题分类、资源检索与帖子阅读", "feed", "direct", "1,951"],
+  [12, "tx", "看糖心Vlog", "影视", "video", "cyan", "#48D8C8", "72, 216, 200", "视频内容浏览入口", "cinema", "relay", "1,896"],
+  [13, "lg", "看OnlyFans", "图集", "gallery", "lime", "#91E85B", "145, 232, 91", "简洁的图集浏览体验", "gallery", "direct", "1,810"],
+  [14, "hxc", "看含羞草", "影视", "video", "lime", "#72D68C", "114, 214, 140", "高清影视内容，分类浏览", "cinema", "relay", "1,555"],
+  [15, "hqw", "好妻网", "影视", "video", "orange", "#FF985C", "255, 152, 92", "精选视频与短片浏览", "cinema", "direct", "1,441"],
+  [16, "swag", "成人社交（SWAG）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "短视频与分类内容浏览", "short", "direct", "1,285"],
+  [17, "book", "有声读物", "动漫", "anime", "lime", "#BDFC48", "189, 252, 72", "书籍阅读与中文音声播放", "audio", "direct", "1,267"],
+  [18, "dj", "轻看短剧", "影视", "video", "blue", "#849BFF", "132, 155, 255", "短剧内容，快速开看", "short", "direct", "1,169"],
+  [19, "mt", "看蜜桃", "影视", "video", "violet", "#C187FF", "193, 135, 255", "高清成人影视，每日更新", "cinema", "relay", "1,102"],
+  [20, "rou", "看肉视频", "影视", "video", "amber", "#F6C453", "246, 196, 83", "简洁观影与内容发现", "cinema", "relay", "992"],
+  [21, "fj", "观番", "动漫", "anime", "lime", "#91E85B", "145, 232, 91", "简洁的番剧在线观看", "anime", "direct", "967"],
+  [22, "kankan", "爱微社区", "社区", "community", "cyan", "#63C7F2", "99, 199, 242", "社区内容与热门资源", "feed", "direct", "906"],
+  [23, "pmv", "成人音乐剪辑（PMV）", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "音乐剪辑与高清播放", "cinema", "direct", "839"],
+  [24, "jm", "禁漫天堂", "动漫", "anime", "cyan", "#48D8C8", "72, 216, 200", "漫画内容浏览入口", "comic", "direct", "820"],
+  [25, "9s", "看九色", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "原创高清内容，分类丰富", "cinema", "relay", "804"],
+  [26, "mm", "墨影集", "图集", "gallery", "violet", "#C187FF", "193, 135, 255", "沉浸式个人影集", "gallery", "direct", "763"],
+  [27, "miss", "看Miss", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "聚合视频内容入口", "cinema", "direct", "742"],
+  [28, "zb", "看主播", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "主播视频目录与连续播放", "live", "direct", "734"],
+  [29, "dsd", "看懂色帝", "影视", "video", "red", "#FF6B63", "255, 107, 99", "精选影视内容入口", "cinema", "relay", "679"],
+  [30, "movie", "影视聚合", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "影视内容聚合与检索", "aggregate", "direct", "605"],
+  [31, "jav", "日本成人影像（JAV）", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "简洁的视频片库", "cinema", "direct", "602"],
+  [32, "xo", "爱看", "社区", "community", "pink", "#FF76A8", "255, 118, 168", "精选内容与发现", "cinema", "relay", "598"],
+  [33, "ep", "高清成人影片（EPORNER）", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "高清片库，支持多清晰度播放", "cinema", "direct", "580"],
+  [34, "madou", "看麻豆", "影视", "video", "lime", "#BDFC48", "189, 252, 72", "麻豆影视，分类与排行浏览", "cinema", "relay", "579"],
+  [35, "tna", "成人视频片库（TNAFlix）", "影视", "video", "pink", "#F178D1", "241, 120, 209", "多清晰度视频目录与搜索", "cinema", "direct", "558"],
+  [36, "best", "看JavPorn", "影视", "video", "pink", "#FF76A8", "255, 118, 168", "精选热门影视内容", "cinema", "direct", "551"],
+  [37, "tv", "电视直播（TV）", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "直播频道与电视内容", "live", "direct", "544"],
+  [38, "ja", "看JavBus", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "JavBus 内容浏览入口", "cinema", "relay", "542"],
+  [39, "bj", "韩国主播视频（SKBJ）", "影视", "video", "orange", "#FFAD78", "255, 173, 120", "画廊与视频内容聚合", "live", "direct", "503"],
+  [40, "asmr", "助眠音声（ASMR）", "影视", "video", "cyan", "#63C7F2", "99, 199, 242", "沉浸式 ASMR 音视频助眠内容", "audio", "direct", "453"],
 ].map(([id, slug, name, category, navCategory, accent, color, rgb, description, mode, delivery, clicks, isNew = false]) => ({
   id, slug, name, category, navCategory, accent, color, rgb, description, mode, delivery, clicks, isNew,
 }));
@@ -81,6 +83,14 @@ function Icon({ name }) {
   if (name === "moon") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z"/></svg>;
   if (name === "chevron") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>;
   if (name === "arrow") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>;
+  if (name === "refresh") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>;
+  if (name === "crown") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 4 4 5-6 5 6 4-4-2 12H5L3 6Z"/><path d="M5 18h14"/></svg>;
+  if (name === "eye") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
+  if (name === "info") return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>;
+  if (name === "shield") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6l8-3Z"/><path d="m9 12 2 2 4-4"/></svg>;
+  if (name === "plane") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 9.5 14.5M22 2l-7 20-4-8-8-4 19-8Z"/></svg>;
+  if (name === "help") return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.7 9a2.5 2.5 0 1 1 3.6 2.3c-.8.4-1.3.9-1.3 1.7M12 17h.01"/></svg>;
+  if (name === "logout") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M18 12H9"/></svg>;
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m10 8 6 4-6 4V8Z"/></svg>;
 }
 
@@ -88,10 +98,13 @@ function Logo({ compact = false }) {
   return <div className={`logo ${compact ? "compact" : ""}`}><img className="logo-image" src="/brand/logo.png" alt="" /><b>不许涩涩机场塔台-允许起飞</b><small>/ 2.0</small></div>;
 }
 
-function Header({ go, health }) {
-  const [effects, setEffects] = useState(true);
+function Header({ go, health, isHome }) {
+  const [effects, setEffects] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem("cf-theme") === "light" ? "light" : "dark");
   const [time, setTime] = useState(() => new Date());
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [leaderboardVisible, setLeaderboardVisible] = useState(false);
+  const profileRef = useRef(null);
   useEffect(() => {
     document.documentElement.dataset.effects = effects ? "on" : "off";
   }, [effects]);
@@ -104,14 +117,47 @@ function Header({ go, health }) {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <header className="topbar">
+  useEffect(() => {
+    const close = (event) => {
+      if (profileRef.current && !profileRef.current.contains(event.target)) setProfileOpen(false);
+    };
+    addEventListener("pointerdown", close);
+    return () => removeEventListener("pointerdown", close);
+  }, []);
+  if (!isHome) return <header className="topbar">
     <button className="brand-button" onClick={() => go("/")}><Logo /></button>
     <div className="header-tools">
       <div className="header-state"><span className={`status-dot ${health}`}></span> NETWORK {health === "ok" ? "ONLINE" : health === "error" ? "DEGRADED" : "CHECKING"}</div>
       <time className="header-time">{time.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</time>
-      <button className={`round-button effects-button ${effects ? "is-on" : ""}`} onClick={() => setEffects(!effects)} aria-label={`${effects ? "关闭" : "开启"}光效`} title={`${effects ? "关闭" : "开启"}光效`} aria-pressed={effects}><Icon name="sparkle" /></button>
-      <button className="round-button theme-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={`切换到${theme === "dark" ? "日间" : "夜间"}模式`} title={`切换到${theme === "dark" ? "日间" : "夜间"}模式`} aria-pressed={theme === "light"}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
+      <button className={`round-button effects-button ${effects ? "is-on" : ""}`} onClick={() => setEffects(!effects)} aria-label={`${effects ? "关闭" : "开启"}光效`}><Icon name="sparkle" /></button>
+      <button className="round-button theme-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={`切换到${theme === "dark" ? "日间" : "夜间"}模式`}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
       <div className="profile"><span>H</span><b>Henry</b><Icon name="chevron" /></div>
+    </div>
+  </header>;
+  return <header className="topbar portal-topbar">
+    <a className="brand" href="/" aria-label="不许涩涩机场塔台-允许起飞首页" onClick={(event) => { event.preventDefault(); go("/"); }}>
+      <img className="brand-logo" src="/brand/logo.png" alt="" width="256" height="256" decoding="async" />
+      <span className="brand-name">不许涩涩机场塔台-允许起飞</span><span className="brand-version">/ 2.0</span>
+    </a>
+    <div className="topbar-meta">
+      <span className="signal"><i aria-hidden="true"></i> NETWORK ONLINE</span>
+      <time className="time" aria-label="当前时间">{time.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</time>
+      <span className="mascot-launcher mascot-launcher-disabled" title="看板娘入口已按项目决定移除" aria-hidden="true"><span>✦</span><span>看板娘</span></span>
+      <button className="icon-button" type="button" onClick={() => setEffects(!effects)} aria-label={`${effects ? "关闭" : "开启"}光效`} title={`${effects ? "关闭" : "开启"}光效`} aria-pressed={effects}><Icon name="sparkle" /></button>
+      <button className="icon-button theme-toggle" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={`切换到${theme === "dark" ? "日间" : "夜间"}模式`} title={`切换到${theme === "dark" ? "日间" : "夜间"}模式`} aria-pressed={theme === "light"}><Icon name={theme === "dark" ? "sun" : "moon"} /></button>
+      <div className="account-menu" ref={profileRef}>
+        <button className="account-trigger" type="button" aria-haspopup="menu" aria-expanded={profileOpen} aria-label="账户菜单，Henry" onClick={() => setProfileOpen((open) => !open)}>
+          <span className="account-avatar-wrap"><img className="account-avatar" alt="Henry头像" src="https://cdn.ldstatic.com/user_avatar/linux.do/henryz/288/1848603_2.png" /><span className="account-avatar-fallback">H</span></span>
+          <span className="account-name">Henry</span><Icon name="chevron" />
+        </button>
+        <div className="account-popover" role="menu" hidden={!profileOpen} data-rank-tier="4">
+          <div className="account-identity"><strong>Henry</strong><span>@henryz</span><small>LOCAL PROFILE</small>
+            <div className="account-rank-row" data-rank-tier="4"><span className="account-rank-value"><span className="rank-emblem"><Icon name="trophy" /></span><span><small>LOCAL CAPTAIN / TIER 04</small><strong>资深机长</strong></span></span><button className="account-rank-help" type="button" aria-label="查看军衔升级条件"><Icon name="help" /></button></div>
+            <div className={`account-leaderboard-setting ${leaderboardVisible ? "" : "is-private"}`}><span className="account-setting-copy"><Icon name={leaderboardVisible ? "eye" : "shield"} /><span><strong>参与机长排行</strong><small>{leaderboardVisible ? "已显示本地排名" : "已从排行榜隐藏"}</small></span></span><button className="account-setting-switch" type="button" role="switch" aria-checked={leaderboardVisible} onClick={() => setLeaderboardVisible((visible) => !visible)}><span></span></button></div>
+          </div>
+          <button className="account-logout" type="button" role="menuitem" onClick={() => setProfileOpen(false)}><Icon name="logout" />退出登录</button>
+        </div>
+      </div>
     </div>
   </header>;
 }
@@ -119,98 +165,100 @@ function Header({ go, health }) {
 function SiteCard({ site, go, favorites, toggleFavorite, position }) {
   const provider = getProviderForSite(site.slug);
   const connected = Boolean(provider);
+  const [previewState, setPreviewState] = useState("");
   const moveLight = (event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     event.currentTarget.style.setProperty("--pointer-x", `${event.clientX - bounds.left}px`);
     event.currentTarget.style.setProperty("--pointer-y", `${event.clientY - bounds.top}px`);
   };
   const icon = site.navCategory === "gallery" ? "gallery" : site.navCategory === "anime" ? "anime" : site.navCategory === "community" ? "community" : "play";
-  return <article className={`site-card accent-${site.accent} ${connected ? "is-connected" : "is-pending"}`} data-category={site.navCategory} data-delivery={site.delivery} onPointerMove={moveLight} style={{ "--category": site.color, "--glow-rgb": site.rgb, animationDelay: `${Math.min((site.id - 1) * 35, 280)}ms` }}>
-    <button className="site-link" type="button" onClick={() => site.externalUrl ? window.open(site.externalUrl, "_blank", "noopener") : go(`/site/${site.slug}`)} aria-label={`打开 ${site.name}`}>
-      <span className="preview-frame is-loaded">
-        <img className="site-preview" src={`/previews/${site.slug}.jpg`} alt={`${site.name} 网站首屏预览`} loading={position < 6 ? "eager" : "lazy"} />
+  const href = site.externalUrl || `/site/${site.slug}`;
+  return <article className={`site-card accent-${site.accent} ${connected ? "is-connected" : "is-pending"}`} data-site-id={site.slug} data-category={site.navCategory} data-delivery={site.delivery} onPointerMove={moveLight} style={{ "--category": site.color, "--glow-rgb": site.rgb, animationDelay: `${Math.min((site.id - 1) * 35, 280)}ms` }}>
+    <a className="site-link" href={href} target={site.externalUrl ? "_blank" : undefined} rel={site.externalUrl ? "noopener noreferrer" : undefined} onClick={(event) => { if (!site.externalUrl && !event.metaKey && !event.ctrlKey && !event.shiftKey) { event.preventDefault(); go(href); } }} aria-label={`打开 ${site.name}`}>
+      <span className={`preview-frame ${previewState}`}>
+        <img className="site-preview" src={`/previews/${site.slug}.jpg?v=20260817-portal`} alt={`${site.name} 网站首屏预览`} loading={position < 6 ? "eager" : "lazy"} fetchPriority={position < 6 ? "high" : undefined} decoding="async" onLoad={() => setPreviewState("is-loaded")} onError={() => setPreviewState("is-loaded is-broken")} />
         <span className="preview-shade" aria-hidden="true"></span>
         <span className="preview-grid" aria-hidden="true"></span>
       </span>
       <span className="card-top">
         <span className="card-index">NODE {String(site.id).padStart(2, "0")}</span>
-        <span className="card-badges">{site.isNew && <span className="new-badge">NEW</span>}<span className="delivery-badge" data-delivery={site.delivery}>{site.delivery === "direct" ? "直连请求" : "中转加速"}</span><span className={`status-badge ${connected ? "online" : "pending"}`}>{connected ? "ONLINE" : "PENDING"}</span></span>
+        <span className="card-badges">{site.isNew && <span className="new-badge">NEW</span>}<span className="delivery-badge" data-delivery={site.delivery} title={site.delivery === "direct" ? "主要媒体由浏览器直连源站 CDN，异常时可能自动切换备用线路" : "主要媒体通过本站中转、共享缓存或 CDN 加速"}>{site.delivery === "direct" ? "直连请求" : "中转加速"}</span><span className={`status-badge ${connected ? "online" : "pending"}`}>{connected ? "ONLINE" : "PENDING"}</span></span>
       </span>
-      <span className="preview-label"><i></i> 悬浮预览</span>
+      <span className="preview-label"><i></i><span>悬浮预览</span></span>
       <span className="card-content">
         <span className="title-line"><span className="site-icon" aria-hidden="true"><Icon name={icon} /></span><strong className="site-name">{site.name}</strong></span>
         <span className="site-description">{site.description}</span>
-        <span className="site-footer"><span className="site-domain">{site.slug}.cfnav.me</span><span className="site-footer-meta"><span className="site-click-count" title="参考快照点击数"><Icon name="pointer" /><span>{site.clicks}</span></span><span className="open-label">OPEN <Icon name="arrow" /></span></span></span>
+        <span className="site-footer"><span className="site-domain">{site.slug}.cfnav.me</span><span className="site-footer-meta"><span className="site-click-count" title={`${site.clicks} 次点击`} aria-label={`${site.clicks} 次点击`}><Icon name="pointer" /><span>{site.clicks}</span></span><span className="open-label">OPEN <Icon name="arrow" /></span></span></span>
       </span>
-    </button>
+    </a>
     <button className={`favorite-button ${favorites.includes(site.slug) ? "is-favorite" : ""}`} onClick={() => toggleFavorite(site.slug)} aria-label={`${favorites.includes(site.slug) ? "取消收藏" : "收藏"}${site.name}`} title={favorites.includes(site.slug) ? "取消收藏" : "收藏"} aria-pressed={favorites.includes(site.slug)}><Icon name="star" /></button>
   </article>;
 }
 
-function Home({ go, health }) {
+function RefreshButton({ className, label, refreshing, onRefresh }) {
+  return <button className={`${className} ${refreshing ? "is-loading" : ""}`} type="button" aria-label={label} title={label} disabled={refreshing} onClick={onRefresh}><Icon name="refresh" /></button>;
+}
+
+function CaptainLeaderboard({ hidden }) {
+  const [period, setPeriod] = useState("week");
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = () => { setRefreshing(true); setTimeout(() => setRefreshing(false), 520); };
+  return <section className="captain-leaderboard" role="tabpanel" aria-labelledby="leaderboard-tab" hidden={hidden}>
+    <div className="section-heading captain-heading"><div><span>02</span><h2>机长排行榜</h2></div><div className="captain-heading-actions"><div className="leaderboard-period-switch" role="group" aria-label="排行榜周期"><button className={`leaderboard-period ${period === "week" ? "is-active" : ""}`} type="button" aria-pressed={period === "week"} onClick={() => setPeriod("week")}>本周</button><button className={`leaderboard-period ${period === "all" ? "is-active" : ""}`} type="button" aria-pressed={period === "all"} onClick={() => setPeriod("all")}>总榜</button></div><RefreshButton className="leaderboard-refresh" label="刷新机长排行榜" refreshing={refreshing} onRefresh={refresh} /></div></div>
+    <div className="captain-summary is-private" aria-label="我的飞行数据"><div><span>YOUR RANK</span><strong>--</strong><small>未参与排行</small></div><div><span>FLIGHT TIME</span><strong>数据仍在累计</strong></div><div className="captain-chase-summary"><span>NEXT POSITION</span><strong>开启后恢复排名</strong><span className="captain-progress" role="progressbar" aria-label="追赶上一名进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></span></div></div>
+    <div className="captain-champion"><Icon name="crown" /><span><small>LAST WEEK CHAMPION</small><strong>--</strong></span><b>--</b></div>
+    <ol className="captain-podium captain-placeholder-podium" aria-label="本期前三名">{[2, 1, 3].map((rank) => <li key={rank} className="captain-podium-entry is-placeholder" data-rank={rank} data-rank-tier="1"><span className="captain-podium-rank">{rank === 1 && <Icon name="crown" />}#{String(rank).padStart(2, "0")}</span><span className="captain-avatar-wrap captain-podium-avatar"><span>—</span></span><strong>等待真实数据</strong><span className="captain-podium-username">—</span><span className="captain-badges"><span className="captain-title-badge" data-rank-tier="1">—</span></span><b>--</b></li>)}</ol>
+    <div className="captain-list-meta"><span>RANKING / 04-50</span><span><strong>0</strong> 位机长 <i>/</i> 累计 <strong>0 分钟</strong></span></div>
+    <div className="captain-empty"><Icon name="trophy" /><strong>{period === "week" ? "暂无本周真实排行数据" : "暂无总榜真实排行数据"}</strong><span>排行榜结构已还原；本地没有独立统计源，因此不填充虚构用户或时长。</span></div>
+  </section>;
+}
+
+function NumberRankingPanel({ hidden }) {
+  const [mode, setMode] = useState("ranking");
+  const [period, setPeriod] = useState("daily");
+  const [refreshing, setRefreshing] = useState(false);
+  const [updated, setUpdated] = useState(() => new Date());
+  const refresh = () => { setRefreshing(true); setTimeout(() => { setUpdated(new Date()); setRefreshing(false); }, 520); };
+  const periodLabel = period === "daily" ? "今日" : period === "weekly" ? "本周" : "本月";
+  return <section className="number-ranking" role="tabpanel" aria-labelledby="number-ranking-tab" hidden={hidden}>
+    <div className="section-heading number-ranking-heading"><div><span>03</span><h2>佬友优选</h2></div><div className="number-ranking-actions"><div className="number-mode-switch" role="group" aria-label="佬友优选视图"><button className={`number-mode ${mode === "ranking" ? "is-active" : ""}`} type="button" aria-pressed={mode === "ranking"} onClick={() => setMode("ranking")}>热门</button><button className={`number-mode ${mode === "history" ? "is-active" : ""}`} type="button" aria-pressed={mode === "history"} onClick={() => setMode("history")}>最近观看</button></div><div className="number-period-switch" role="group" aria-label="佬友优选周期" hidden={mode === "history"}>{[["daily", "日榜"], ["weekly", "周榜"], ["monthly", "月榜"]].map(([key, label]) => <button key={key} className={`number-period ${period === key ? "is-active" : ""}`} type="button" aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>)}</div><RefreshButton className="number-ranking-icon-button" label="刷新佬友优选" refreshing={refreshing} onRefresh={refresh} /></div></div>
+    <div className="number-ranking-overview"><div className="number-source-status"><span className="number-source-signal" data-state="live" aria-hidden="true"></span><span><small>DATA SOURCE</small><strong>本地真实打开记录</strong></span><time>更新于 {updated.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }).replace("/", "/")} {updated.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}</time></div><div className="number-content-summary"><span><small>PERIOD</small><strong>{mode === "history" ? "最近" : periodLabel}</strong></span><span><small>ITEMS</small><strong>0 条</strong></span></div></div>
+    <div className="number-ranking-notice" hidden={mode !== "history"}><Icon name="info" /><span>最近观看只展示本机真实产生的记录。</span></div>
+    <div className="number-ranking-empty"><Icon name="film" /><strong>{mode === "history" ? "暂无真实观看记录" : "暂无真实打开数据"}</strong><span>优选界面与切换逻辑已还原；没有独立数据源时保持空态，不生成虚构条目。</span></div>
+  </section>;
+}
+
+function Home({ go }) {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [view, setView] = useState("directory");
-  const [favorites, setFavorites] = useState(() => JSON.parse(localStorage.getItem("cf-favs") || "[]"));
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("cf-favs") || "[]");
+      return Array.isArray(saved) ? saved.filter((slug) => SITE_BLUEPRINTS.some((site) => site.slug === slug)) : [];
+    } catch { return []; }
+  });
   const searchRef = useRef(null);
-  const categories = [["all", "全部"], ["video", "影视"], ["anime", "动漫"], ["gallery", "图集"], ["community", "社区"], ["favorite", "我的收藏"]];
+  const categories = [["all", "全部"], ["video", "影视"], ["anime", "动漫"], ["gallery", "图集"], ["community", "社区"], ["game", "游戏"], ["favorite", "我的收藏"]];
   const shown = useMemo(() => SITE_BLUEPRINTS.filter((site) => {
     const textMatch = `${site.name}${site.description}${site.slug}`.toLowerCase().includes(query.toLowerCase());
     const catMatch = category === "all" || (category === "favorite" ? favorites.includes(site.slug) : site.navCategory === category);
     return textMatch && catMatch;
   }), [query, category, favorites]);
   useEffect(() => {
-    const focusSearch = (event) => {
-      if (event.key === "/" && !/input|textarea/i.test(document.activeElement?.tagName || "")) {
-        event.preventDefault(); searchRef.current?.focus();
-      }
-    };
-    addEventListener("keydown", focusSearch);
-    return () => removeEventListener("keydown", focusSearch);
+    const focusSearch = (event) => { if (event.key === "/" && !/input|textarea/i.test(document.activeElement?.tagName || "")) { event.preventDefault(); searchRef.current?.focus(); } };
+    addEventListener("keydown", focusSearch); return () => removeEventListener("keydown", focusSearch);
   }, []);
-  const toggleFavorite = (slug) => {
-    const next = favorites.includes(slug) ? favorites.filter((x) => x !== slug) : [...favorites, slug];
-    setFavorites(next); localStorage.setItem("cf-favs", JSON.stringify(next));
-  };
+  const toggleFavorite = (slug) => { const next = favorites.includes(slug) ? favorites.filter((x) => x !== slug) : [...favorites, slug]; setFavorites(next); localStorage.setItem("cf-favs", JSON.stringify(next)); };
   const categoryTitle = categories.find(([key]) => key === category)?.[1] || "全部";
-  const readyCount = SITE_BLUEPRINTS.filter((site) => getProviderForSite(site.slug)).length;
-  return <div className="home-directory">
-    <section className="reference-intro" aria-labelledby="page-title">
-      <img className="home-character-mascot" src="/brand/home-character.png" alt="" aria-hidden="true" />
-      <div className="intro-number" aria-hidden="true">00 / INDEX</div>
-      <div className="intro-copy">
-        <p className="reference-eyebrow"><span>ADULT CONTENT DIRECTORY</span><i></i><span>18+</span></p>
-        <div className="title-lockup"><h1 id="page-title"><span>不许涩涩</span><span>机场塔台-允许起飞</span></h1><p>无广告<br />聚合导航</p></div>
-        <p className="intro-description">成人内容无广告聚合导航站。简约 UI，快速直达精选内容。</p>
-      </div>
-      <div className="intro-aside" aria-label="导航统计">
-        <div className="stat-block"><span>ACTIVE NODES</span><strong>{SITE_BLUEPRINTS.length}</strong><i>INDEXED</i></div>
-        <div className="stat-block"><span>READY</span><strong>{readyCount}</strong><i>{health === "ok" ? "ONLINE" : "CHECK"}</i></div>
-      </div>
-      <div className="hero-scan" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-    </section>
-    <nav className="main-view-tabs" aria-label="主页视图">
-      <button className={view === "directory" ? "is-active" : ""} onClick={() => setView("directory")}><Icon name="radar" />导航目录</button>
-      <button className={view === "leaderboard" ? "is-active" : ""} onClick={() => setView("leaderboard")}><Icon name="trophy" />机长排行榜</button>
-      <button className={view === "ranking" ? "is-active" : ""} onClick={() => setView("ranking")}><Icon name="film" />影片榜</button>
-      <button className={view === "sources" ? "is-active" : ""} onClick={() => setView("sources")}><Icon name="arrow" />起飞绿色通道</button>
-    </nav>
-    {view === "directory" ? <>
-      <section className="control-panel" aria-label="搜索和筛选">
-        <label className="search-box"><span className="search-mark" aria-hidden="true"><Icon name="search" /></span><span className="sr-only">搜索站点</span><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="输入站点、内容或域名" autoComplete="off" spellCheck="false" /><kbd>/</kbd></label>
-        <div className="filter-row"><div className="nav-filters">{categories.map(([key, label]) => {
-          const count = key === "all" ? SITE_BLUEPRINTS.length : key === "favorite" ? favorites.length : SITE_BLUEPRINTS.filter((site) => site.navCategory === key).length;
-          return <button key={key} className={key === category ? "is-active" : ""} onClick={() => setCategory(key)}>{label}<small>{String(count).padStart(2, "0")}</small></button>;
-        })}</div><span className="result-count"><strong>{String(shown.length).padStart(2, "0")}</strong> / <strong>{SITE_BLUEPRINTS.length}</strong> NODES</span></div>
-      </section>
-      <section className="site-section reference-site-section">
-        <div className="section-heading"><div><span>01</span><h2>{query ? `搜索“${query}”` : category === "all" ? "全部站点" : categoryTitle}</h2></div><p><i aria-hidden="true"></i> HOVER TO REVEAL</p></div>
-        <div className="delivery-legend" aria-label="媒体线路标注说明"><span className="delivery-badge" data-delivery="direct">直连请求</span><span className="delivery-badge" data-delivery="relay">中转加速</span><small>按主要播放链路标注，线路异常时可能自动切换备用通道</small></div>
-        <div className="site-grid">{shown.map((site, index) => <SiteCard key={site.slug} site={site} go={go} favorites={favorites} toggleFavorite={toggleFavorite} position={index} />)}</div>
-        {!shown.length && <div className="empty-directory"><small>NO MATCHED NODE</small><h3>没有找到对应站点</h3><button onClick={() => { setQuery(""); setCategory("all"); }}>清除筛选</button></div>}
-      </section>
-    </> : view === "sources" ? <SourcePanel health={health} /> : <section className="reference-pending-view"><small>{view === "leaderboard" ? "CAPTAIN LEADERBOARD" : "FILM RANKING"}</small><h2>{view === "leaderboard" ? "机长排行榜" : "影片榜"}</h2><p>这个视图依赖参考站的账号与统计数据，独立数据源尚未接入，因此不伪造榜单内容。</p><button onClick={() => setView("directory")}>返回导航目录</button></section>}
-  </div>;
+  const selectView = (next) => setView(next);
+  return <>
+    <section className="intro" aria-labelledby="page-title"><img className="home-character-mascot" src="/brand/home-character.png" alt="" width="1536" height="1536" decoding="async" aria-hidden="true" /><div className="intro-number" aria-hidden="true">00 / INDEX</div><div className="intro-copy"><p className="eyebrow"><span>ADULT CONTENT DIRECTORY</span><i></i><span>18+</span></p><div className="title-lockup"><h1 id="page-title"><span>不许涩涩</span><span>机场塔台-允许起飞</span></h1><p>无广告<br />聚合导航</p></div><p className="intro-description">成人内容无广告聚合导航站。简约 UI，快速直达精选内容。</p></div><div className="intro-aside" aria-label="导航统计"><div className="stat-block"><span>ACTIVE NODES</span><strong>{SITE_BLUEPRINTS.length}</strong><i>ONLINE</i></div><div className="stat-block"><span>GAME</span><strong>0</strong><i>ONLINE</i></div></div><div className="hero-scan" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></section>
+    <div className="main-view-tabs" role="tablist" aria-label="主页视图"><button className={`main-view-tab ${view === "directory" ? "is-active" : ""}`} id="directory-tab" type="button" role="tab" aria-selected={view === "directory"} onClick={() => selectView("directory")}><Icon name="radar" />导航目录</button><button className={`main-view-tab ${view === "leaderboard" ? "is-active" : ""}`} id="leaderboard-tab" type="button" role="tab" aria-selected={view === "leaderboard"} onClick={() => selectView("leaderboard")}><Icon name="trophy" />机长排行榜</button><button className={`main-view-tab ${view === "number-ranking" ? "is-active" : ""}`} id="number-ranking-tab" type="button" role="tab" aria-selected={view === "number-ranking"} onClick={() => selectView("number-ranking")}><Icon name="film" />佬友优选</button><a className="main-view-tab main-view-tab-external" href="http://xbwz1494444.bohrium.tech:5000/258bac5f3baad49548be675c1cb35ef886a7" target="_blank" rel="noopener noreferrer"><Icon name="arrow" />起飞绿色通道</a></div>
+    <div className="directory-view" role="tabpanel" aria-labelledby="directory-tab" hidden={view !== "directory"}><section className="control-panel" aria-label="搜索和筛选"><label className="search-box" htmlFor="site-search"><Icon name="search" /><span className="sr-only">搜索站点</span><input id="site-search" ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} type="search" placeholder="输入站点、内容或域名" autoComplete="off" spellCheck="false" /><span className="shortcut" aria-hidden="true">/</span></label><div className="filter-row"><div className="filters" role="tablist" aria-label="站点分类">{categories.map(([key, label]) => { const count = key === "all" ? SITE_BLUEPRINTS.length : key === "favorite" ? favorites.length : SITE_BLUEPRINTS.filter((site) => site.navCategory === key).length; return <button key={key} className={`filter ${key === "favorite" ? "filter-favorite" : ""} ${key === category ? "is-active" : ""}`} type="button" data-count={String(count).padStart(2, "0")} role="tab" aria-selected={key === category} aria-label={`${label}${key === "all" ? "站点" : "节点"}，${count} 个站点`} onClick={() => setCategory(key)}>{key === "favorite" && <Icon name="star" />}{label}</button>; })}</div><p className="result-count" aria-live="polite"><span>{String(shown.length).padStart(2, "0")}</span> / <span>{SITE_BLUEPRINTS.length}</span> NODES</p></div></section><section className="directory"><div className="section-heading"><div><span>01</span><h2>{query ? `搜索“${query}”` : category === "all" ? "全部站点" : categoryTitle}</h2></div><p><i aria-hidden="true"></i> HOVER TO REVEAL</p></div><div className="delivery-legend" aria-label="媒体线路标注说明"><span className="delivery-badge" data-delivery="direct">直连请求</span><span className="delivery-badge" data-delivery="relay">中转加速</span><small>按主要播放链路标注，线路异常时可能自动切换备用通道</small></div><div className="site-grid">{shown.map((site, index) => <SiteCard key={site.slug} site={site} go={go} favorites={favorites} toggleFavorite={toggleFavorite} position={index} />)}</div>{!shown.length && <div className="empty-directory"><small>NO MATCHED NODE</small><h3>没有找到对应站点</h3><button onClick={() => { setQuery(""); setCategory("all"); }}>清除筛选</button></div>}</section></div>
+    <CaptainLeaderboard hidden={view !== "leaderboard"} />
+    <NumberRankingPanel hidden={view !== "number-ranking"} />
+  </>;
 }
 
 function SourcePanel({ health }) {
@@ -667,7 +715,8 @@ export function App() {
     });
   }, []);
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
-  return <div className="app"><Header go={go} health={health} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} health={health} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
+  const isHome = !site;
+  return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
   </div>;
 }

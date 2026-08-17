@@ -5,3 +5,4 @@ dist/
 .codex-dev.*.log
 .DS_Storerou-response.json
 *-response.json
+artifacts/
