@@ -297,9 +297,48 @@ function SourcePanel({ health }) {
   </section>;
 }
 
+function epNormalize(item) {
+  const thumbnail = item.default_thumb?.src || item.thumbs?.[0]?.src || "";
+  return {
+    vod_id: String(item.id),
+    vod_name: item.title || `Eporner ${item.id}`,
+    vod_pic: thumbnail,
+    vod_remarks: item.length_min || (item.length_sec ? `${Math.round(item.length_sec / 60)} 分钟` : "VIDEO"),
+    vod_blurb: item.keywords || "",
+    vod_content: item.keywords || "",
+    vod_year: item.added?.slice(0, 4) || "",
+    vod_area: "eporner.com",
+    type_name: "EPORNER",
+    embed_url: item.embed || `https://www.eporner.com/embed/${encodeURIComponent(item.id)}/`,
+    media_kind: "embed",
+    needs_detail: true,
+    provider: "eporner",
+  };
+}
+
+function epListUrl({ pg, wd, preset, order }) {
+  const upstream = new URL("https://www.eporner.com/api/v2/video/search/");
+  upstream.searchParams.set("query", wd?.trim() || preset?.trim() || "all");
+  upstream.searchParams.set("per_page", "24");
+  upstream.searchParams.set("page", String(pg || 1));
+  upstream.searchParams.set("thumbsize", "medium");
+  upstream.searchParams.set("order", order || "latest");
+  upstream.searchParams.set("gay", "0");
+  upstream.searchParams.set("lq", "1");
+  upstream.searchParams.set("format", "json");
+  return upstream.href;
+}
+
+function epDetailUrl(id) {
+  const upstream = new URL("https://www.eporner.com/api/v2/video/id/");
+  upstream.searchParams.set("id", id);
+  upstream.searchParams.set("thumbsize", "medium");
+  upstream.searchParams.set("format", "json");
+  return upstream.href;
+}
+
 function SitePage({ site, go, health, setHealth }) {
-  const provider = getProviderForSite(site.slug);
-  if (provider?.id === "qiying" || provider?.id === "mr" || provider?.id === "hj") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
+  const provider = getProviderForSite(site.slug);  if (provider?.id === "qiying" || provider?.id === "mr" || provider?.id === "hj") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
   if (provider?.id === "jm") return <JmPage site={site} go={go} setHealth={setHealth} />;
   const MISS_TABS = [
     ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
@@ -348,10 +387,18 @@ function SitePage({ site, go, health, setHealth }) {
     else if (category) params.set("preset", category);
     else if (provider.preset && provider.id !== "madou") params.set("preset", provider.preset);
     setLoading(true); setError("");
-    fetch(`/provider-api/${provider.id}?${params}`, { signal: controller.signal }).then((r) => {
+    const epDirect = provider.id === "ep";
+    const fetchUrl = epDirect
+      ? epListUrl({ pg: page, wd: submitted, preset: category || provider.preset })
+      : `/provider-api/${provider.id}?${params}`;
+    fetch(fetchUrl, { signal: controller.signal }).then((r) => {
       if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
     }).then((data) => {
-      setItems(Array.isArray(data.list) ? data.list : []);
+      if (epDirect && data && Array.isArray(data.videos)) {
+        setItems(data.videos.map(epNormalize));
+      } else {
+        setItems(Array.isArray(data.list) ? data.list : []);
+      }
       if (provider.id === "rou") setRouData({ sections: data.sections || null, groups: data.groups || null });
       setHealth("ok");
     }).catch((e) => {
@@ -365,10 +412,10 @@ function SitePage({ site, go, health, setHealth }) {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(`/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const response = await fetch(provider.id === "ep" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
-      setSelected(detail);
+      setSelected(provider.id === "ep" ? epNormalize(detail) : detail);
     } catch (detailError) {
       setSelected({ ...item, detail_error: detailError.message });
     }
