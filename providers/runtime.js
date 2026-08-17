@@ -2667,6 +2667,13 @@ const KAN98_CATEGORIES = {
   46: "剧情三级",
 };
 
+function kan98ImageProxy(source) {
+  if (!source) return "";
+  const url = new URL(source, KAN98_ORIGIN);
+  if (url.hostname !== "jo.djsnm.app") return "";
+  return `/provider-api/kan98?action=image&url=${encodeURIComponent(url.href)}`;
+}
+
 async function kan98Page(pathname, init = {}) {
   let lastError;
   for (const origin of [KAN98_ORIGIN, ...KAN98_MIRRORS]) {
@@ -2751,7 +2758,7 @@ function kan98CardFromBlock(block, categoryId) {
   return {
     vod_id: id,
     vod_name: decodeHtml(title),
-    vod_pic: image ? new URL(image, KAN98_ORIGIN).href : "",
+    vod_pic: kan98ImageProxy(image),
     vod_remarks: duration || "VIDEO",
     vod_blurb: [views && `${views} 次观看`, date && `更新：${date}`].filter(Boolean).join(" · "),
     vod_year: date.slice(0, 4),
@@ -2843,6 +2850,26 @@ async function kan98List(requestUrl) {
   }, { headers: { "cache-control": "no-store" } });
 }
 
+async function kan98Image(requestUrl) {
+  let target;
+  try { target = new URL(requestUrl.searchParams.get("url") || ""); } catch { return json({ message: "invalid kan98 image" }, { status: 400 }); }
+  if (target.hostname !== "jo.djsnm.app" || !/\.(?:jpe?g|png|webp)$/i.test(target.pathname)) {
+    return json({ message: "invalid kan98 image host" }, { status: 400 });
+  }
+  const response = await fetch(target, {
+    headers: { ...KAN98_HEADERS, referer: `${KAN98_ORIGIN}/` },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) return json({ message: `kan98 image ${response.status}` }, { status: 502 });
+  return new Response(response.body, {
+    headers: {
+      "content-type": response.headers.get("content-type") || "image/jpeg",
+      "cache-control": "public, max-age=3600",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 async function kan98Play(tid, pid, vid) {
   if (!tid || !pid || !vid) return "";
   const callback = `cfnav${Date.now()}`;
@@ -2869,7 +2896,7 @@ async function kan98Detail(id) {
   const pid = kan98Attr(loadingTag, "data-pid");
   const vid = kan98Attr(loadingTag, "data-vid");
   const title = decodeHtml(html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] || `98堂 ${id}`).replace(/\s+-\s+98堂.*$/i, "");
-  const cover = html.match(/<img\b[^>]*src=["'](https?:\/\/[^"']+\.(?:jpe?g|png|webp))["']/i)?.[1] || "";
+  const cover = kan98ImageProxy(html.match(/<img\b[^>]*src=["'](https?:\/\/[^"']+\.(?:jpe?g|png|webp))["']/i)?.[1] || "");
   const play = await kan98Play(tid, pid, vid);
   if (!play) throw new Error("98堂播放地址生成失败");
   return json({
@@ -2934,7 +2961,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     }
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
-    if (provider === "kan98") return await (action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
+    if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });
