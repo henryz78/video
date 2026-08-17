@@ -2644,6 +2644,207 @@ function hjTsStem(playlistText) {
   return lcp;
 }
 
+/* ---------------- 98堂 / dmn12.vip (research adapter, route kept pending) ---------------- */
+const KAN98_ORIGIN = "https://dmn12.vip";
+const KAN98_MIRRORS = ["https://sehuatang.net", "https://sehuatang.org"];
+const KAN98_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+};
+const KAN98_CATEGORIES = {
+  41: "国产自拍",
+  109: "中文字幕",
+  42: "日韩无码",
+  43: "日韩有码",
+  44: "欧美风情",
+  45: "卡通动漫",
+  46: "剧情三级",
+};
+
+async function kan98Page(pathname, init = {}) {
+  let lastError;
+  for (const origin of [KAN98_ORIGIN, ...KAN98_MIRRORS]) {
+    try {
+      const url = new URL(pathname, origin);
+      const response = await fetch(url, {
+        ...init,
+        headers: { ...KAN98_HEADERS, ...(init.headers || {}) },
+        signal: init.signal || AbortSignal.timeout(20_000),
+      });
+      const text = await response.text();
+      if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated)/i.test(text.slice(0, 5000))) {
+        lastError = new Error(`kan98 upstream ${response.status || 502} (${origin})`);
+        continue;
+      }
+      return { text, url: response.url || url.href };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("kan98 upstream unavailable");
+}
+
+function kan98Attr(tag, name) {
+  return tag.match(new RegExp(`\\b${name}=["']([^"']*)["']`, "i"))?.[1] || "";
+}
+
+function kan98ThreadId(href = "") {
+  return href.match(/thread-(\d+)(?:-|\.html)/i)?.[1]
+    || href.match(/[?&]tid=(\d+)/i)?.[1]
+    || "";
+}
+
+function kan98CardFromBlock(block, categoryId) {
+  const threadTag = block.match(/<a\b[^>]+href=["'][^"']*(?:thread-\d+|tid=\d+)[^"']*["'][^>]*>/i)?.[0] || "";
+  const threadHref = kan98Attr(threadTag, "href");
+  const id = kan98ThreadId(threadHref);
+  if (!id) return null;
+  const title = kan98Attr(threadTag, "title")
+    || decodeHtml(block.match(/<h3[\s\S]*?<a\b[^>]*>([\s\S]*?)<\/a>/i)?.[1] || "");
+  if (!title) return null;
+  const image = block.match(/<img\b[^>]*src=["']([^"']+)["']/i)?.[1] || "";
+  const duration = decodeHtml(block.match(/class=["'][^"']*v-time[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i)?.[1] || "");
+  const views = block.match(/(?:查看|播放)[:：]?\s*([\d,]+)/i)?.[1]?.replace(/,/g, "") || "";
+  const date = block.match(/<span[^>]+title=["'](\d{4}-\d{2}-\d{2})["']/i)?.[1] || "";
+  return {
+    vod_id: id,
+    vod_name: decodeHtml(title),
+    vod_pic: image ? new URL(image, KAN98_ORIGIN).href : "",
+    vod_remarks: duration || "VIDEO",
+    vod_blurb: [views && `${views} 次观看`, date && `更新：${date}`].filter(Boolean).join(" · "),
+    vod_year: date.slice(0, 4),
+    type_name: KAN98_CATEGORIES[categoryId] || "98堂",
+    vod_area: "dmn12.vip",
+    needs_detail: true,
+    metadata: { thread_url: new URL(threadHref, KAN98_ORIGIN).href, category_id: String(categoryId || "") },
+    provider: "kan98",
+  };
+}
+
+function kan98Cards(html, categoryId) {
+  const list = [];
+  const waterfall = html.match(/<ul\b[^>]*id=["']waterfall["'][^>]*>([\s\S]*?)<\/ul>/i)?.[1] || html;
+  for (const match of waterfall.matchAll(/<li\b[\s\S]*?<\/li>/gi)) {
+    const card = kan98CardFromBlock(match[0], categoryId);
+    if (card) list.push(card);
+  }
+  return list;
+}
+
+function kan98SearchCards(html) {
+  const list = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<a\b[^>]+href=["']([^"']*(?:thread-\d+|mod=viewthread[^"']*tid=\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const id = kan98ThreadId(match[1]);
+    if (!id || seen.has(id)) continue;
+    const tag = match[0];
+    const title = kan98Attr(tag, "title") || decodeHtml(match[2]);
+    if (!title || /^(?:最后发表|只看该作者|下一页|上一页)$/i.test(title)) continue;
+    seen.add(id);
+    list.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: "",
+      vod_remarks: "VIDEO",
+      type_name: "98堂搜索",
+      vod_area: "dmn12.vip",
+      needs_detail: true,
+      metadata: { thread_url: new URL(match[1], KAN98_ORIGIN).href },
+      provider: "kan98",
+    });
+  }
+  return list;
+}
+
+function kan98PageCount(html) {
+  return Number(html.match(/共\s*([\d,]+)\s*页/i)?.[1]?.replace(/,/g, "") || 1);
+}
+
+async function kan98SearchPage(keyword, page) {
+  const body = new URLSearchParams({
+    mod: "forum",
+    srchtxt: keyword,
+    srchtype: "title",
+    srhfid: "0",
+    searchsubmit: "yes",
+  });
+  const result = await kan98Page("/search.php?searchsubmit=yes", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` },
+    body,
+  });
+  if (page <= 1) return result.text;
+  const searchId = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "0";
+  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(searchId)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
+  return (await kan98Page(url)).text;
+}
+
+async function kan98List(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const limit = Math.min(48, Math.max(1, Number(requestUrl.searchParams.get("limit") || 24)));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const preset = requestUrl.searchParams.get("preset") || "41";
+  const categoryId = KAN98_CATEGORIES[preset] ? preset : "41";
+  const html = keyword
+    ? await kan98SearchPage(keyword, page)
+    : (await kan98Page(`/forum-${categoryId}-${page}.html`)).text;
+  const list = keyword ? kan98SearchCards(html) : kan98Cards(html, categoryId);
+  return json({
+    code: 1,
+    page,
+    pagecount: kan98PageCount(html),
+    limit,
+    total: list.length,
+    list: list.slice(0, limit),
+    provider: "kan98",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+async function kan98Play(tid, pid, vid) {
+  if (!tid || !pid || !vid) return "";
+  const callback = `cfnav${Date.now()}`;
+  const url = new URL("/play.php", KAN98_ORIGIN);
+  url.searchParams.set("callback", callback);
+  url.searchParams.set("tid", tid);
+  url.searchParams.set("pid", pid);
+  url.searchParams.set("vid", vid);
+  url.searchParams.set("rand", Math.random().toFixed(16));
+  url.searchParams.set("_", String(Date.now()));
+  const { text } = await kan98Page(url.pathname + url.search, {
+    headers: { accept: "application/javascript, text/javascript, */*", referer: `${KAN98_ORIGIN}/thread-${tid}-1-1.html` },
+  });
+  const payloadText = text.match(/\(\s*(\{[\s\S]*\})\s*\)\s*;?\s*$/)?.[1] || text;
+  let payload;
+  try { payload = JSON.parse(payloadText); } catch { return ""; }
+  return payload?.k && typeof payload?.data?.flvurl === "string" ? payload.data.flvurl : "";
+}
+
+async function kan98Detail(id) {
+  const html = (await kan98Page(`/thread-${encodeURIComponent(id)}-1-1.html`)).text;
+  const loadingTag = html.match(/<span\b[^>]*id=["']v-loading["'][^>]*>/i)?.[0] || "";
+  const tid = kan98Attr(loadingTag, "data-tid") || id;
+  const pid = kan98Attr(loadingTag, "data-pid");
+  const vid = kan98Attr(loadingTag, "data-vid");
+  const title = decodeHtml(html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i)?.[1] || `98堂 ${id}`).replace(/\s+-\s+98堂.*$/i, "");
+  const cover = html.match(/<img\b[^>]*src=["'](https?:\/\/[^"']+\.(?:jpe?g|png|webp))["']/i)?.[1] || "";
+  const play = await kan98Play(tid, pid, vid);
+  if (!play) throw new Error("98堂播放地址生成失败");
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: "VIDEO",
+    vod_content: "dmn12.vip 实时论坛帖子 / 源站 CDN 直连播放",
+    type_name: "98堂",
+    vod_area: "dmn12.vip",
+    vod_play_url: play,
+    media_kind: "video",
+    needs_detail: false,
+    metadata: { tid, pid, vid, source_url: `${KAN98_ORIGIN}/thread-${id}-1-1.html` },
+    provider: "kan98",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -2690,6 +2891,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     }
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
+    if (provider === "kan98") return await (action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

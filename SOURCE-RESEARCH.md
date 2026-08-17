@@ -517,3 +517,37 @@
 
 - 与 `mt` 同型：**媒体链（图/MP4）完全独立是局部胜利，但目录/搜索/详情全部锁在参考站登录墙后**；上游 Swoft API 路由不可得；S3 桶非实时目录。不实现。
 - 重新评估条件：上游网页站（非镜像 CDN）公开可访问、0325api 路由暴露、或 S3 桶放行文件读与分页。
+
+## 私房 TV / sf.cfnav.me（`sf`，2026-08-17 浏览器探测）
+
+### 参考站导航与接口
+
+- 使用内置浏览器的现有登录态打开 `https://sf.cfnav.me/`；首页标题为「私房TV」，导航包含「最新 / 自拍 / 偷拍 / 主播实录 / 欧美 / 日本 / 免费专区」及排序「最新 / 最多观看」。卡片 hash 路由形如 `#/watch/{id}?category=2`，详情页包含标题、ID、时长、日期、清晰度、播放线路 1~8、精彩画面和相关推荐。
+- 页面脚本实际请求：`GET /api/meta`、`GET /api/videos?category=New&page=1&sort=start_date`、`GET /api/videos/{id}?category=2`、`GET /api/play/{id}?method=0&category=2`。分页按钮会把 `page=1` 改为 `page=2`（首页 964 页）；分类按钮把 `category=New` 改为 `category=1/2/3/6/wmov/free`；排序下拉把 `sort=start_date` 改为 `sort=hot_count`。搜索框提交后 URL、列表和请求均不变，未观察到搜索 API。
+- 未携带登录态的 Node/curl 请求对上述四类接口均返回 **401 Unauthorized**；参考站接口是登录墙，但页面本身的字段契约已通过渲染结果确认（列表卡片：id/title/date/views/duration/category；详情：title/id/date/resolution/description/线路；播放返回 blob 下的 DASH）。
+
+### 媒体链路与结论
+
+- 登录态浏览器打开首条详情后，播放器的 `video.currentSrc` 为 blob，底层资源为 `https://14.29.46.204/aboxVOD/.../manifest.mpd`（路径中含授权后生成的长 opaque token），并继续请求同目录 MPEG-DASH 分片。浏览器实测 `readyState=4`、854×480、约 1757 秒，播放可推进。
+- 登录态内置浏览器抓到完整媒体请求：`https://14.29.46.204/aboxVOD/mp4:{opaque-token}/manifest.mpd`，同目录继续请求 `chunk_*_mpd.m4s` 视频/音频片段；首条详情 `SFA9301` 实测 `readyState=4`、854×480、1757 秒。Token 每次由 `/api/play/{id}` 生成，未发现可从页面公开重建的签名算法。
+- 按站名继续挖到的 `sifangs.com` / `sifang.online` 会跳转到无关的「杏吧」站，`sifangtv.one` 是另一个公开影视站（数字 `/v/{id}`，搜索「大宇1」无结果、标题/ID 与 SF 不匹配），均不能认定为 SF 上游。
+- **状态：保持门户 PENDING，不实现 adapter。** 重新评估条件：找到 SF 的实际公开目录站、公开的 token 生成方式，或拿到不依赖 cfnav 登录的稳定上游域名。
+
+## 98堂 / 98.cfnav.me（`98`，2026-08-17 浏览器探测）
+
+### 参考站与源站线索
+
+- 使用内置浏览器进入年龄确认后，首页标题为「Kan98 · 高清视频」，导航含首页、热门、最新、分类和搜索；分类入口可见国产自拍、中文字幕、日韩无码/有码、欧美风情、剧情三级、卡通动漫等。
+- 页脚写明「源站 CDN 直连播放」并明确给出 `https://dmn12.vip`。进入年龄提示后确认：它就是公开可浏览的 Discuz 论坛「98堂[原色花堂]」，不是只有静态 JSON 的未知站。
+- 源站分类页为服务端 HTML：`/forum-41-1.html`（国产自拍，当前 1017 页）、`/forum-109-1.html`、`/forum-42-1.html`、`/forum-43-1.html`、`/forum-44-1.html`、`/forum-45-1.html`、`/forum-46-1.html`，分类 ID 与参考站 7 个分类一一对应。分页链接是 `/forum-{fid}-{page}.html`。
+- 源站搜索是 Discuz 表单：`POST /search.php?searchsubmit=yes`，字段 `mod=forum`、`srchtxt`、`srchtype=title`、`srhfid`；提交后跳到 `GET /search.php?mod=forum&searchid=0&searchmd5=...&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=...&page=N`。实测关键词「西野」返回 1716 条、58 页，并包含参考条目 3691532。
+- 参考站前端加载 `/data/site.json`、`/data/groups.json`、`/data/categories.json`、`/data/videos.json`；这些是参考门户自己的受保护快照，未携带登录态四个 `/data/*` 和 `/api/play/*` 均为 **401 Unauthorized**，不作为本地数据源。
+
+### 媒体链路与结论
+
+- 源站详情页 `/thread-3691532-1-1.html` 的首帖容器公开带 `data-tid="3691532" data-pid="69011960" data-vid="G260815038"`；标题/ID/时长与参考站完全一致。第二条 3691530 也逐项匹配（`pid=69011935`、`vid=G260815037`）。
+- 源站播放器脚本为 `forum_viewthread.js` + `hls.min.js` + `DPlayer.min.js` + `player-2.1.js?t=20260622`。播放请求为 `GET /play.php?callback=...&tid={tid}&pid={pid}&vid={vid}&rand={random}&_={timestamp}`，浏览器直接得到 JSONP：`callback({"k":true,"msg":"获取成功","data":{"flvurl":"https://tyjs.ypxjft.cn/.../index.m3u8?auth_key=..."}})`。实测每次响应的 `auth_key` 会变化，必须实时请求。
+- 同一媒体 CDN 的 manifest、16 字节 `key.key`、首个 TS 均可无 Cookie HTTP 200，CORS 为 `*`；HLS 使用 AES-128，manifest 的 `#EXT-X-KEY` URI 为 `key.key`、IV 为全 0。
+- 匿名性：无 Cookie curl 访问 dmn12 的分类/详情/搜索/`play.php` 会被 Cloudflare managed challenge（403），不是账号 401；内置浏览器可以通过年龄页并正常拿到 HTML 和 JSONP。当前还没有在 Pages 的 provider 路由中做边缘出口复测，因此部署可用性仍待验证。
+- 本轮只在 `providers/runtime.js` 放入了**未注册、未暴露到门户**的 `kan98` 研究性解析骨架，用 mock HTML/JSONP 验证列表→详情→播放字段映射；真实本地 server fetch dmn12 仍返回 502（源站 CF challenge），因此没有把它标成已接入，也没有改 `ROUTE_CONFIGS` 或门户卡片状态。
+- **状态：研究已确认、尚未接入；这是目前最值得继续的入口。** 合格实现方向是实时抓 dmn12 HTML（分类/搜索/详情）→ 从 `data-tid/pid/vid` 调 `play.php` → 直连 `tyjs.ypxjft.cn` HLS；禁止复制参考 `/data/*.json` 快照。下一步是先用实际 Pages/Worker 出口验证 CF challenge，再决定服务器端抓取还是浏览器端解析。
