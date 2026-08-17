@@ -1,0 +1,3644 @@
+// ==UserScript==
+// @name        m3u8/音频提取+去广告-原位播放+跳转/历史/下载版
+// @namespace
+// @version     2026.07.24.2
+// @author     Richy
+// @description 1.自动屏蔽页面广告 2.拦截剪贴板劫持 3.捕获完整 m3u8/音频 4.原位/跳转播放/复制/历史 5.并发下载视频或直链下载音频
+// @license     MIT
+// 注意：*.haijiao.com 匹配不到无子域的 haijiao.com，必须单独写
+// @match       *://haijiao.com/*
+// @match       *://*.haijiao.com/*
+// @match       *://*/post/details*
+// @match       *://*/post/details?*
+// @include     *://*haijiao*/*
+// @include     *://*/post/details*
+// @grant       GM_addStyle
+// @grant       unsafeWindow
+// @run-at      document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 防止同一页重复注入（SPA 热更新 / 多次匹配）
+    try {
+        const w = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+        if (w.__hjM3u8ScriptLoaded) return;
+        w.__hjM3u8ScriptLoaded = true;
+    } catch (e) {}
+
+    // ==========================================
+    // 配置
+    // ==========================================
+    const CFG = {
+        btnId: 'hj-play-btn-mobile',
+        panelId: 'hj-play-panel',
+        toastId: 'hj-toast-mobile',
+        playerWrapId: 'hj-inline-player-wrap',
+        historyKey: 'hj_m3u8_history_v1',
+        historyMax: 30,
+        // 短按悬浮按钮：'inline' 原位注入播放 | 'jump' 跳转外部播放
+        defaultPlayMode: 'inline',
+        // 跳转模式：直接打开 m3u8；true 则走 onlinePlayer 包装页
+        useOnlinePlayer: false,
+        onlinePlayer: (url) =>
+            'https://m3u8-player.com/player.html?url=' + encodeURIComponent(url),
+        hlsCdn: 'https://cdn.jsdelivr.net/npm/hls.js@latest',
+        // 拦截站点往剪贴板塞域名/广告文案（本脚本自己的复制仍放行）
+        blockClipboardHijack: true,
+        cleanBurstMs: 300,
+        cleanBurstCount: 20,
+        cleanIdleMs: 2000,
+        moDebounceMs: 80,
+        // 悬浮按钮保活：被 Vue 清掉 / body 重建后自动补回
+        uiWatchMs: 1500,
+        // 本地下载：分片并发数（越大越快，过大可能被 CDN 限速/拒连）
+        downloadConcurrency: 8,
+        // 单分片失败重试次数
+        downloadRetries: 3
+    };
+
+    let capturedM3u8Url = ''; // 当前捕获的媒体地址（视频 m3u8 或音频直链）
+    let capturedScore = -1; // 分数越高越可能是完整正片
+    let capturedTitle = '';
+    let capturedKind = ''; // 'video' | 'audio' | ''
+    let lastToastAt = 0;
+    let cleanerPaused = false;
+    let activeHls = null; // 当前原位播放的 hls.js 实例
+    // 仅本脚本主动复制时为 true，避免连自己的「复制 m3u8」也被拦
+    let allowClipboardWrite = false;
+    // 预览/候选探测去重（路由切换时清空）
+    const probedUrlSet = new Set();
+    let previewOnlyNoticeTimer = 0;
+
+    // 本地下载任务状态
+    const DL = {
+        active: false,
+        abort: null,
+        done: 0,
+        total: 0,
+        bytes: 0,
+        phase: '', // parsing | downloading | saving | done | error | cancelled
+        error: '',
+        filename: '',
+        lastUiAt: 0
+    };
+
+    // ==========================================
+    // 模块〇：拦截剪贴板劫持（进站自动复制域名/广告）
+    // 实测站点 app.js：创建 #copy-input textarea → select → execCommand("copy")
+    // 文案：「已经自动复制本站域名以及邮箱…」
+    // ==========================================
+
+    function isEditableEl(el) {
+        if (!el || el.nodeType !== 1) return false;
+        const tag = (el.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+        if (el.isContentEditable) return true;
+        try {
+            return !!(el.closest && el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function isHijackCopyNode(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.id === 'copy-input') return true;
+        try {
+            // 站点隐藏复制框：fixed + 丢到屏外
+            if ((el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && el.id !== 'copy-input') {
+                const st = el.style || {};
+                const left = String(st.left || '');
+                const z = String(st.zIndex || '');
+                if (left.includes('-') && (z === '-1000' || Number(z) < 0)) return true;
+            }
+        } catch (e) {}
+        return false;
+    }
+
+    /** 记住用户正在输入的表单控件，清理劫持节点后可还焦 */
+    let lastUserEditable = null;
+    function rememberUserEditable() {
+        try {
+            const ae = document.activeElement;
+            if (ae && isEditableEl(ae) && !isHijackCopyNode(ae)) {
+                lastUserEditable = ae;
+            }
+        } catch (e) {}
+    }
+    function restoreUserEditable() {
+        try {
+            const ae = document.activeElement;
+            // 当前已在正常输入框里就不动
+            if (ae && isEditableEl(ae) && !isHijackCopyNode(ae)) return;
+            const el = lastUserEditable;
+            if (!el || !el.isConnected) return;
+            if (isHijackCopyNode(el)) return;
+            el.focus({ preventScroll: true });
+        } catch (e) {}
+    }
+
+    function killCopyInput() {
+        if (allowClipboardWrite) return;
+        rememberUserEditable();
+        try {
+            const nodes = document.querySelectorAll('#copy-input, textarea#copy-input, input#copy-input');
+            nodes.forEach(el => {
+                try { el.blur(); } catch (e) {}
+                try { el.value = ''; } catch (e) {}
+                try { el.remove(); } catch (e) {
+                    try {
+                        el.style.setProperty('display', 'none', 'important');
+                        el.style.setProperty('pointer-events', 'none', 'important');
+                    } catch (e2) {}
+                }
+            });
+        } catch (e) {}
+        // 还焦：站点 focus(#copy-input) 会把注册框焦点抢走
+        setTimeout(restoreUserEditable, 0);
+    }
+
+    function installClipboardGuard() {
+        if (!CFG.blockClipboardHijack) return;
+
+        // 0) 记录用户焦点，便于清理后恢复
+        try {
+            document.addEventListener('focusin', (e) => {
+                const t = e && e.target;
+                if (t && isEditableEl(t) && !isHijackCopyNode(t)) lastUserEditable = t;
+            }, true);
+        } catch (e) {}
+
+        // 1) 禁止站点把焦点抢到 #copy-input（输入两字就断的根因）
+        // 注意：只拦截劫持节点，绝不能让异常中断整段脚本
+        try {
+            const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+            const proto = win.HTMLElement && win.HTMLElement.prototype;
+            if (proto && typeof proto.focus === 'function' && !proto.__hjFocusPatched) {
+                const rawFocus = proto.focus;
+                proto.focus = function() {
+                    try {
+                        if (!allowClipboardWrite && isHijackCopyNode(this)) return;
+                    } catch (err) {}
+                    return rawFocus.apply(this, arguments);
+                };
+                proto.__hjFocusPatched = true;
+            }
+            if (proto && typeof proto.select === 'function' && !proto.__hjSelectPatched) {
+                const rawSelect = proto.select;
+                proto.select = function() {
+                    try {
+                        if (!allowClipboardWrite && isHijackCopyNode(this)) return;
+                    } catch (err) {}
+                    return rawSelect.apply(this, arguments);
+                };
+                proto.__hjSelectPatched = true;
+            }
+            if (proto && typeof proto.setSelectionRange === 'function' && !proto.__hjSSRPatched) {
+                const rawSSR = proto.setSelectionRange;
+                proto.setSelectionRange = function() {
+                    try {
+                        if (!allowClipboardWrite && isHijackCopyNode(this)) return;
+                    } catch (err) {}
+                    return rawSSR.apply(this, arguments);
+                };
+                proto.__hjSSRPatched = true;
+            }
+        } catch (e) {}
+
+        // 2) 捕获阶段截断站点的 copy 监听
+        const stopHijackCopy = (e) => {
+            if (allowClipboardWrite) return;
+            try { e.stopImmediatePropagation(); } catch (err) {}
+            try {
+                const ae = document.activeElement;
+                if (ae && isHijackCopyNode(ae)) {
+                    e.preventDefault();
+                    killCopyInput();
+                }
+            } catch (err) {}
+        };
+        document.addEventListener('copy', stopHijackCopy, true);
+        document.addEventListener('cut', stopHijackCopy, true);
+
+        // 3) 钩住 Clipboard API
+        try {
+            const nav = unsafeWindow.navigator || navigator;
+            if (nav && nav.clipboard) {
+                const clip = nav.clipboard;
+                if (typeof clip.writeText === 'function') {
+                    const rawWriteText = clip.writeText.bind(clip);
+                    clip.writeText = function(text) {
+                        if (!allowClipboardWrite) {
+                            return Promise.reject(new DOMException('Blocked by userscript', 'NotAllowedError'));
+                        }
+                        return rawWriteText(text);
+                    };
+                }
+                if (typeof clip.write === 'function') {
+                    const rawWrite = clip.write.bind(clip);
+                    clip.write = function() {
+                        if (!allowClipboardWrite) {
+                            return Promise.reject(new DOMException('Blocked by userscript', 'NotAllowedError'));
+                        }
+                        return rawWrite.apply(clip, arguments);
+                    };
+                }
+            }
+        } catch (e) {}
+
+        // 4) 钩住 execCommand（实例 + 原型）
+        const patchExecCommand = (doc) => {
+            if (!doc || typeof doc.execCommand !== 'function') return;
+            if (doc.__hjExecPatched) return;
+            try {
+                const rawExec = doc.execCommand.bind(doc);
+                doc.execCommand = function(commandId) {
+                    const cmd = String(commandId || '').toLowerCase();
+                    if ((cmd === 'copy' || cmd === 'cut') && !allowClipboardWrite) {
+                        killCopyInput();
+                        return false;
+                    }
+                    return rawExec.apply(doc, arguments);
+                };
+                doc.__hjExecPatched = true;
+            } catch (e) {}
+        };
+        try {
+            patchExecCommand(document);
+            patchExecCommand(unsafeWindow.document);
+        } catch (e) {}
+        try {
+            const dproto = (unsafeWindow.HTMLDocument && unsafeWindow.HTMLDocument.prototype)
+                || (unsafeWindow.Document && unsafeWindow.Document.prototype)
+                || Document.prototype;
+            if (dproto && typeof dproto.execCommand === 'function' && !dproto.__hjExecPatched) {
+                const rawProto = dproto.execCommand;
+                dproto.execCommand = function(commandId) {
+                    const cmd = String(commandId || '').toLowerCase();
+                    if ((cmd === 'copy' || cmd === 'cut') && !allowClipboardWrite) {
+                        killCopyInput();
+                        return false;
+                    }
+                    return rawProto.apply(this, arguments);
+                };
+                dproto.__hjExecPatched = true;
+            }
+        } catch (e) {}
+
+        // 5) 静默移除 #copy-input（不在用户输入时狂刷 DOM）
+        const nukeCopyNodes = () => {
+            if (allowClipboardWrite) return;
+            // 用户正在正常输入时，只拦 focus/execCommand，不必反复 remove 引发抖动
+            try {
+                const ae = document.activeElement;
+                if (ae && isEditableEl(ae) && !isHijackCopyNode(ae)) {
+                    // 若旁路已有 copy-input 仍清掉，但马上还焦
+                    if (document.getElementById('copy-input')) killCopyInput();
+                    return;
+                }
+            } catch (e) {}
+            killCopyInput();
+        };
+        nukeCopyNodes();
+
+        try {
+            const mo = new MutationObserver((mutations) => {
+                if (allowClipboardWrite) return;
+                for (let i = 0; i < mutations.length; i++) {
+                    const m = mutations[i];
+                    if (!m.addedNodes) continue;
+                    for (let j = 0; j < m.addedNodes.length; j++) {
+                        const n = m.addedNodes[j];
+                        if (!n || n.nodeType !== 1) continue;
+                        if (n.id === 'copy-input' || (n.querySelector && n.querySelector('#copy-input'))) {
+                            // 立刻取消其 focus 能力并移除
+                            try {
+                                if (n.id === 'copy-input') {
+                                    n.blur && n.blur();
+                                    n.tabIndex = -1;
+                                }
+                            } catch (e) {}
+                            nukeCopyNodes();
+                            return;
+                        }
+                    }
+                }
+            });
+            const boot = () => {
+                if (document.documentElement) {
+                    mo.observe(document.documentElement, { childList: true, subtree: true });
+                }
+            };
+            if (document.documentElement) boot();
+            else document.addEventListener('DOMContentLoaded', boot, { once: true });
+        } catch (e) {}
+
+        // 降频兜底即可，避免和输入抢主线程
+        setInterval(nukeCopyNodes, 3000);
+    }
+    try { installClipboardGuard(); } catch (e) {}
+
+    // ==========================================
+    // 模块一：强力去广告 (CSS屏蔽 + 定时清理)
+    // 2026-07-20.2 修复：落地弹窗灰屏卡死
+    // 2026-07-20.3 优化：降频 / 隐藏页暂停 / 避免重复扫描
+    // ==========================================
+
+    const adStyles = `
+        .custom_carousel,
+        .containeradvertising,
+        .containeradvertising.haslist,
+        .listContainer:has(.prompttext),
+        .listContainer:has(.promptclose),
+        .promptrow,
+        .prompttext,
+        .promptclose,
+        .left-activty,
+        .right-activty,
+        img[data-id^="banner_"],
+        img[data-id*="banner"],
+        [class*="guanggao"],
+        [class*="adsense"],
+        [class*="ad-box"],
+        [class*="adbox"],
+        [class*="ad-container"],
+        [class*="gg-box"],
+        [id*="adsense"],
+        [id*="ad-box"],
+        .float-box,
+        .float-window,
+        .couplet,
+        .top-ad,
+        .bottom-ad,
+        .ad-container,
+        .gg-box,
+        iframe:not([src*="m3u8"]):not([src*="player"]):not([id*="play"]):not([src*="video"]),
+        a[href*="bocai"],
+        a[href*="pgsoft" i],
+        a[href*="hgty"],
+        a[href*="dd7367"]
+        {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            width: 0 !important;
+            max-height: 0 !important;
+            max-width: 0 !important;
+            opacity: 0 !important;
+            overflow: hidden !important;
+            pointer-events: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: none !important;
+        }
+        body { overflow-x: hidden; }
+    `;
+    GM_addStyle(adStyles);
+
+    function isProtected(el) {
+        if (!el || el.nodeType !== 1) return true;
+        const id = el.id;
+        if (
+            id === CFG.btnId ||
+            id === CFG.toastId ||
+            id === CFG.panelId ||
+            id === CFG.playerWrapId ||
+            id === 'hj-toolbar' ||
+            id === 'hj-main-content' ||
+            id === 'hj-page-view' ||
+            id === 'app' ||
+            id === 'bbs_float_menu'
+        ) return true;
+        if (el.closest && (
+            el.closest('#' + CFG.btnId) ||
+            el.closest('#' + CFG.toastId) ||
+            el.closest('#' + CFG.panelId) ||
+            el.closest('#' + CFG.playerWrapId) ||
+            el.closest('#hj-toolbar') ||
+            el.closest('video') ||
+            el.closest('.dplayer') ||
+            el.closest('[class*="player"]')
+        )) return true;
+        return false;
+    }
+
+    function hideEl(el) {
+        if (!el || isProtected(el)) return;
+        try {
+            el.style.setProperty('display', 'none', 'important');
+            el.style.setProperty('visibility', 'hidden', 'important');
+            el.style.setProperty('pointer-events', 'none', 'important');
+            el.style.setProperty('height', '0', 'important');
+            el.style.setProperty('opacity', '0', 'important');
+            el.setAttribute('data-hj-ad-hidden', '1');
+        } catch (e) {}
+    }
+
+    function removeEl(el) {
+        if (!el || isProtected(el)) return;
+        try { el.remove(); } catch (e) { hideEl(el); }
+    }
+
+    function isActuallyVisible(el) {
+        if (!el || el.nodeType !== 1) return false;
+        try {
+            const s = window.getComputedStyle(el);
+            if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0) return false;
+            const r = el.getBoundingClientRect();
+            return r.width > 2 && r.height > 2;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function unlockPage() {
+        try {
+            document.body && document.body.classList.remove('el-popup-parent--hidden');
+            if (document.body) {
+                document.body.style.removeProperty('overflow');
+                document.body.style.overflow = '';
+            }
+            if (document.documentElement) {
+                document.documentElement.style.removeProperty('overflow');
+            }
+        } catch (e) {}
+    }
+
+    // 进站落地弹窗（域名收藏/18+/劫持提示）。注意：文案里也有「会员」奖励，不能用“会员”排除
+    function isLandingDialog(el) {
+        if (!el || el.nodeType !== 1) return false;
+        if (el.classList && el.classList.contains('luodiye_dialog')) return true;
+        if (el.querySelector && el.querySelector('.luodiye_dialog')) return true;
+        // 登录过期 message-box 一律保留
+        if (el.classList && el.classList.contains('el-message-box__wrapper')) return false;
+        if (el.querySelector && el.querySelector('.el-message-box')) return false;
+        const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ');
+        if (!text) return false;
+        // 明确业务弹窗保留
+        if (/登录令牌|重新登录|是否重新登录|开通VIP|支付|密码|验证码|忘记密码/.test(text)) return false;
+        return /重要提示|亲爱的海友|页面被劫持|收藏\s*\d*\s*个以上网址|请收藏|不会迷路|今日大陆|永久网址|年满\s*18|自动进入本站|已经自动复制|haijiao\d*@proton|获取最新域名/.test(text);
+    }
+
+    function isBusinessOverlay(el) {
+        if (!el || !isActuallyVisible(el)) return false;
+        if (isLandingDialog(el)) return false;
+        if (el.classList && el.classList.contains('el-message-box__wrapper')) return true;
+        if (el.querySelector && el.querySelector('.el-message-box')) return true;
+        const text = (el.innerText || '').replace(/\s+/g, ' ');
+        return /登录令牌|重新登录|是否重新登录|开通VIP|支付|密码|验证码/.test(text);
+    }
+
+    function closeLandingDialogs() {
+        // 用户正在输入时：只静默移除遮罩层，不 click 按钮（避免抢焦点）
+        const typing = (() => {
+            try {
+                const ae = document.activeElement;
+                return !!(ae && isEditableEl(ae) && !isHijackCopyNode(ae));
+            } catch (e) { return false; }
+        })();
+        if (typing) rememberUserEditable();
+
+        // 1) 优先点击落地弹窗按钮，尽量走 Vue 关闭流程
+        if (!typing) {
+            const btnRe = /^(我知道了|好|确认|我确认)(\s*[\(（]\d+[\)）])?$/;
+            document.querySelectorAll('.el-dialog__wrapper .el-button, .el-dialog__wrapper .dialog-footer button, .el-dialog__wrapper .dialog-footer span, .luodiye_dialog button, .luodiye_dialog .el-button').forEach(btn => {
+                const wrap = btn.closest('.el-dialog__wrapper') || btn.closest('.luodiye_dialog');
+                if (!wrap || !isLandingDialog(wrap)) return;
+                const t = (btn.innerText || btn.textContent || '').replace(/\s+/g, ' ').trim();
+                if (btnRe.test(t)) {
+                    try { btn.click(); } catch (e) {}
+                }
+            });
+        }
+
+        // 2) 强制移除落地弹窗整层（含全屏 wrapper）
+        document.querySelectorAll('.el-dialog__wrapper, .luodiye_dialog').forEach(el => {
+            if (isLandingDialog(el)) {
+                const target = el.classList.contains('luodiye_dialog')
+                    ? (el.closest('.el-dialog__wrapper') || el)
+                    : el;
+                removeEl(target);
+            }
+        });
+
+        // 3) 若没有业务弹窗，清掉遮罩并解锁页面（灰屏根因）
+        const hasBusiness = [...document.querySelectorAll('.el-message-box__wrapper, .el-dialog__wrapper')]
+            .some(isBusinessOverlay);
+
+        if (!hasBusiness) {
+            document.querySelectorAll('.v-modal').forEach(removeEl);
+            document.querySelectorAll('div.v-modal, .el-popup-parent--hidden').forEach(el => {
+                if (el.classList && el.classList.contains('v-modal')) removeEl(el);
+            });
+            unlockPage();
+        }
+
+        if (typing) setTimeout(restoreUserEditable, 0);
+    }
+
+    function cleanUpAds() {
+        if (cleanerPaused || document.hidden) return;
+        // 注册/登录表单输入中：跳过可能扰动 DOM 的清理，避免焦点丢失
+        try {
+            const ae = document.activeElement;
+            if (ae && isEditableEl(ae) && !isHijackCopyNode(ae)) {
+                // 仅清劫持复制框，其它广告本轮跳过
+                killCopyInput();
+                return;
+            }
+        } catch (e) {}
+
+        document.querySelectorAll(
+            '.custom_carousel, .containeradvertising, .left-activty, .right-activty'
+        ).forEach(removeEl);
+
+        document.querySelectorAll('.listContainer').forEach(el => {
+            if (el.getAttribute('data-hj-ad-hidden') === '1') return;
+            if (el.querySelector('.prompttext, .promptclose') || /广告/.test(el.textContent || '')) {
+                removeEl(el);
+            }
+        });
+
+        document.querySelectorAll('img[data-id^="banner_"], img[data-id*="banner"]').forEach(img => {
+            const box = img.closest('.listContainer, .el-carousel__item, .custom_carousel, .containeradvertising') || img;
+            removeEl(box);
+        });
+
+        document.querySelectorAll('div[style*="z-index: 999"], div[style*="z-index:999"]').forEach(div => {
+            if (isProtected(div) || div.getAttribute('data-hj-ad-hidden') === '1') return;
+            const text = (div.textContent || '').trim();
+            if (!text && (div.querySelector('iframe') || div.querySelector('img'))) removeEl(div);
+        });
+
+        document.querySelectorAll('div[style*="position: fixed"], div[style*="position:fixed"]').forEach(div => {
+            if (isProtected(div) || div.getAttribute('data-hj-ad-hidden') === '1') return;
+            const cls = (div.className || '').toString();
+            const id = div.id || '';
+            if (id === 'bbs_float_menu' || cls.includes('customer-service') || cls.includes('hj-nav')) return;
+            if (cls.includes('v-modal') || cls.includes('el-dialog__wrapper') || cls.includes('el-message-box')) return;
+            if (div.querySelector('iframe')) {
+                removeEl(div);
+                return;
+            }
+            const img = div.querySelector('img');
+            if (img) {
+                const r = img.getBoundingClientRect();
+                if (r.width >= 80 && r.height >= 80) removeEl(div);
+            }
+        });
+
+        document.querySelectorAll('[class*="activty"], [class*="advertising"], [class*="Advertis"]').forEach(el => {
+            if (!isProtected(el)) removeEl(el);
+        });
+
+        closeLandingDialogs();
+    }
+
+    const startCleaners = () => {
+        cleanUpAds();
+        let burst = 0;
+        const burstTimer = setInterval(() => {
+            cleanUpAds();
+            if (++burst >= CFG.cleanBurstCount) clearInterval(burstTimer);
+        }, CFG.cleanBurstMs);
+
+        // 空闲后降频；页面不可见时跳过
+        setInterval(cleanUpAds, CFG.cleanIdleMs);
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) cleanUpAds();
+        });
+
+        if (typeof MutationObserver !== 'undefined') {
+            let scheduled = false;
+            const mo = new MutationObserver((mutations) => {
+                // 仅在有新增节点时清理，属性抖动不扫
+                let worth = false;
+                for (let i = 0; i < mutations.length; i++) {
+                    const m = mutations[i];
+                    if (m.type === 'childList' && m.addedNodes && m.addedNodes.length) {
+                        worth = true;
+                        break;
+                    }
+                }
+                if (!worth || scheduled || document.hidden) return;
+                scheduled = true;
+                setTimeout(() => {
+                    scheduled = false;
+                    cleanUpAds();
+                }, CFG.moDebounceMs);
+            });
+            const boot = () => {
+                if (document.documentElement) {
+                    mo.observe(document.documentElement, { childList: true, subtree: true });
+                }
+            };
+            if (document.documentElement) boot();
+            else document.addEventListener('DOMContentLoaded', boot, { once: true });
+        }
+    };
+    startCleaners();
+
+    // ==========================================
+    // 模块二：历史记录（连刷核心）
+    // ==========================================
+
+    function readHistory() {
+        try {
+            const raw = sessionStorage.getItem(CFG.historyKey);
+            const list = raw ? JSON.parse(raw) : [];
+            return Array.isArray(list) ? list : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function writeHistory(list) {
+        try {
+            sessionStorage.setItem(CFG.historyKey, JSON.stringify(list.slice(0, CFG.historyMax)));
+        } catch (e) {}
+    }
+
+    function pushHistory(url, title, kind) {
+        if (!url) return;
+        const k = kind || mediaKindOf(url);
+        const list = readHistory().filter(item => item && item.url !== url);
+        list.unshift({
+            url,
+            kind: k,
+            title: (title || document.title || (k === 'audio' ? '未命名音频' : '未命名视频')).slice(0, 80),
+            page: location.href,
+            ts: Date.now()
+        });
+        writeHistory(list);
+        updateHistoryBadge();
+    }
+
+    function getPageTitle() {
+        try {
+            const h = document.querySelector('h1, .title, .post-title, .topic-title, .detail-title');
+            const t = (h && (h.innerText || h.textContent) || document.title || '').replace(/\s+/g, ' ').trim();
+            return t || '未命名视频';
+        } catch (e) {
+            return document.title || '未命名视频';
+        }
+    }
+
+    // ==========================================
+    // 模块三：视频提取（XHR + fetch 双通道）
+    // ==========================================
+
+    GM_addStyle(`
+        #${CFG.btnId} {
+            position: fixed !important;
+            bottom: 80px;
+            right: 15px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, rgba(30,60,114,0.96), rgba(42,82,152,0.96));
+            color: white;
+            border: 2px solid rgba(255,255,255,0.35);
+            z-index: 2147483646 !important;
+            font-size: 22px;
+            text-align: center;
+            line-height: 52px;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            /* 默认可见，不再等抓到视频才显示 */
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+            transition: transform 0.15s ease, opacity 0.2s;
+            touch-action: none;
+        }
+        #${CFG.btnId}.show { display: block !important; }
+        #${CFG.btnId}.active { transform: scale(0.92); }
+        #${CFG.btnId}.played {
+            background: linear-gradient(145deg, rgba(46,139,87,0.96), rgba(56,168,104,0.96));
+        }
+        #${CFG.btnId} .hj-badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 4px;
+            border-radius: 9px;
+            background: #ff4d4f;
+            color: #fff;
+            font-size: 11px;
+            line-height: 18px;
+            text-align: center;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+        }
+
+        #${CFG.panelId} {
+            position: fixed;
+            right: 15px;
+            bottom: 150px;
+            width: min(86vw, 340px);
+            max-height: 62vh;
+            overflow: hidden;
+            background: rgba(18, 22, 32, 0.96);
+            color: #fff;
+            border-radius: 14px;
+            z-index: 1000001;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+            border: 1px solid rgba(255,255,255,0.08);
+            display: none;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+        #${CFG.panelId}.show { display: flex; }
+        #${CFG.panelId} .hj-panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px 8px;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #${CFG.panelId} .hj-panel-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 10px 12px;
+        }
+        #${CFG.panelId} .hj-panel-actions.secondary {
+            grid-template-columns: 1fr 1fr;
+            padding-top: 0;
+        }
+        #${CFG.panelId} .hj-panel-actions.download-row {
+            grid-template-columns: 1.4fr 0.8fr;
+            padding-top: 0;
+        }
+        #${CFG.panelId} .hj-act.download {
+            background: linear-gradient(135deg, #0b6e4f, #149e6a);
+        }
+        #${CFG.panelId} .hj-act:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        #${CFG.panelId} .hj-dl-progress {
+            margin: 0 12px 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            font-size: 11px;
+            line-height: 1.45;
+            color: rgba(255,255,255,0.78);
+        }
+        #${CFG.panelId} .hj-dl-bar {
+            margin-top: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.1);
+            overflow: hidden;
+        }
+        #${CFG.panelId} .hj-dl-bar > i {
+            display: block;
+            height: 100%;
+            width: 0;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #149e6a, #5ef0a0);
+            transition: width 0.15s ease;
+        }
+        #${CFG.panelId} .hj-dl-progress.err {
+            color: #ff9a9a;
+        }
+        #${CFG.panelId} .hj-dl-progress.ok {
+            color: #7dffa8;
+        }
+        #${CFG.playerWrapId} {
+            margin: 12px 0 16px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+            background: #111;
+        }
+        #${CFG.playerWrapId} .hj-player-bar {
+            color: #00e676;
+            padding: 10px 12px;
+            font-weight: 600;
+            font-size: 13px;
+            background: #1a1a1a;
+            text-align: center;
+            line-height: 1.4;
+        }
+        #${CFG.playerWrapId} video {
+            width: 100%;
+            max-height: 80vh;
+            background: #000;
+            display: block;
+            vertical-align: top;
+        }
+        #${CFG.playerWrapId} audio {
+            width: 100%;
+            display: block;
+            padding: 14px 12px 18px;
+            box-sizing: border-box;
+            background: #111;
+        }
+        #${CFG.playerWrapId}.hj-audio-wrap .hj-player-bar {
+            color: #80d8ff;
+        }
+        #${CFG.btnId}.audio-mode {
+            background: linear-gradient(145deg, rgba(12, 90, 120, 0.96), rgba(20, 130, 160, 0.96));
+        }
+        #${CFG.panelId} .hj-act {
+            border: 0;
+            border-radius: 10px;
+            padding: 10px 6px;
+            font-size: 13px;
+            color: #fff;
+            background: rgba(255,255,255,0.08);
+            cursor: pointer;
+        }
+        #${CFG.panelId} .hj-act.primary {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+        }
+        #${CFG.panelId} .hj-act:active { opacity: 0.85; }
+        #${CFG.panelId} .hj-url {
+            margin: 0 12px 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.05);
+            color: #9ec1ff;
+            font-size: 11px;
+            word-break: break-all;
+            max-height: 54px;
+            overflow: hidden;
+            line-height: 1.4;
+        }
+        #${CFG.panelId} .hj-hist-title {
+            padding: 4px 14px 6px;
+            font-size: 12px;
+            color: rgba(255,255,255,0.55);
+        }
+        #${CFG.panelId} .hj-hist-list {
+            overflow-y: auto;
+            padding: 0 8px 10px;
+            -webkit-overflow-scrolling: touch;
+        }
+        #${CFG.panelId} .hj-hist-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            border: 0;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.04);
+            color: #fff;
+            padding: 10px;
+            margin-bottom: 6px;
+            cursor: pointer;
+        }
+        #${CFG.panelId} .hj-hist-item:active { background: rgba(255,255,255,0.1); }
+        #${CFG.panelId} .hj-hist-item .t {
+            font-size: 13px;
+            line-height: 1.35;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        #${CFG.panelId} .hj-hist-item .m {
+            margin-top: 4px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.45);
+        }
+        #${CFG.panelId} .hj-empty {
+            padding: 18px 12px;
+            text-align: center;
+            color: rgba(255,255,255,0.4);
+            font-size: 12px;
+        }
+
+        #${CFG.toastId} {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.82);
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 8px;
+            z-index: 1000002;
+            font-size: 15px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            max-width: 80vw;
+            text-align: center;
+        }
+    `);
+
+    function normalizeUrl(url) {
+        if (!url) return '';
+        try {
+            if (url.startsWith('//')) return location.protocol + url;
+            if (url.startsWith('/')) return location.origin + url;
+            return String(url);
+        } catch (e) {
+            return String(url || '');
+        }
+    }
+
+    function looksLikeM3u8Url(url) {
+        if (!url || typeof url !== 'string') return false;
+        return String(url).toLowerCase().includes('.m3u8');
+    }
+
+    function looksLikeAudioUrl(url) {
+        if (!url || typeof url !== 'string') return false;
+        const u = String(url).toLowerCase();
+        if (/\.(mp3|m4a|aac|wav|ogg|flac|opus)(\?|#|$)/i.test(u)) return true;
+        // 站点音频 CDN 路径
+        if (/\/hjstore\/audio\//i.test(u)) return true;
+        if (/\/\/mp3\./i.test(u) && /^https?:\/\//i.test(u)) return true;
+        return false;
+    }
+
+    function mediaKindOf(url, meta) {
+        if (meta && meta.kind === 'audio') return 'audio';
+        if (meta && meta.kind === 'video') return 'video';
+        if (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url)) return 'audio';
+        if (looksLikeM3u8Url(url)) return 'video';
+        return capturedKind || 'video';
+    }
+
+    function audioExtFromUrl(url) {
+        const m = String(url || '').match(/\.(mp3|m4a|aac|wav|ogg|flac|opus)(?=[?#]|$)/i);
+        return (m && m[1] ? m[1].toLowerCase() : 'mp3');
+    }
+
+    function looksLikePlaylist(text) {
+        return typeof text === 'string' && text.includes('#EXTM3U');
+    }
+
+    // 预览/试看特征：命中则降权，避免锁死完整片（规则偏保守，防止误伤正片路径）
+    function isPreviewUrl(url) {
+        if (!url) return false;
+        const u = String(url).toLowerCase();
+        return /(^|[\/_\-.?&=])(preview|previews|trailer|trailers|sample|teaser|trysee|try_see|trial)([\/_\-.?&=]|$)|_preview|_trailer|_sample|\/preview\/|\/trailer\/|\/sample\//.test(u);
+    }
+
+    function isPreviewText(text) {
+        if (!text || typeof text !== 'string') return false;
+        return /preview|trailer|sample|teaser|trysee|试看|预览/.test(text.toLowerCase());
+    }
+
+    /**
+     * 分数越高越像完整正片。
+     * 100: /api/address/ 反推出的主 m3u8（旧逻辑核心，最可信）
+     *  90: topic 附件 / 预览反推完整源
+     *  70: DOM / 播放器 hook 兜底源
+     *  50: 普通 m3u8
+     *  40: 正文文本扫到的 m3u8
+     *  20: Performance 弱兜底
+     *  10: 疑似预览
+     *   0: 不可用
+     */
+    function scoreVideoUrl(url, meta) {
+        if (!url) return 0;
+        const m = meta || {};
+        const kind = mediaKindOf(url, m);
+        let score = 50;
+        if (m.source === 'address') score = 100;
+        else if (m.source === 'topic') score = 90;
+        else if (m.source === 'dom' || m.source === 'player') score = 70;
+        else if (m.source === 'perf') score = 20;
+        else if (m.source === 'text') score = 40;
+        else if (m.source === 'media') score = 80;
+
+        // 音频 topic 直链：完整可播，略低于完整视频，避免抢占同帖视频
+        if (kind === 'audio') {
+            if (m.source === 'topic' || m.source === 'dom' || m.source === 'media') score = 85;
+            else if (m.source === 'perf') score = 60;
+            else score = 70;
+        }
+
+        if (kind !== 'audio' && (isPreviewUrl(url) || m.preview)) score = Math.min(score, 10);
+        // /api/address/ 请求本身不是最终播放地址，不直接记分
+        if (/\/api\/address\//i.test(url) && !looksLikeM3u8Url(url) && !looksLikeAudioUrl(url)) score = 0;
+        return score;
+    }
+
+    /** 拆路径与 query，反推 m3u8 时尽量保留签名参数 */
+    function splitUrlParts(requestUrl) {
+        const raw = String(requestUrl || '');
+        let path = raw;
+        let query = '';
+        const hashIdx = raw.indexOf('#');
+        const noHash = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw;
+        const qIdx = noHash.indexOf('?');
+        if (qIdx >= 0) {
+            path = noHash.slice(0, qIdx);
+            query = noHash.slice(qIdx); // 含 ?
+        } else {
+            path = noHash;
+        }
+        const slash = path.lastIndexOf('/');
+        return {
+            basePath: slash >= 0 ? path.slice(0, slash + 1) : path,
+            file: slash >= 0 ? path.slice(slash + 1) : path,
+            query,
+            path
+        };
+    }
+
+    function appendQueryIfMissing(url, query) {
+        if (!url) return '';
+        if (!query || /\?/.test(url)) return url;
+        return url + query;
+    }
+
+    /** 统计 playlist 时长 / 分片数（用于识别无 _preview 字样的试看列表） */
+    function playlistStats(content) {
+        if (!content || typeof content !== 'string') return { duration: 0, tsCount: 0 };
+        let duration = 0;
+        const re = /#EXTINF:([0-9.]+)/g;
+        let m;
+        while ((m = re.exec(content)) !== null) {
+            const n = parseFloat(m[1]);
+            if (!isNaN(n)) duration += n;
+        }
+        return {
+            duration,
+            tsCount: (content.match(/\.ts(\?|$)/gi) || []).length
+        };
+    }
+
+    /** 试看列表特征：约 30s、分片不多（老帖 URL 常无 preview 字样） */
+    function isLikelyPreviewPlaylist(content) {
+        const { duration, tsCount } = playlistStats(content);
+        if (duration <= 0 || tsCount <= 0) return false;
+        return duration <= 45 && tsCount <= 50;
+    }
+
+    /**
+     * 从多个 .ts 分片 basename 求最长公共前缀 → 主 m3u8 名。
+     * 老帖：1159940.ts / 1159941.ts → 115994.m3u8
+     * 新帖：xxx_i0.ts / xxx_i1.ts → xxx_i.m3u8
+     * （勿用非贪婪正则：1159940.ts 会被错成 1.m3u8）
+     */
+    function m3u8StemFromTsNames(names) {
+        const bare = (names || [])
+            .map(n => String(n || '').split('?')[0].split('/').pop() || '')
+            .map(n => n.replace(/\.ts$/i, ''))
+            .filter(Boolean);
+        if (!bare.length) return '';
+        if (bare.length === 1) {
+            // 单分片：去掉末尾序号
+            const one = bare[0].replace(/\d+$/, '');
+            return one || '';
+        }
+        let lcp = bare[0];
+        for (let i = 1; i < bare.length; i++) {
+            const s = bare[i];
+            let j = 0;
+            while (j < lcp.length && j < s.length && lcp.charAt(j) === s.charAt(j)) j++;
+            lcp = lcp.slice(0, j);
+            if (!lcp) return '';
+        }
+        // 公共前缀末尾若残留半截序号（极少见），去掉尾部纯数字段中过短的情况已由多样本 LCP 规避
+        return lcp;
+    }
+
+    // 从 m3u8 / 分片列表反推主播放地址（保留 query；优先 LCP）
+    const getRealVideoSrc = (content, requestUrl) => {
+        if (!content) return '';
+        try {
+            const { basePath, query, file } = splitUrlParts(requestUrl);
+            const finish = (u) => appendQueryIfMissing(u, query);
+            const lines = content.split(/\r?\n/);
+
+            if (content.includes('#EXTM3U')) {
+                // master playlist：优先取子 m3u8
+                for (let i = 0; i < lines.length; i++) {
+                    const t = (lines[i] || '').trim();
+                    if (!t || t.startsWith('#')) continue;
+                    if (/\.m3u8(\?|$)/i.test(t)) {
+                        if (/^https?:\/\//i.test(t)) return t;
+                        if (t.startsWith('//')) return location.protocol + t;
+                        return finish(basePath + t.replace(/^\.\//, ''));
+                    }
+                }
+
+                // media playlist：收集全部分片名，LCP 反推
+                const segNames = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const t = (lines[i] || '').trim();
+                    if (!t || t.startsWith('#')) continue;
+                    if (/\.ts(\?|$)/i.test(t)) segNames.push(t);
+                }
+                const stem = m3u8StemFromTsNames(segNames);
+                if (stem) {
+                    const guessed = finish(basePath + stem + '.m3u8');
+                    // 反推结果若与请求本身相同，说明当前已是主列表
+                    const reqFile = (file || '').split('?')[0];
+                    if (guessed && reqFile && reqFile.toLowerCase() === (stem + '.m3u8').toLowerCase()) {
+                        return '';
+                    }
+                    return guessed;
+                }
+
+                // 兜底：旧正则（仅非纯数字前缀时较安全）
+                for (let i = 0; i < segNames.length; i++) {
+                    const name = (segNames[i].split('?')[0].split('/').pop() || '');
+                    // 要求前缀含字母或下划线，避免 1159940 → 1
+                    let reg = name.match(/^([\w.-]*[a-zA-Z_][\w.-]*?)(\d+)\.ts$/i);
+                    if (reg && reg[1]) return finish(basePath + reg[1] + '.m3u8');
+                }
+            } else {
+                const tsLine = lines.find(line => line && line.includes('.ts'));
+                if (tsLine) {
+                    const stem = m3u8StemFromTsNames([tsLine]);
+                    if (stem) return finish(basePath + stem + '.m3u8');
+                }
+            }
+        } catch (e) {}
+        return '';
+    };
+
+    /**
+     * 由预览 URL 猜完整片候选（保留 query）。
+     * 例：xxx_i_preview.m3u8 → xxx_i.m3u8；/preview/a.m3u8 → /a.m3u8
+     */
+    function candidatesFromPreviewUrl(url) {
+        const out = [];
+        const push = (u) => {
+            const n = normalizeUrl(u);
+            if (n && n !== normalizeUrl(url) && !out.includes(n)) out.push(n);
+        };
+        if (!url) return out;
+        try {
+            const u = new URL(normalizeUrl(url), location.href);
+            const path0 = u.pathname;
+            const tryPath = (p) => {
+                if (!p || p === path0) return;
+                u.pathname = p;
+                push(u.toString());
+            };
+            tryPath(path0.replace(/_preview(?=\.m3u8$)/i, ''));
+            tryPath(path0.replace(/-preview(?=\.m3u8$)/i, ''));
+            tryPath(path0.replace(/\.preview(?=\.m3u8$)/i, ''));
+            tryPath(path0.replace(/_pre(?=\.m3u8$)/i, ''));
+            tryPath(path0.replace(/\/preview\//ig, '/'));
+            tryPath(path0.replace(/\/previews\//ig, '/'));
+            tryPath(path0.replace(/\/trailer\//ig, '/'));
+            tryPath(path0.replace(/\/sample\//ig, '/'));
+            const parts = path0.split('/');
+            const file = parts[parts.length - 1] || '';
+            if (/^preview[_-]/i.test(file)) {
+                parts[parts.length - 1] = file.replace(/^preview[_-]/i, '');
+                tryPath(parts.join('/'));
+            }
+            // 文件名含 preview 中缀：foo_preview_bar.m3u8
+            if (/preview/i.test(file)) {
+                parts[parts.length - 1] = file.replace(/_?preview_?/ig, '_').replace(/__+/g, '_').replace(/^_|_$/g, '');
+                if (parts[parts.length - 1] && !/\.m3u8$/i.test(parts[parts.length - 1])) {
+                    parts[parts.length - 1] += '.m3u8';
+                }
+                tryPath(parts.join('/'));
+            }
+        } catch (e) {
+            const s = String(url);
+            push(s.replace(/_preview(?=\.m3u8)/i, ''));
+            push(s.replace(/-preview(?=\.m3u8)/i, ''));
+        }
+        return out;
+    }
+
+    async function fetchTextOk(url) {
+        const res = await fetch(url, { credentials: 'omit' });
+        if (!res.ok) return null;
+        const content = await res.text();
+        return content;
+    }
+
+    /** 探测预览命名反推的完整片是否可拉、是否为合法 playlist */
+    async function tryGuessFullFromPreview(previewUrl, meta) {
+        const cands = candidatesFromPreviewUrl(previewUrl);
+        for (let i = 0; i < cands.length; i++) {
+            const c = cands[i];
+            if (probedUrlSet.has(c)) continue;
+            probedUrlSet.add(c);
+            try {
+                const content = await fetchTextOk(c);
+                if (!content || !looksLikePlaylist(content)) continue;
+                // 拉到非预览路径的合法列表 → 记为完整源
+                updateState(c, {
+                    source: (meta && meta.source === 'address') ? 'address' : 'topic',
+                    preview: isPreviewUrl(c) || isPreviewText(content)
+                });
+                if (!isPreviewUrl(c)) return c;
+            } catch (e) {}
+        }
+        return '';
+    }
+
+    /** 拉 playlist → getRealVideoSrc 反推 → 预览命名再猜一轮 */
+    async function promoteFromM3u8Url(url, meta) {
+        const src = normalizeUrl(url);
+        if (!src || !looksLikeM3u8Url(src)) return '';
+        const m = meta || {};
+
+        // 命名层先猜（URL 带 _preview 时）
+        if ((isPreviewUrl(src) || m.preview) && capturedScore < 90) {
+            const guessed = await tryGuessFullFromPreview(src, m);
+            if (guessed && !isPreviewUrl(guessed)) return guessed;
+        }
+
+        if (probedUrlSet.has('body:' + src)) {
+            return capturedScore >= 90 ? capturedM3u8Url : '';
+        }
+        probedUrlSet.add('body:' + src);
+
+        try {
+            const content = await fetchTextOk(src);
+            if (!content) return '';
+
+            // 老帖试看 URL 常无 preview 字样，用时长/分片数识别
+            const shortPreview = isPreviewUrl(src) || !!m.preview || isLikelyPreviewPlaylist(content);
+            updateState(src, {
+                source: m.source || 'dom',
+                preview: shortPreview
+            });
+
+            const videoSrc = getRealVideoSrc(content, src);
+            if (videoSrc && normalizeUrl(videoSrc) !== src) {
+                let ok = false;
+                let body2 = '';
+                if (!probedUrlSet.has(videoSrc)) {
+                    probedUrlSet.add(videoSrc);
+                    try {
+                        body2 = await fetchTextOk(videoSrc);
+                        ok = !!(body2 && looksLikePlaylist(body2));
+                    } catch (e) {
+                        ok = false;
+                    }
+                }
+                if (ok) {
+                    const fullStats = playlistStats(body2);
+                    const srcStats = playlistStats(content);
+                    // 反推结果明显更长 → 完整片；允许覆盖同分「伪完整」预览
+                    const clearlyFull = fullStats.duration > srcStats.duration + 15
+                        || fullStats.tsCount > srcStats.tsCount + 10
+                        || (!isLikelyPreviewPlaylist(body2) && shortPreview);
+                    updateState(videoSrc, {
+                        source: m.source === 'address' ? 'address' : 'topic',
+                        preview: isPreviewUrl(videoSrc) || (!clearlyFull && isLikelyPreviewPlaylist(body2)),
+                        reversed: true
+                    });
+                    if (clearlyFull || !isPreviewUrl(videoSrc)) return videoSrc;
+                } else {
+                    // 未确认也先记（CORS 等），带 reversed 便于覆盖
+                    updateState(videoSrc, {
+                        source: m.source === 'address' ? 'address' : 'topic',
+                        preview: isPreviewUrl(videoSrc),
+                        reversed: true
+                    });
+                }
+            } else {
+                const best = pickBestM3u8(extractAllM3u8FromText(content));
+                if (best) {
+                    updateState(best, {
+                        source: m.source || 'topic',
+                        preview: isPreviewUrl(best) || isPreviewText(content)
+                    });
+                }
+            }
+
+            if (capturedScore < 90 && (isPreviewUrl(src) || shortPreview)) {
+                await tryGuessFullFromPreview(src, m);
+            }
+        } catch (e) {}
+        return capturedScore >= 90 ? capturedM3u8Url : '';
+    }
+
+    const bareDecode = (text) => {
+        try { return JSON.parse(atob(atob(atob(text)))); } catch (e) { return null; }
+    };
+
+    const decodeEncryptString = (text) => {
+        let data = text;
+        try {
+            if (typeof text === 'string') {
+                let tmpDataObj = null;
+                try { tmpDataObj = JSON.parse(text); } catch (e) {}
+
+                if (tmpDataObj) {
+                    if (tmpDataObj.data && typeof tmpDataObj.data === 'object') {
+                        data = tmpDataObj.data;
+                    } else if (tmpDataObj.data && typeof tmpDataObj.data === 'string') {
+                        data = bareDecode(tmpDataObj.data);
+                    }
+                }
+            }
+        } catch (error) {}
+        return data;
+    };
+
+    function extractAllM3u8FromText(text) {
+        if (!text || typeof text !== 'string') return [];
+        const cleaned = text.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+        const re = /https?:\/\/[^\s"'\\<>]+\.m3u8[^\s"'\\<>]*/gi;
+        const out = [];
+        let m;
+        while ((m = re.exec(cleaned)) !== null) {
+            const url = m[0].replace(/[),.;]+$/, '');
+            if (url && !out.includes(url)) out.push(url);
+        }
+        // 相对/协议相对路径
+        const re2 = /(?:^|["'\s])(\/\/[^\s"'\\<>]+\.m3u8[^\s"'\\<>]*|\/[^\s"'\\<>]+\.m3u8[^\s"'\\<>]*)/gi;
+        while ((m = re2.exec(cleaned)) !== null) {
+            const url = normalizeUrl((m[1] || '').replace(/[),.;]+$/, ''));
+            if (url && looksLikeM3u8Url(url) && !out.includes(url)) out.push(url);
+        }
+        return out;
+    }
+
+    // 附件/接口里常见视频/音频地址字段（remoteUrl 被藏后的兜底）
+    const VIDEO_URL_KEY_RE = /^(remoteUrl|remote_url|url|playUrl|play_url|videoUrl|video_url|src|fileUrl|file_url|path|m3u8|hls|hlsUrl|hls_url|stream|streamUrl|stream_url|mediaUrl|media_url|downloadUrl|download_url|address|link|video|file|audio|audioUrl|audio_url|mp3|sound)$/i;
+    const SKIP_URL_KEY_RE = /cover|thumb|avatar|icon|image|img|poster|pic|gif|head/i;
+
+    function collectVideoUrlsFromData(val, out, depth, parentKey) {
+        if (val == null || depth > 8) return;
+        if (!out) out = [];
+        if (typeof val === 'string') {
+            const s = val.trim();
+            if (!s) return out;
+            if (looksLikeM3u8Url(s) || looksLikeAudioUrl(s)) {
+                if (!out.includes(s)) out.push(s);
+            } else if (parentKey && VIDEO_URL_KEY_RE.test(parentKey) && !SKIP_URL_KEY_RE.test(parentKey)
+                && (/^https?:\/\//i.test(s) || s.startsWith('//') || s.startsWith('/'))
+                && !/\.(jpe?g|png|gif|webp|bmp|svg|txt)(\?|$)/i.test(s)) {
+                if (!out.includes(s)) out.push(s);
+            }
+            return out;
+        }
+        if (Array.isArray(val)) {
+            for (let i = 0; i < val.length; i++) collectVideoUrlsFromData(val[i], out, depth + 1, parentKey);
+            return out;
+        }
+        if (typeof val === 'object') {
+            const keys = Object.keys(val);
+            for (let i = 0; i < keys.length; i++) {
+                const k = keys[i];
+                if (SKIP_URL_KEY_RE.test(k) && typeof val[k] === 'string') continue;
+                collectVideoUrlsFromData(val[k], out, depth + 1, k);
+            }
+        }
+        return out;
+    }
+
+    function pickBestM3u8(urls) {
+        if (!urls || !urls.length) return '';
+        // 完整片优先：非预览 > 预览；同级取更长（常带完整路径）
+        return urls.slice().sort((a, b) => {
+            const pa = isPreviewUrl(a) ? 0 : 1;
+            const pb = isPreviewUrl(b) ? 0 : 1;
+            if (pa !== pb) return pb - pa;
+            return b.length - a.length;
+        })[0];
+    }
+
+    function schedulePreviewOnlyNotice() {
+        if (previewOnlyNoticeTimer) clearTimeout(previewOnlyNoticeTimer);
+        previewOnlyNoticeTimer = setTimeout(() => {
+            previewOnlyNoticeTimer = 0;
+            // 仅视频预览态提示；音频帖不弹
+            if (capturedKind === 'video' && capturedM3u8Url && capturedScore >= 0 && capturedScore <= 10) {
+                showToast('未购或接口未返回完整片，当前仅预览');
+            }
+        }, 10000);
+    }
+
+    async function handleAddressLike(url, bodyText) {
+        // 关键：只信任 getRealVideoSrc 从 /api/address/ 反推的结果
+        const videoSrc = getRealVideoSrc(bodyText, url);
+        if (videoSrc) {
+            updateState(videoSrc, { source: 'address', preview: isPreviewUrl(videoSrc) || isPreviewText(bodyText) });
+            if (isPreviewUrl(videoSrc)) await tryGuessFullFromPreview(videoSrc, { source: 'address' });
+            return;
+        }
+        if (looksLikePlaylist(bodyText)) {
+            // 响应体本身是列表但反推失败：若 requestUrl 像资源地址则尝试命名反推
+            if (looksLikeM3u8Url(url)) {
+                await promoteFromM3u8Url(url, { source: 'address' });
+            }
+        }
+        // 仅当反推失败时，再从内容挑非预览 m3u8
+        const best = pickBestM3u8(extractAllM3u8FromText(bodyText));
+        if (best) {
+            if (!isPreviewUrl(best)) {
+                updateState(best, { source: 'address', preview: false });
+            } else {
+                await promoteFromM3u8Url(best, { source: 'address', preview: true });
+            }
+        }
+    }
+
+    async function processRemoteCandidate(remote, meta) {
+        const url = normalizeUrl(remote);
+        if (!url) return;
+        const m = meta || {};
+        // 音频直链：无需 HLS 反推
+        if (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url)) {
+            updateState(url, Object.assign({}, m, { kind: 'audio', preview: false }));
+            return;
+        }
+        if (looksLikeM3u8Url(url)) {
+            await promoteFromM3u8Url(url, Object.assign({}, m, { kind: 'video' }));
+            return;
+        }
+        // 非 m3u8：可能是 address 索引或自定义列表
+        if (probedUrlSet.has('remote:' + url)) return;
+        probedUrlSet.add('remote:' + url);
+        try {
+            const content = await fetchTextOk(url);
+            if (!content) return;
+            const videoSrc = getRealVideoSrc(content, url);
+            if (videoSrc) {
+                updateState(videoSrc, {
+                    source: m.source || 'topic',
+                    kind: 'video',
+                    preview: isPreviewUrl(videoSrc) || isPreviewText(content)
+                });
+                if (isPreviewUrl(videoSrc)) await tryGuessFullFromPreview(videoSrc, m);
+                return;
+            }
+            const best = pickBestM3u8(extractAllM3u8FromText(content));
+            if (best) await promoteFromM3u8Url(best, m);
+        } catch (e) {}
+    }
+
+    async function handleTopicLike(url, bodyText) {
+        try {
+            const data = decodeEncryptString(bodyText);
+            const attachments = data && data.attachments;
+            const seen = new Set();
+
+            if (attachments && attachments.length) {
+                // 先处理视频，再处理音频（同帖两者并存时视频优先）
+                const order = [];
+                for (const element of attachments) {
+                    if (!element) continue;
+                    const cat = String(element.category || element.type || '').toLowerCase();
+                    const isAudio = cat === 'audio' || cat === 'mp3' || cat === 'sound'
+                        || cat === 'voice' || cat === 'music' || cat === '录音';
+                    const isVideo = !cat || cat === 'video' || cat === 'media' || cat === 'm3u8';
+                    if (!isVideo && !isAudio && cat && cat !== 'file') continue;
+                    order.push({ element, isAudio, isVideo: isVideo && !isAudio });
+                }
+                order.sort((a, b) => {
+                    // video first
+                    const pa = a.isVideo ? 0 : (a.isAudio ? 1 : 2);
+                    const pb = b.isVideo ? 0 : (b.isAudio ? 1 : 2);
+                    return pa - pb;
+                });
+
+                for (let oi = 0; oi < order.length; oi++) {
+                    const { element, isAudio } = order[oi];
+                    const fromEl = collectVideoUrlsFromData(element, [], 0, '');
+                    // 兼容旧字段
+                    if (element.remoteUrl) fromEl.unshift(element.remoteUrl);
+                    for (let i = 0; i < fromEl.length; i++) {
+                        const remote = fromEl[i];
+                        const key = normalizeUrl(remote);
+                        if (!key || seen.has(key)) continue;
+                        seen.add(key);
+                        const nameHint = String(element.fileName || element.name || element.title || '');
+                        const asAudio = isAudio || looksLikeAudioUrl(remote);
+                        await processRemoteCandidate(remote, {
+                            source: 'topic',
+                            kind: asAudio ? 'audio' : 'video',
+                            preview: !asAudio && (isPreviewUrl(remote) || /preview|试看|预览/i.test(nameHint))
+                        });
+                        // 完整视频已锁死可提前结束；仅有音频时也允许继续扫
+                        if (capturedKind === 'video' && capturedScore >= 90) return;
+                    }
+                }
+            }
+
+            // 无 remoteUrl / 附件空：深扫整个 topic 解密对象
+            if (capturedScore < 90 && data) {
+                const deepUrls = collectVideoUrlsFromData(data, [], 0, '');
+                for (let i = 0; i < deepUrls.length; i++) {
+                    const u = deepUrls[i];
+                    const key = normalizeUrl(u);
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    const asAudio = looksLikeAudioUrl(u) && !looksLikeM3u8Url(u);
+                    await processRemoteCandidate(u, {
+                        source: looksLikeM3u8Url(u) || asAudio ? 'topic' : 'text',
+                        kind: asAudio ? 'audio' : 'video',
+                        preview: !asAudio && isPreviewUrl(u)
+                    });
+                    if (capturedKind === 'video' && capturedScore >= 90) return;
+                }
+            }
+
+            // 最后扫正文 JSON 字符串里的 m3u8 / 音频
+            if (capturedScore < 90) {
+                const blob = typeof data === 'string' ? data : JSON.stringify(data || {});
+                const list = extractAllM3u8FromText(blob);
+                for (let i = 0; i < list.length; i++) {
+                    await promoteFromM3u8Url(list[i], { source: 'text', preview: isPreviewUrl(list[i]), kind: 'video' });
+                    if (capturedKind === 'video' && capturedScore >= 90) return;
+                }
+                // 正文/JSON 里的 mp3 直链
+                const audioRe = /https?:\/\/[^\s"'\\<>]+\.(?:mp3|m4a|aac|wav|ogg)[^\s"'\\<>]*/gi;
+                let am;
+                while ((am = audioRe.exec(blob)) !== null) {
+                    const aurl = normalizeUrl(am[0].replace(/[),.;]+$/, ''));
+                    if (!aurl || seen.has(aurl)) continue;
+                    seen.add(aurl);
+                    updateState(aurl, { source: 'text', kind: 'audio' });
+                    if (capturedScore >= 80) return;
+                }
+            }
+        } catch (e) {}
+    }
+
+    /** play/stream/media 等扩展接口：抽 m3u8 并反推 */
+    async function handleGenericMediaLike(url, bodyText) {
+        if (!bodyText) return;
+        try {
+            if (looksLikePlaylist(bodyText)) {
+                const videoSrc = getRealVideoSrc(bodyText, url);
+                if (videoSrc) {
+                    updateState(videoSrc, {
+                        source: 'media',
+                        preview: isPreviewUrl(videoSrc) || isPreviewText(bodyText)
+                    });
+                    if (isPreviewUrl(videoSrc)) await tryGuessFullFromPreview(videoSrc, { source: 'media' });
+                    return;
+                }
+                if (looksLikeM3u8Url(url)) {
+                    await promoteFromM3u8Url(url, { source: 'media' });
+                    return;
+                }
+            }
+
+            let data = bodyText;
+            try {
+                const decoded = decodeEncryptString(bodyText);
+                if (decoded != null) data = decoded;
+            } catch (e) {}
+
+            const urls = [];
+            if (typeof data === 'string') {
+                extractAllM3u8FromText(data).forEach(u => urls.push(u));
+            } else {
+                collectVideoUrlsFromData(data, urls, 0, '');
+                extractAllM3u8FromText(JSON.stringify(data || {})).forEach(u => {
+                    if (!urls.includes(u)) urls.push(u);
+                });
+            }
+
+            for (let i = 0; i < urls.length; i++) {
+                const u = urls[i];
+                if (looksLikeM3u8Url(u)) {
+                    await promoteFromM3u8Url(u, { source: 'media', preview: isPreviewUrl(u) });
+                } else {
+                    await processRemoteCandidate(u, { source: 'media' });
+                }
+                if (capturedScore >= 90) return;
+            }
+        } catch (e) {}
+    }
+
+    function shouldInspectUrl(url) {
+        if (!url) return false;
+        const u = String(url);
+        // 静态分片本身不读 body（太大）；只盯 API / 索引类
+        if (/\.ts(\?|$)/i.test(u)) return false;
+        if (u.includes('/api/address/')) return true;
+        if (/\/api\/topic\/\d+/.test(u)) return true;
+        // 扩展：播放/流媒体相关接口（站点改版后新字段常走这里）
+        if (/\/api\/[^?\s]*(play|stream|media|video|m3u8|hls|address)/i.test(u)) return true;
+        return false;
+    }
+
+    async function routeResponse(url, bodyText) {
+        try {
+            const u = String(url || '');
+            if (u.includes('/api/address/')) {
+                await handleAddressLike(u, bodyText);
+            } else if (/\/api\/topic\/\d+/.test(u)) {
+                await handleTopicLike(u, bodyText);
+            } else {
+                await handleGenericMediaLike(u, bodyText);
+            }
+            schedulePreviewOnlyNotice();
+        } catch (e) {}
+    }
+
+    // --- XHR hook（必须 try，失败不能拖死整脚本 UI）---
+    try {
+        const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+        const originalXHR = win.XMLHttpRequest;
+        if (typeof originalXHR === 'function') {
+            win.XMLHttpRequest = function() {
+                const xhr = new originalXHR();
+                const originalOpen = xhr.open;
+                const originalSend = xhr.send;
+                let requestUrl = '';
+
+                xhr.open = function(method, url) {
+                    requestUrl = url || '';
+                    return originalOpen.apply(this, arguments);
+                };
+
+                xhr.send = function() {
+                    if (shouldInspectUrl(requestUrl)) {
+                        xhr.addEventListener('load', function() {
+                            let text = '';
+                            try {
+                                if (typeof xhr.responseText === 'string') text = xhr.responseText;
+                                else if (typeof xhr.response === 'string') text = xhr.response;
+                            } catch (e) {}
+                            setTimeout(() => { routeResponse(requestUrl, text); }, 0);
+                        });
+                    }
+                    return originalSend.apply(this, arguments);
+                };
+
+                return xhr;
+            };
+        }
+    } catch (e) {}
+
+    // --- fetch hook：关键接口 + 扩展 media API ---
+    try {
+        const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+        const originalFetch = win.fetch;
+        if (typeof originalFetch === 'function') {
+            win.fetch = function(input, init) {
+                const url = typeof input === 'string'
+                    ? input
+                    : (input && input.url) ? input.url : '';
+                const p = originalFetch.apply(this, arguments);
+                if (shouldInspectUrl(url)) {
+                    p.then(res => {
+                        try {
+                            const clone = res.clone();
+                            clone.text().then(text => {
+                                routeResponse(url, text);
+                            }).catch(() => {});
+                        } catch (e) {}
+                    }).catch(() => {});
+                }
+                return p;
+            };
+        }
+    } catch (e) {}
+
+    // --- 播放器 hook：Hls.loadSource / video.src（DOM 已挂载的预览也能反推）---
+    function onPlayerPossibleSrc(src, sourceTag) {
+        if (!src || typeof src !== 'string') return;
+        if (!looksLikeM3u8Url(src)) return;
+        const url = normalizeUrl(src);
+        if (!url) return;
+        updateState(url, { source: sourceTag || 'player', preview: isPreviewUrl(url) });
+        if (capturedScore < 90) {
+            promoteFromM3u8Url(url, { source: sourceTag || 'player', preview: isPreviewUrl(url) });
+        }
+        schedulePreviewOnlyNotice();
+    }
+
+    try {
+        const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+        const MediaProto = (win.HTMLMediaElement || HTMLMediaElement).prototype;
+        const desc = Object.getOwnPropertyDescriptor(MediaProto, 'src');
+        if (desc && desc.set && !MediaProto.__hjSrcHooked) {
+            Object.defineProperty(MediaProto, 'src', {
+                configurable: true,
+                enumerable: desc.enumerable,
+                get: desc.get,
+                set: function(v) {
+                    try { onPlayerPossibleSrc(v, 'player'); } catch (e) {}
+                    return desc.set.call(this, v);
+                }
+            });
+            MediaProto.__hjSrcHooked = true;
+        }
+        const origSetAttr = MediaProto.setAttribute;
+        if (typeof origSetAttr === 'function' && !MediaProto.__hjSetAttrHooked) {
+            MediaProto.setAttribute = function(name, value) {
+                try {
+                    if (name && String(name).toLowerCase() === 'src') onPlayerPossibleSrc(value, 'player');
+                } catch (e) {}
+                return origSetAttr.apply(this, arguments);
+            };
+            MediaProto.__hjSetAttrHooked = true;
+        }
+    } catch (e) {}
+
+    // Hls 可能晚于脚本加载，轮询挂钩
+    (function hookHlsLoadSource() {
+        let tries = 0;
+        const timer = setInterval(() => {
+            tries++;
+            try {
+                const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+                const Hls = win.Hls;
+                if (Hls && Hls.prototype && typeof Hls.prototype.loadSource === 'function'
+                    && !Hls.prototype.loadSource.__hjHooked) {
+                    const orig = Hls.prototype.loadSource;
+                    Hls.prototype.loadSource = function(src) {
+                        try { onPlayerPossibleSrc(src, 'player'); } catch (e) {}
+                        return orig.apply(this, arguments);
+                    };
+                    Hls.prototype.loadSource.__hjHooked = true;
+                    clearInterval(timer);
+                }
+            } catch (e) {}
+            if (tries >= 120) clearInterval(timer);
+        }, 500);
+    })();
+
+    // 性能条目兜底：非预览直接用；预览则尝试反推（未购常见只有 preview 进 Network）
+    function scanPerformanceEntries() {
+        if (capturedKind === 'video' && capturedScore >= 90) return;
+        try {
+            const entries = performance.getEntriesByType('resource');
+            const fullCands = [];
+            const previewCands = [];
+            const audioCands = [];
+            for (let i = entries.length - 1; i >= 0 && i >= entries.length - 120; i--) {
+                const name = entries[i] && entries[i].name;
+                if (looksLikeAudioUrl(name) && !looksLikeM3u8Url(name)) {
+                    audioCands.push(normalizeUrl(name));
+                    continue;
+                }
+                if (!looksLikeM3u8Url(name)) continue;
+                const n = normalizeUrl(name);
+                if (isPreviewUrl(n)) previewCands.push(n);
+                else fullCands.push(n);
+            }
+            const best = pickBestM3u8(fullCands);
+            if (best) updateState(best, { source: 'perf', preview: false, kind: 'video' });
+            // 无完整源时对预览做 promote（命名反推 + 列表反推）
+            if (!(capturedKind === 'video' && capturedScore >= 90) && previewCands.length) {
+                const prev = previewCands[0];
+                promoteFromM3u8Url(prev, { source: 'perf', preview: true, kind: 'video' });
+            }
+            // 无视频时补音频
+            if (!(capturedScore >= 50) && audioCands.length) {
+                updateState(audioCands[0], { source: 'perf', kind: 'audio' });
+            }
+        } catch (e) {}
+    }
+
+    // DOM 兜底：站点把 preview m3u8 写在 .video-div[data-url]，不依赖接口时机
+    async function scanDomVideoSources() {
+        if (capturedKind === 'video' && capturedScore >= 90) return;
+        try {
+            const nodes = document.querySelectorAll(
+                '.video-div[data-url], .video-div-btn[data-url], [id^="video_"][data-url], video source[src*=".m3u8"], video[src*=".m3u8"], .dplayer[data-url], [data-url*=".m3u8"], audio[src], audio source[src], [data-url*=".mp3"], [href*=".mp3"]'
+            );
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
+                let url = el.getAttribute('data-url') || el.getAttribute('src') || el.getAttribute('href') || '';
+                if (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url)) {
+                    updateState(normalizeUrl(url), { source: 'dom', kind: 'audio' });
+                    if (capturedScore >= 80) return;
+                    continue;
+                }
+                if (!looksLikeM3u8Url(url)) continue;
+                url = normalizeUrl(url);
+                // data-preview="30" 等：老帖 URL 无 preview 字样也要当试看
+                const dp = el.getAttribute('data-preview');
+                const forcePreview = isPreviewUrl(url) || (dp != null && dp !== '' && Number(dp) > 0);
+                await promoteFromM3u8Url(url, { source: 'dom', preview: forcePreview, kind: 'video' });
+                if (capturedKind === 'video' && capturedScore >= 90) return;
+            }
+        } catch (e) {}
+    }
+
+    setInterval(scanPerformanceEntries, 3000);
+    setInterval(scanDomVideoSources, 2500);
+
+    // ==========================================
+    // 模块四：原位 HLS 注入播放（来自代码2）
+    // ==========================================
+
+    function destroyInlinePlayer() {
+        try {
+            if (activeHls) {
+                try { activeHls.destroy(); } catch (e) {}
+                activeHls = null;
+            }
+            const wrap = document.getElementById(CFG.playerWrapId);
+            if (wrap) {
+                wrap.querySelectorAll('video, audio').forEach((v) => {
+                    try {
+                        v.pause();
+                        v.removeAttribute('src');
+                        v.load();
+                    } catch (e) {}
+                });
+                wrap.remove();
+            }
+        } catch (e) {}
+    }
+
+    function loadHlsJs() {
+        return new Promise((resolve, reject) => {
+            const GlobalHls = unsafeWindow.Hls || window.Hls;
+            if (GlobalHls && GlobalHls.isSupported) {
+                resolve(GlobalHls);
+                return;
+            }
+            const existing = document.querySelector('script[data-hj-hls="1"]');
+            if (existing) {
+                const wait = () => {
+                    const H = unsafeWindow.Hls || window.Hls;
+                    if (H && H.isSupported) resolve(H);
+                    else setTimeout(wait, 80);
+                };
+                wait();
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = CFG.hlsCdn;
+            script.setAttribute('data-hj-hls', '1');
+            script.onload = () => {
+                const H = unsafeWindow.Hls || window.Hls;
+                if (H && H.isSupported) resolve(H);
+                else reject(new Error('Hls not available after load'));
+            };
+            script.onerror = () => reject(new Error('Hls CDN load failed'));
+            (document.head || document.documentElement).appendChild(script);
+        });
+    }
+
+    /**
+     * 站点 AES 密钥二次变换：m3u8 同路径 .jpg（base64）+ WASM jquery_key
+     * 实测：裸 enc_*.key 无法解出 TS；变换后预览/完整片均可播
+     */
+    let siteKeyModulePromise = null;
+
+    function loadSiteKeyModule() {
+        if (siteKeyModulePromise) return siteKeyModulePromise;
+        siteKeyModulePromise = (async () => {
+            const win = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+            if (typeof win.createModule === 'function') {
+                return win.createModule();
+            }
+            // 页面已有 /js/jquery.js（含 createModule）；未加载时再补
+            await new Promise((resolve, reject) => {
+                if (typeof win.createModule === 'function') {
+                    resolve();
+                    return;
+                }
+                const existing = document.querySelector('script[data-hj-keymod="1"]');
+                if (existing) {
+                    let n = 0;
+                    const t = setInterval(() => {
+                        if (typeof win.createModule === 'function') {
+                            clearInterval(t);
+                            resolve();
+                        } else if (++n > 80) {
+                            clearInterval(t);
+                            reject(new Error('createModule timeout'));
+                        }
+                    }, 100);
+                    return;
+                }
+                const s = document.createElement('script');
+                s.src = location.origin + '/js/jquery.js';
+                s.setAttribute('data-hj-keymod', '1');
+                s.onload = () => resolve();
+                s.onerror = () => reject(new Error('jquery key module load failed'));
+                (document.head || document.documentElement).appendChild(s);
+            });
+            if (typeof win.createModule !== 'function') {
+                throw new Error('createModule missing');
+            }
+            return win.createModule();
+        })().catch((e) => {
+            siteKeyModulePromise = null;
+            throw e;
+        });
+        return siteKeyModulePromise;
+    }
+
+    async function fetchJpgKeyMaterial(m3u8Url) {
+        const jpgUrl = String(m3u8Url || '').replace(/\.m3u8/i, '.jpg');
+        if (!jpgUrl || jpgUrl === m3u8Url) return null;
+        const res = await fetch(jpgUrl, { credentials: 'omit' });
+        if (!res.ok) return null;
+        const txt = (await res.text()).trim();
+        if (!txt) return null;
+        const bin = atob(txt);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+    }
+
+    function transformHlsKey(mod, hlsKey, jpgKey) {
+        let o = hlsKey instanceof Uint8Array ? hlsKey : new Uint8Array(hlsKey);
+        const r = mod._malloc(o.length);
+        const s = mod._malloc(jpgKey.length);
+        try {
+            mod.HEAPU8.set(o, r);
+            mod.HEAPU8.set(jpgKey, s);
+            mod.ccall('jquery_key', null, ['number', 'number', 'number', 'number'], [r, o.length, s, jpgKey.length]);
+            return new Uint8Array(mod.HEAPU8.buffer, r, o.length).slice();
+        } finally {
+            try { mod._free(r); } catch (e) {}
+            try { mod._free(s); } catch (e) {}
+        }
+    }
+
+    function getKversion() {
+        try {
+            const cfg = JSON.parse(sessionStorage.getItem('config') || '{}');
+            return cfg && cfg.kversion != null ? String(cfg.kversion) : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // 可安全 innerHTML 清空后注入的播放器外壳
+    const PLAYER_HOST_SELS = ['.video-div', '.dplayer', '[id^="video_"]', '.sell-btn'];
+    // 仅作挂载锚点（prepend，不清空正文）
+    const CONTENT_ANCHOR_SELS = ['.post-details', '.post-content', '.article-content', '.detail-content', '.topic-content'];
+
+    function findPlayerHost() {
+        for (const sel of PLAYER_HOST_SELS) {
+            const el = document.querySelector(sel);
+            if (el && isActuallyVisible(el)) return { el, mode: 'replace' };
+        }
+        for (const sel of PLAYER_HOST_SELS) {
+            const el = document.querySelector(sel);
+            if (el) return { el, mode: 'replace' };
+        }
+        for (const sel of CONTENT_ANCHOR_SELS) {
+            const el = document.querySelector(sel);
+            if (el) return { el, mode: 'prepend' };
+        }
+        return null;
+    }
+
+    function setBtnLabel(btn, emoji) {
+        const b = btn || document.getElementById(CFG.btnId);
+        if (!b) return;
+        // 只改文本节点，保留 .hj-badge 角标
+        let textNode = null;
+        for (let i = 0; i < b.childNodes.length; i++) {
+            if (b.childNodes[i].nodeType === 3) {
+                textNode = b.childNodes[i];
+                break;
+            }
+        }
+        if (textNode) textNode.nodeValue = emoji;
+        else b.insertBefore(document.createTextNode(emoji), b.firstChild);
+    }
+
+    function markPlayed(btn) {
+        const b = btn || document.getElementById(CFG.btnId);
+        if (!b) return;
+        b.classList.add('played');
+        setBtnLabel(b, '✔️');
+    }
+
+    function markReady(btn) {
+        const b = btn || document.getElementById(CFG.btnId);
+        if (!b) return;
+        b.classList.remove('played');
+        if (capturedKind === 'audio') {
+            b.classList.add('audio-mode');
+            setBtnLabel(b, '🎵');
+        } else {
+            b.classList.remove('audio-mode');
+            setBtnLabel(b, '▶️');
+        }
+    }
+
+    /** 统一入口：按媒体类型分流视频 HLS / 音频直链 */
+    async function replaceAndPlayMedia(url, btn, kindHint) {
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到链接');
+            return;
+        }
+        const kind = kindHint || mediaKindOf(url);
+        if (kind === 'audio' || (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url))) {
+            return replaceAndPlayAudio(url, btn);
+        }
+        return replaceAndPlayVideo(url, btn);
+    }
+
+    /**
+     * 原位音频：注入原生 <audio controls>
+     * 付费录音帖常见：接口已下发 mp3 直链但页面隐藏播放器
+     */
+    async function replaceAndPlayAudio(url, btn) {
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到音频链接');
+            return;
+        }
+
+        showToast('正在注入音频播放器…');
+        destroyInlinePlayer();
+
+        // 停掉页内可能存在的媒体
+        try {
+            document.querySelectorAll('audio, video').forEach((v) => {
+                if (v.closest && v.closest('#' + CFG.playerWrapId)) return;
+                try { v.pause(); } catch (e) {}
+            });
+        } catch (e) {}
+
+        // 隐藏付费遮罩文案
+        document.querySelectorAll('.sell_line1, .sell_line2, .preview-title, .preview-tip, .try-see, .sell-btn').forEach(el => {
+            try { el.style.setProperty('display', 'none', 'important'); } catch (e) {}
+        });
+
+        const found = findPlayerHost();
+        let host = found && found.el;
+        let mountMode = (found && found.mode) || 'prepend';
+        if (!host) {
+            mountMode = 'prepend';
+            host = document.body;
+        }
+
+        const wrap = document.createElement('div');
+        wrap.id = CFG.playerWrapId;
+        wrap.className = 'hj-audio-wrap';
+        const playerId = 'hj-core-audio-' + Date.now();
+        wrap.innerHTML = `
+            <div class="hj-player-bar">音频播放 · 付费区已绕过 · 可直接收听/下载</div>
+            <audio id="${playerId}" controls preload="metadata" playsinline></audio>
+        `;
+
+        try {
+            if (mountMode === 'replace') {
+                host.innerHTML = '';
+                host.appendChild(wrap);
+            } else {
+                host.insertBefore(wrap, host.firstChild);
+            }
+        } catch (e) {
+            try {
+                document.body.insertBefore(wrap, document.body.firstChild);
+            } catch (e2) {
+                showToast('注入音频播放器失败');
+                return;
+            }
+        }
+
+        try {
+            wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {}
+
+        const audio = wrap.querySelector('#' + playerId);
+        if (!audio) {
+            showToast('音频节点创建失败');
+            return;
+        }
+
+        audio.src = url;
+        audio.addEventListener('error', () => {
+            showToast('音频加载失败，可试「打开原链」或下载');
+        }, { once: true });
+        audio.play().catch(() => {
+            showToast('已就绪，请点播放键收听');
+        });
+        showToast('音频播放中');
+        markPlayed(btn);
+    }
+
+    /**
+     * 原位替换：销毁站内试看/广告播放器，注入干净 video + HLS 解码
+     * （整合自 代码2.js replaceAndPlayVideo）
+     */
+    async function replaceAndPlayVideo(url, btn) {
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到链接');
+            return;
+        }
+        if (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url)) {
+            return replaceAndPlayAudio(url, btn);
+        }
+
+        showToast('正在原位注入播放器…');
+        destroyInlinePlayer();
+
+        // 1) 静音并清空页面现有 video / dplayer 外壳
+        document.querySelectorAll('video').forEach(v => {
+            if (v.closest && v.closest('#' + CFG.playerWrapId)) return;
+            try {
+                v.pause();
+                v.removeAttribute('src');
+                v.load();
+            } catch (e) {}
+            const shell = v.closest('.video-div') || v.closest('.dplayer') || v.parentElement;
+            // 不整页清空业务节点，只清播放外壳内部
+            if (shell && !isProtected(shell) && shell !== document.body) {
+                try {
+                    // 若外壳本身就是我们要挂载的 host，稍后会重建
+                    if (!shell.querySelector('#' + CFG.playerWrapId)) {
+                        // 保留外壳，只卸掉内部媒体
+                        Array.from(shell.children).forEach(child => {
+                            if (child.tagName === 'VIDEO' ||
+                                (child.classList && (child.classList.contains('dplayer-video-wrap') || child.classList.contains('dplayer-video')))) {
+                                try { child.remove(); } catch (e) {}
+                            }
+                        });
+                    }
+                } catch (e) {}
+            }
+        });
+
+        // 隐藏付费/试看提示文案
+        document.querySelectorAll('.sell_line1, .sell_line2, .preview-title, .preview-tip, .try-see').forEach(el => {
+            try { el.style.setProperty('display', 'none', 'important'); } catch (e) {}
+        });
+
+        // 2) 寻址注入容器：播放器外壳可清空；正文区只 prepend
+        const found = findPlayerHost();
+        let host = found && found.el;
+        let mountMode = (found && found.mode) || 'prepend';
+
+        if (!host) {
+            mountMode = 'prepend';
+            host = document.body;
+            showToast('启用兜底注入，强制渲染播放器');
+        }
+
+        // 3) 构筑播放器外壳
+        const wrap = document.createElement('div');
+        wrap.id = CFG.playerWrapId;
+        const newPlayerId = 'hj-core-player-' + Date.now();
+        wrap.innerHTML = `
+            <div class="hj-player-bar">广告/试看限制已解除 · 完整 M3U8 解码播放中</div>
+            <video id="${newPlayerId}" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5"></video>
+        `;
+
+        try {
+            if (mountMode === 'replace') {
+                // 仅清空 dplayer / video-div 等播放外壳
+                host.innerHTML = '';
+                host.appendChild(wrap);
+            } else {
+                host.insertBefore(wrap, host.firstChild);
+            }
+        } catch (e) {
+            // 兜底：插到 body 顶部
+            try {
+                document.body.insertBefore(wrap, document.body.firstChild);
+            } catch (e2) {
+                showToast('注入播放器失败');
+                return;
+            }
+        }
+
+        // 滚到播放器
+        try {
+            wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {}
+
+        const video = wrap.querySelector('#' + newPlayerId);
+        if (!video) {
+            showToast('播放器节点创建失败');
+            return;
+        }
+
+        // 4) 解码路由：优先 hls.js + 站点密钥变换（实测必须）；iOS 硬解作弱兜底
+        try {
+            const HlsLib = await loadHlsJs();
+            if (HlsLib && HlsLib.isSupported()) {
+                // 站点密钥材料：同路径 .jpg(base64) + WASM jquery_key 变换 enc key
+                let jpgKey = null;
+                let keyMod = null;
+                try {
+                    jpgKey = await fetchJpgKeyMaterial(url);
+                    if (jpgKey && jpgKey.length) {
+                        keyMod = await loadSiteKeyModule();
+                    }
+                } catch (e) {
+                    // 无自定义密钥时仍尝试裸播（旧片可能未加密）
+                    jpgKey = null;
+                    keyMod = null;
+                }
+
+                let transformedKey = null;
+                const hls = new HlsLib({
+                    // worker 内改 key 不可靠，关闭
+                    enableWorker: false,
+                    lowLatencyMode: false,
+                    autoStartLoad: false,
+                    xhrSetup(xhr, reqUrl) {
+                        try {
+                            const kv = getKversion();
+                            if (kv && String(reqUrl).includes('.key')) {
+                                // 与站内一致：.key → .key{kversion}
+                                xhr.open('GET', String(reqUrl).replace('.key', '.key' + kv), true);
+                            }
+                        } catch (e) {}
+                    }
+                });
+                activeHls = hls;
+
+                if (keyMod && jpgKey) {
+                    hls.on(HlsLib.Events.KEY_LOADED, (_, data) => {
+                        try {
+                            if (!(data && data.frag && data.frag.decryptdata && data.frag.decryptdata.key)) return;
+                            if (!transformedKey) {
+                                transformedKey = transformHlsKey(keyMod, data.frag.decryptdata.key, jpgKey);
+                            }
+                            data.frag.decryptdata.key = transformedKey;
+                        } catch (e) {}
+                    });
+                }
+
+                hls.attachMedia(video);
+                hls.once(HlsLib.Events.MEDIA_ATTACHED, () => {
+                    hls.loadSource(url);
+                    hls.startLoad();
+                });
+                hls.on(HlsLib.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(() => {});
+                });
+                hls.on(HlsLib.Events.ERROR, (_, data) => {
+                    if (data && data.fatal) {
+                        try { hls.destroy(); } catch (e) {}
+                        activeHls = null;
+                        showToast(keyMod ? 'HLS 解码失败（密钥/分片）' : 'HLS 解码失败，可改用面板「跳转」');
+                    }
+                });
+                showToast(keyMod ? '站点密钥解码播放中' : 'HLS 引擎解码播放中');
+                markPlayed(btn);
+                return;
+            }
+
+            if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Safari 硬解无法注入 WASM 密钥变换，加密片可能失败
+                video.src = url;
+                video.play().catch(() => {});
+                showToast('iOS 原生硬解（加密片可能失败）');
+                markPlayed(btn);
+                return;
+            }
+
+            showToast('设备不支持 HLS 软解，请用跳转播放');
+        } catch (e) {
+            showToast('加载 HLS 引擎失败，请用跳转播放');
+        }
+    }
+
+    // ==========================================
+    // 模块五：M3U8 并发下载到本地（含 AES 解密）
+    // ==========================================
+
+    function sanitizeFilename(name) {
+        return String(name || 'video')
+            .replace(/[\\/:*?"<>|]+/g, '_')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 80) || 'video';
+    }
+
+    function resolveAgainst(base, rel) {
+        try {
+            return new URL(rel, base).href;
+        } catch (e) {
+            return normalizeUrl(rel);
+        }
+    }
+
+    /** 解析 #EXT-X-KEY / STREAM-INF 属性表 */
+    function parseAttrList(s) {
+        const out = {};
+        const re = /([A-Z0-9-]+)=("([^"]*)"|[^,]*)/gi;
+        let m;
+        while ((m = re.exec(String(s || ''))) !== null) {
+            const k = String(m[1] || '').toUpperCase();
+            let v = m[3] != null ? m[3] : m[2];
+            if (typeof v === 'string') v = v.trim();
+            out[k] = v;
+        }
+        return out;
+    }
+
+    function parseHexIv(ivStr) {
+        if (!ivStr) return null;
+        let h = String(ivStr).replace(/^0x/i, '').replace(/\s+/g, '');
+        if (!h) return null;
+        if (h.length % 2) h = '0' + h;
+        const arr = new Uint8Array(h.length / 2);
+        for (let i = 0; i < arr.length; i++) {
+            arr[i] = parseInt(h.substr(i * 2, 2), 16) || 0;
+        }
+        if (arr.length === 16) return arr;
+        const p = new Uint8Array(16);
+        if (arr.length < 16) p.set(arr, 16 - arr.length);
+        else p.set(arr.subarray(arr.length - 16));
+        return p;
+    }
+
+    /** HLS 默认 IV：media sequence 作为 128-bit 大端整数 */
+    function mediaSeqToIv(seq) {
+        const iv = new Uint8Array(16);
+        let n = (seq >>> 0);
+        iv[12] = (n >>> 24) & 0xff;
+        iv[13] = (n >>> 16) & 0xff;
+        iv[14] = (n >>> 8) & 0xff;
+        iv[15] = n & 0xff;
+        return iv;
+    }
+
+    function parseM3u8Playlist(text, baseUrl) {
+        const lines = String(text || '').split(/\r?\n/);
+        const segments = [];
+        const variants = [];
+        let mediaSequence = 0;
+        let isMaster = false;
+        let mapUri = '';
+        let pendingDuration = 0;
+        let curKey = { method: 'NONE', uri: '', iv: null };
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = (lines[i] || '').trim();
+            if (!line) continue;
+
+            if (line.startsWith('#EXT-X-STREAM-INF:')) {
+                isMaster = true;
+                const attrs = parseAttrList(line.slice('#EXT-X-STREAM-INF:'.length));
+                const bw = parseInt(attrs.BANDWIDTH || attrs['AVERAGE-BANDWIDTH'] || '0', 10) || 0;
+                let j = i + 1;
+                while (j < lines.length) {
+                    const n = (lines[j] || '').trim();
+                    if (!n || n.startsWith('#')) {
+                        j++;
+                        continue;
+                    }
+                    variants.push({ bandwidth: bw, url: resolveAgainst(baseUrl, n) });
+                    i = j;
+                    break;
+                }
+                continue;
+            }
+            if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+                mediaSequence = parseInt(line.split(':')[1], 10) || 0;
+                continue;
+            }
+            if (line.startsWith('#EXT-X-KEY:')) {
+                const attrs = parseAttrList(line.slice('#EXT-X-KEY:'.length));
+                const method = String(attrs.METHOD || 'NONE').toUpperCase();
+                curKey = {
+                    method,
+                    uri: attrs.URI ? resolveAgainst(baseUrl, attrs.URI) : '',
+                    iv: attrs.IV ? parseHexIv(attrs.IV) : null
+                };
+                continue;
+            }
+            if (line.startsWith('#EXT-X-MAP:')) {
+                const attrs = parseAttrList(line.slice('#EXT-X-MAP:'.length));
+                if (attrs.URI) mapUri = resolveAgainst(baseUrl, attrs.URI);
+                continue;
+            }
+            if (line.startsWith('#EXTINF:')) {
+                const n = parseFloat(line.slice(8));
+                pendingDuration = isNaN(n) ? 0 : n;
+                continue;
+            }
+            if (line.startsWith('#')) continue;
+
+            const seq = mediaSequence + segments.length;
+            segments.push({
+                url: resolveAgainst(baseUrl, line),
+                duration: pendingDuration,
+                seq,
+                key: {
+                    method: curKey.method,
+                    uri: curKey.uri,
+                    iv: curKey.iv
+                }
+            });
+            pendingDuration = 0;
+        }
+        return { isMaster, variants, segments, mapUri, mediaSequence };
+    }
+
+    async function fetchArrayBufferRetry(url, signal, retries) {
+        let lastErr = null;
+        const max = Math.max(0, retries | 0);
+        for (let i = 0; i <= max; i++) {
+            if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            try {
+                const res = await fetch(url, { credentials: 'omit', signal });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return new Uint8Array(await res.arrayBuffer());
+            } catch (e) {
+                lastErr = e;
+                if (signal && signal.aborted) throw e;
+                if (i < max) await new Promise(r => setTimeout(r, 280 * (i + 1)));
+            }
+        }
+        throw lastErr || new Error('分片拉取失败');
+    }
+
+    async function fetchTextRetry(url, signal, retries) {
+        let lastErr = null;
+        const max = Math.max(0, retries | 0);
+        for (let i = 0; i <= max; i++) {
+            if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+            try {
+                const res = await fetch(url, { credentials: 'omit', signal });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return await res.text();
+            } catch (e) {
+                lastErr = e;
+                if (signal && signal.aborted) throw e;
+                if (i < max) await new Promise(r => setTimeout(r, 280 * (i + 1)));
+            }
+        }
+        throw lastErr || new Error('playlist 拉取失败');
+    }
+
+    async function prepareAesKey(rawKeyBytes) {
+        return crypto.subtle.importKey(
+            'raw',
+            rawKeyBytes,
+            { name: 'AES-CBC' },
+            false,
+            ['decrypt']
+        );
+    }
+
+    async function decryptAes128Cbc(data, cryptoKey, iv) {
+        const plain = await crypto.subtle.decrypt(
+            { name: 'AES-CBC', iv },
+            cryptoKey,
+            data
+        );
+        return new Uint8Array(plain);
+    }
+
+    /** 拉 enc.key（含 kversion）并用站点 WASM + .jpg 变换 */
+    async function loadAndTransformKey(keyUri, m3u8Url, signal) {
+        let uri = String(keyUri || '');
+        const kv = getKversion();
+        if (kv && uri.includes('.key') && !uri.includes('.key' + kv)) {
+            uri = uri.replace('.key', '.key' + kv);
+        }
+        let raw = await fetchArrayBufferRetry(uri, signal, CFG.downloadRetries);
+        try {
+            const jpgKey = await fetchJpgKeyMaterial(m3u8Url);
+            if (jpgKey && jpgKey.length) {
+                const mod = await loadSiteKeyModule();
+                raw = transformHlsKey(mod, raw, jpgKey);
+            }
+        } catch (e) {
+            // 无站点密钥变换时保留原 key（旧片 / 未加密变换）
+        }
+        return raw;
+    }
+
+    /** 固定并发池 */
+    async function runPool(items, limit, worker, signal) {
+        let cursor = 0;
+        const results = new Array(items.length);
+        async function runner() {
+            while (true) {
+                if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                const i = cursor++;
+                if (i >= items.length) return;
+                results[i] = await worker(items[i], i);
+            }
+        }
+        const n = Math.max(1, Math.min(limit | 0, items.length || 1));
+        await Promise.all(Array.from({ length: n }, () => runner()));
+        return results;
+    }
+
+    function formatBytes(n) {
+        const v = Number(n) || 0;
+        if (v < 1024) return v + ' B';
+        if (v < 1048576) return (v / 1024).toFixed(1) + ' KB';
+        if (v < 1073741824) return (v / 1048576).toFixed(1) + ' MB';
+        return (v / 1073741824).toFixed(2) + ' GB';
+    }
+
+    function dlPhaseText() {
+        switch (DL.phase) {
+            case 'parsing': return '解析播放列表…';
+            case 'downloading': return capturedKind === 'audio' ? '下载音频…' : '并发下载分片…';
+            case 'saving': return '打包保存…';
+            case 'done': return '下载完成';
+            case 'error': return '下载失败';
+            case 'cancelled': return '已取消';
+            default: return DL.active ? '准备中…' : '';
+        }
+    }
+
+    function updateDlProgressUI(force) {
+        const now = Date.now();
+        if (!force && now - DL.lastUiAt < 120) return;
+        DL.lastUiAt = now;
+
+        const el = document.getElementById('hj-dl-progress');
+        if (!el) return;
+
+        const pct = DL.total > 0 ? Math.min(100, Math.floor((DL.done / DL.total) * 100)) : 0;
+        const phase = dlPhaseText();
+        let cls = 'hj-dl-progress';
+        if (DL.phase === 'error') cls += ' err';
+        else if (DL.phase === 'done') cls += ' ok';
+
+        el.className = cls;
+        if (!DL.active && !DL.phase) {
+            el.innerHTML = capturedKind === 'audio'
+                ? '提示：捕获到音频后点「下载到本地」，保存为 mp3/m4a 等直链文件'
+                : '提示：捕获完整片后点「下载到本地」。多路并发拉取分片，自动解密合并为 .ts';
+            return;
+        }
+
+        const line1 = DL.phase === 'error'
+            ? ('失败：' + (DL.error || '未知错误'))
+            : (phase + (DL.filename ? ' · ' + escapeHtml(DL.filename) : ''));
+        // 音频按字节进度；视频按分片
+        const isByteProg = DL.filename && /\.(mp3|m4a|aac|wav|ogg|flac|opus)$/i.test(DL.filename);
+        const line2 = DL.total > 0
+            ? (isByteProg
+                ? (pct + '% · ' + formatBytes(DL.done) + ' / ' + formatBytes(DL.total))
+                : (pct + '% · ' + DL.done + '/' + DL.total + ' 片 · ' + formatBytes(DL.bytes)))
+            : (DL.phase === 'parsing' ? '读取 m3u8…' : '');
+
+        el.innerHTML =
+            '<div>' + line1 + '</div>' +
+            (line2 ? '<div style="margin-top:2px;opacity:0.85;">' + line2 + '</div>' : '') +
+            '<div class="hj-dl-bar"><i style="width:' + pct + '%"></i></div>';
+
+        const dlBtn = document.querySelector('#' + CFG.panelId + ' [data-act="download"]');
+        const cancelBtn = document.querySelector('#' + CFG.panelId + ' [data-act="cancel-dl"]');
+        if (dlBtn) dlBtn.disabled = !!DL.active;
+        if (cancelBtn) cancelBtn.disabled = !DL.active;
+    }
+
+    function triggerBlobDownload(blob, filename) {
+        const objUrl = URL.createObjectURL(blob);
+        try {
+            const a = document.createElement('a');
+            a.href = objUrl;
+            a.download = filename || 'video.ts';
+            a.rel = 'noopener';
+            a.style.cssText = 'display:none;position:fixed;left:-9999px;';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                try { a.remove(); } catch (e) {}
+            }, 0);
+        } finally {
+            setTimeout(() => {
+                try { URL.revokeObjectURL(objUrl); } catch (e) {}
+            }, 120000);
+        }
+    }
+
+    function cancelDownload() {
+        if (!DL.active || !DL.abort) {
+            showToast('当前没有下载任务');
+            return;
+        }
+        try { DL.abort.abort(); } catch (e) {}
+        showToast('正在取消下载…');
+    }
+
+    /** 统一下载入口：音频直链 / 视频 m3u8 */
+    async function downloadMediaToLocal(url, title, kindHint) {
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到链接');
+            return;
+        }
+        const kind = kindHint || mediaKindOf(url);
+        if (kind === 'audio' || (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url))) {
+            return downloadAudioToLocal(url, title);
+        }
+        return downloadM3u8ToLocal(url, title);
+    }
+
+    /**
+     * 音频直链下载（单文件，支持进度与取消）
+     */
+    async function downloadAudioToLocal(url, title) {
+        if (DL.active) {
+            showToast('已有下载任务进行中');
+            showPanel();
+            updateDlProgressUI(true);
+            return;
+        }
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到音频链接');
+            return;
+        }
+
+        const ac = new AbortController();
+        const ext = audioExtFromUrl(url);
+        DL.active = true;
+        DL.abort = ac;
+        DL.done = 0;
+        DL.total = 1;
+        DL.bytes = 0;
+        DL.phase = 'downloading';
+        DL.error = '';
+        DL.filename = sanitizeFilename(title || capturedTitle || getPageTitle()) + '.' + ext;
+        DL.lastUiAt = 0;
+
+        showPanel();
+        updateDlProgressUI(true);
+        showToast('开始下载音频…');
+
+        try {
+            const res = await fetch(url, { credentials: 'omit', signal: ac.signal });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const total = Number(res.headers.get('content-length') || 0);
+            if (total > 0) DL.total = total;
+
+            // 流式读以更新进度（不支持则整包）
+            let blob;
+            if (res.body && typeof res.body.getReader === 'function' && total > 0) {
+                const reader = res.body.getReader();
+                const chunks = [];
+                let received = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    received += value.byteLength;
+                    DL.done = received;
+                    DL.bytes = received;
+                    updateDlProgressUI(false);
+                }
+                blob = new Blob(chunks, { type: res.headers.get('content-type') || 'audio/mpeg' });
+            } else {
+                const buf = await res.arrayBuffer();
+                blob = new Blob([buf], { type: res.headers.get('content-type') || 'audio/mpeg' });
+                DL.done = total || blob.size;
+                DL.bytes = blob.size;
+                DL.total = Math.max(DL.total, blob.size);
+            }
+
+            DL.phase = 'saving';
+            updateDlProgressUI(true);
+            triggerBlobDownload(blob, DL.filename);
+            DL.phase = 'done';
+            DL.done = DL.total || blob.size;
+            updateDlProgressUI(true);
+            showToast('音频下载完成 · ' + formatBytes(blob.size));
+        } catch (e) {
+            const aborted = !!(e && (e.name === 'AbortError' || /abort/i.test(String(e.message || e))));
+            if (aborted) {
+                DL.phase = 'cancelled';
+                DL.error = '';
+                showToast('已取消下载');
+            } else {
+                console.error('[hj-dl-audio]', e);
+                DL.phase = 'error';
+                DL.error = String((e && e.message) || e || '未知错误');
+                showToast('音频下载失败：' + DL.error);
+            }
+            updateDlProgressUI(true);
+        } finally {
+            DL.active = false;
+            DL.abort = null;
+            updateDlProgressUI(true);
+        }
+    }
+
+    /**
+     * 并发下载 m3u8 分片 → AES 解密（含站点密钥）→ 合并为 .ts 保存到本地
+     */
+    async function downloadM3u8ToLocal(url, title) {
+        if (DL.active) {
+            showToast('已有下载任务进行中');
+            showPanel();
+            updateDlProgressUI(true);
+            return;
+        }
+
+        url = normalizeUrl(url || capturedM3u8Url);
+        if (!url) {
+            showToast('暂未获取到链接');
+            return;
+        }
+        if (looksLikeAudioUrl(url) && !looksLikeM3u8Url(url)) {
+            return downloadAudioToLocal(url, title);
+        }
+        if (!window.crypto || !crypto.subtle) {
+            showToast('当前环境不支持 WebCrypto，无法解密下载');
+            return;
+        }
+
+        const ac = new AbortController();
+        DL.active = true;
+        DL.abort = ac;
+        DL.done = 0;
+        DL.total = 0;
+        DL.bytes = 0;
+        DL.phase = 'parsing';
+        DL.error = '';
+        DL.filename = sanitizeFilename(title || capturedTitle || getPageTitle()) + '.ts';
+        DL.lastUiAt = 0;
+
+        showPanel();
+        updateDlProgressUI(true);
+        showToast('开始下载：解析播放列表…');
+
+        try {
+            let playlistUrl = url;
+            let text = await fetchTextRetry(playlistUrl, ac.signal, CFG.downloadRetries);
+            if (!looksLikePlaylist(text)) throw new Error('不是有效的 m3u8 列表');
+
+            let parsed = parseM3u8Playlist(text, playlistUrl);
+
+            // master → 选最高码率子列表
+            if (parsed.isMaster && parsed.variants.length) {
+                parsed.variants.sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0));
+                playlistUrl = parsed.variants[0].url;
+                text = await fetchTextRetry(playlistUrl, ac.signal, CFG.downloadRetries);
+                if (!looksLikePlaylist(text)) throw new Error('子播放列表无效');
+                parsed = parseM3u8Playlist(text, playlistUrl);
+            }
+
+            // 若当前列表本身像试看且已捕获更高分完整片，优先完整片
+            if (isLikelyPreviewPlaylist(text) && capturedM3u8Url
+                && normalizeUrl(capturedM3u8Url) !== playlistUrl
+                && capturedScore >= 50
+                && !isPreviewUrl(capturedM3u8Url)) {
+                playlistUrl = normalizeUrl(capturedM3u8Url);
+                text = await fetchTextRetry(playlistUrl, ac.signal, CFG.downloadRetries);
+                parsed = parseM3u8Playlist(text, playlistUrl);
+                if (parsed.isMaster && parsed.variants.length) {
+                    parsed.variants.sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0));
+                    playlistUrl = parsed.variants[0].url;
+                    text = await fetchTextRetry(playlistUrl, ac.signal, CFG.downloadRetries);
+                    parsed = parseM3u8Playlist(text, playlistUrl);
+                }
+            }
+
+            const segs = parsed.segments || [];
+            if (!segs.length) throw new Error('播放列表中没有可下载分片');
+
+            DL.total = segs.length + (parsed.mapUri ? 1 : 0);
+            DL.phase = 'downloading';
+            updateDlProgressUI(true);
+            showToast('并发下载 ' + segs.length + ' 个分片（' + CFG.downloadConcurrency + ' 路）…');
+
+            // keyUri → Promise<{ cryptoKey }>
+            const keyPromiseMap = new Map();
+            const getSegCrypto = (seg) => {
+                if (!seg || !seg.key || seg.key.method !== 'AES-128' || !seg.key.uri) {
+                    return Promise.resolve(null);
+                }
+                const kuri = seg.key.uri;
+                if (!keyPromiseMap.has(kuri)) {
+                    keyPromiseMap.set(kuri, (async () => {
+                        const raw = await loadAndTransformKey(kuri, playlistUrl, ac.signal);
+                        if (!raw || !raw.length) throw new Error('密钥为空');
+                        const cryptoKey = await prepareAesKey(raw);
+                        return { cryptoKey };
+                    })());
+                }
+                return keyPromiseMap.get(kuri);
+            };
+
+            let mapBuf = null;
+            if (parsed.mapUri) {
+                mapBuf = await fetchArrayBufferRetry(parsed.mapUri, ac.signal, CFG.downloadRetries);
+                DL.done += 1;
+                DL.bytes += mapBuf.byteLength;
+                updateDlProgressUI(true);
+            }
+
+            const parts = await runPool(
+                segs,
+                CFG.downloadConcurrency,
+                async (seg, i) => {
+                    const buf = await fetchArrayBufferRetry(seg.url, ac.signal, CFG.downloadRetries);
+                    let out = buf;
+                    if (seg.key && seg.key.method === 'AES-128') {
+                        const k = await getSegCrypto(seg);
+                        if (!k) throw new Error('无法加载密钥');
+                        const iv = seg.key.iv || mediaSeqToIv(seg.seq);
+                        try {
+                            out = await decryptAes128Cbc(buf, k.cryptoKey, iv);
+                        } catch (e) {
+                            // 部分分片可能未真正加密：校验 TS sync byte 0x47
+                            if (buf.length >= 1 && buf[0] === 0x47) out = buf;
+                            else throw new Error('分片解密失败 #' + (i + 1));
+                        }
+                    }
+                    DL.done += 1;
+                    DL.bytes += out.byteLength;
+                    updateDlProgressUI(false);
+                    return out;
+                },
+                ac.signal
+            );
+
+            DL.phase = 'saving';
+            updateDlProgressUI(true);
+            showToast('正在打包保存…');
+
+            const chunks = [];
+            if (mapBuf) chunks.push(mapBuf);
+            for (let i = 0; i < parts.length; i++) {
+                if (!parts[i] || !parts[i].byteLength) throw new Error('分片缺失 #' + (i + 1));
+                chunks.push(parts[i]);
+            }
+            const blob = new Blob(chunks, { type: 'video/mp2t' });
+            triggerBlobDownload(blob, DL.filename);
+
+            DL.phase = 'done';
+            updateDlProgressUI(true);
+            showToast('下载完成 · ' + formatBytes(blob.size));
+        } catch (e) {
+            const aborted = !!(e && (e.name === 'AbortError' || /abort/i.test(String(e.message || e))));
+            if (aborted) {
+                DL.phase = 'cancelled';
+                DL.error = '';
+                showToast('已取消下载');
+            } else {
+                console.error('[hj-dl]', e);
+                DL.phase = 'error';
+                DL.error = String((e && e.message) || e || '未知错误');
+                showToast('下载失败：' + DL.error);
+            }
+            updateDlProgressUI(true);
+        } finally {
+            DL.active = false;
+            DL.abort = null;
+            // 刷新按钮可用态（保留进度文案）
+            updateDlProgressUI(true);
+        }
+    }
+
+    // ==========================================
+    // 模块六：跳转播放 / 复制 / 面板
+    // ==========================================
+
+    function playUrl(url) {
+        if (!url) {
+            showToast('暂未获取到链接');
+            return;
+        }
+        showToast('正在跳转播放...');
+        const target = CFG.useOnlinePlayer ? CFG.onlinePlayer(url) : url;
+        // 优先新标签；移动端拦截时降级当前页
+        const win = window.open(target, '_blank');
+        if (!win) {
+            location.href = target;
+        }
+    }
+
+    /** 短按默认：原位 or 跳转 */
+    function playDefault(url, btn) {
+        url = url || capturedM3u8Url;
+        if (!url) {
+            showPanel();
+            return;
+        }
+        if (CFG.defaultPlayMode === 'jump') playUrl(url);
+        else replaceAndPlayMedia(url, btn, capturedKind || mediaKindOf(url));
+    }
+
+    async function copyText(text) {
+        if (!text) return false;
+        // 临时放行，避免被「剪贴板劫持防护」误拦
+        allowClipboardWrite = true;
+        try {
+            try {
+                const clip = (unsafeWindow.navigator && unsafeWindow.navigator.clipboard)
+                    || navigator.clipboard;
+                if (clip && clip.writeText) {
+                    await clip.writeText(text);
+                    return true;
+                }
+            } catch (e) {}
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                const doc = unsafeWindow.document || document;
+                const ok = doc.execCommand('copy');
+                ta.remove();
+                return ok;
+            } catch (e) {
+                return false;
+            }
+        } finally {
+            // 稍微延后复位，覆盖异步 copy 事件回调
+            setTimeout(() => { allowClipboardWrite = false; }, 0);
+        }
+    }
+
+    function updateState(src, meta) {
+        src = normalizeUrl(src);
+        if (!src) return;
+        const m = meta || {};
+        const kind = mediaKindOf(src, m);
+
+        const score = scoreVideoUrl(src, m);
+        if (score <= 0) return;
+
+        const same = capturedM3u8Url && capturedM3u8Url.split('#')[0] === src.split('#')[0];
+        if (same) {
+            // 同链接若后来确认更高分源，仅抬分
+            if (score > capturedScore) capturedScore = score;
+            if (kind) capturedKind = kind;
+            return;
+        }
+
+        // 已有完整视频时，不让音频覆盖
+        if (capturedKind === 'video' && capturedScore >= 50 && kind === 'audio') return;
+        // 已有音频时，允许完整/高分视频覆盖
+        if (capturedKind === 'audio' && kind === 'video' && score >= 50) {
+            // fall through
+        } else {
+            // 关键：禁止低分（预览）覆盖高分（完整片）
+            if (capturedM3u8Url && score < capturedScore) return;
+            // 同分不反复抖动；「分片反推完整片」(meta.reversed) 必须允许覆盖误标高分的试看
+            if (capturedM3u8Url && score === capturedScore
+                && kind === capturedKind
+                && !(kind === 'video' && isPreviewUrl(capturedM3u8Url))
+                && !m.reversed) {
+                return;
+            }
+            if (capturedM3u8Url && score === capturedScore
+                && kind === 'video' && capturedKind === 'video'
+                && !isPreviewUrl(capturedM3u8Url)
+                && !m.reversed) {
+                return;
+            }
+        }
+
+        const upgraded = !!(capturedM3u8Url && (
+            score > capturedScore
+            || (m.reversed && score >= capturedScore && !m.preview)
+            || (capturedKind === 'audio' && kind === 'video' && score >= 50)
+        ));
+        capturedM3u8Url = src;
+        capturedScore = score;
+        capturedKind = kind;
+        capturedTitle = getPageTitle();
+        // 预览不进历史，避免连刷时误点到试看；音频非预览可进
+        if (score >= 50 && (kind === 'audio' || (!isPreviewUrl(src) && !m.preview))) {
+            pushHistory(src, capturedTitle, kind);
+        }
+
+        ensureUi();
+        const btn = document.getElementById(CFG.btnId);
+        if (btn) {
+            btn.classList.add('show');
+            markReady(btn);
+            if (Date.now() - lastToastAt > 1200) {
+                if (kind === 'audio') {
+                    if (upgraded) showToast('已切换到音频');
+                    else showToast('已捕获音频，点按钮播放');
+                } else if (score <= 10) {
+                    showToast('仅捕获到预览，等待完整视频…');
+                } else if (upgraded) {
+                    showToast('已切换到完整视频');
+                } else {
+                    showToast('已捕获完整视频，点按钮原位播放');
+                }
+                lastToastAt = Date.now();
+            }
+        }
+        const panel = document.getElementById(CFG.panelId);
+        if (panel && panel.classList.contains('show')) renderPanel();
+    }
+
+    function showToast(msg) {
+        let toast = document.getElementById(CFG.toastId);
+        if (!toast) {
+            if (!document.body) return;
+            toast = document.createElement('div');
+            toast.id = CFG.toastId;
+            document.body.appendChild(toast);
+        }
+        toast.textContent = msg;
+        toast.style.opacity = '1';
+        clearTimeout(showToast._timer);
+        showToast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 1800);
+    }
+
+    function updateHistoryBadge() {
+        const btn = document.getElementById(CFG.btnId);
+        if (!btn) return;
+        let badge = btn.querySelector('.hj-badge');
+        const n = readHistory().length;
+        if (n <= 1) {
+            if (badge) badge.remove();
+            return;
+        }
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'hj-badge';
+            btn.appendChild(badge);
+        }
+        badge.textContent = n > 99 ? '99+' : String(n);
+    }
+
+    function formatTime(ts) {
+        try {
+            const d = new Date(ts);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            return hh + ':' + mm;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function renderPanel() {
+        const panel = document.getElementById(CFG.panelId);
+        if (!panel) return;
+        const hist = readHistory();
+        const isAudio = capturedKind === 'audio';
+        const urlShort = capturedM3u8Url
+            ? (capturedM3u8Url.length > 96 ? capturedM3u8Url.slice(0, 96) + '…' : capturedM3u8Url)
+            : '尚未捕获到当前页媒体（视频/音频）';
+        const kindLabel = isAudio ? '音频' : (capturedM3u8Url ? '视频' : '媒体');
+
+        panel.innerHTML = `
+            <div class="hj-panel-head">
+                <span>媒体工具${capturedM3u8Url ? ' · ' + kindLabel : ''}</span>
+                <span style="font-weight:400;color:rgba(255,255,255,0.45);font-size:12px;" id="hj-panel-close">关闭</span>
+            </div>
+            <div class="hj-panel-actions">
+                <button class="hj-act primary" data-act="inline">${isAudio ? '原位听音频' : '原位播放'}</button>
+                <button class="hj-act" data-act="jump">${isAudio ? '新标签打开' : '跳转播放'}</button>
+            </div>
+            <div class="hj-panel-actions secondary">
+                <button class="hj-act" data-act="copy">复制链接</button>
+                <button class="hj-act" data-act="raw">打开原链</button>
+            </div>
+            <div class="hj-panel-actions download-row">
+                <button class="hj-act download" data-act="download"${DL.active ? ' disabled' : ''}>${DL.active ? '下载中…' : (isAudio ? '下载音频' : '下载到本地')}</button>
+                <button class="hj-act" data-act="cancel-dl"${DL.active ? '' : ' disabled'}>取消</button>
+            </div>
+            <div id="hj-dl-progress" class="hj-dl-progress"></div>
+            <div class="hj-url">${escapeHtml(urlShort)}</div>
+            <div class="hj-hist-title">本会话历史（${hist.length}）· 点按重播 · 长按复制</div>
+            <div class="hj-hist-list">
+                ${hist.length ? hist.map((item, idx) => {
+                    const ik = item.kind || mediaKindOf(item.url);
+                    const tag = ik === 'audio' ? '音频' : '视频';
+                    return `
+                    <button class="hj-hist-item" data-idx="${idx}">
+                        <div class="t">${escapeHtml(item.title || (ik === 'audio' ? '未命名音频' : '未命名视频'))}</div>
+                        <div class="m">${formatTime(item.ts)} · ${tag} · 播放 / 双击下载</div>
+                    </button>`;
+                }).join('') : '<div class="hj-empty">浏览带视频/音频的帖子后会自动记录</div>'}
+            </div>
+        `;
+
+        panel.querySelector('#hj-panel-close')?.addEventListener('click', hidePanel);
+        panel.querySelector('[data-act="inline"]')?.addEventListener('click', () => {
+            hidePanel();
+            replaceAndPlayMedia(capturedM3u8Url, null, capturedKind);
+        });
+        panel.querySelector('[data-act="jump"]')?.addEventListener('click', () => {
+            hidePanel();
+            playUrl(capturedM3u8Url);
+        });
+        panel.querySelector('[data-act="copy"]')?.addEventListener('click', async () => {
+            const ok = await copyText(capturedM3u8Url);
+            showToast(ok ? (isAudio ? '已复制音频链接' : '已复制 m3u8 链接') : '复制失败');
+        });
+        panel.querySelector('[data-act="raw"]')?.addEventListener('click', () => {
+            if (!capturedM3u8Url) return showToast('暂未获取到链接');
+            showToast('打开原始地址...');
+            const win = window.open(capturedM3u8Url, '_blank');
+            if (!win) location.href = capturedM3u8Url;
+        });
+        panel.querySelector('[data-act="download"]')?.addEventListener('click', () => {
+            downloadMediaToLocal(capturedM3u8Url, capturedTitle || getPageTitle(), capturedKind);
+        });
+        panel.querySelector('[data-act="cancel-dl"]')?.addEventListener('click', () => {
+            cancelDownload();
+        });
+
+        updateDlProgressUI(true);
+
+        panel.querySelectorAll('.hj-hist-item').forEach(el => {
+            let timer = null;
+            let longPressed = false;
+            const idx = Number(el.getAttribute('data-idx'));
+            const item = hist[idx];
+            if (!item) return;
+            const itemKind = item.kind || mediaKindOf(item.url);
+
+            el.addEventListener('touchstart', () => {
+                longPressed = false;
+                timer = setTimeout(async () => {
+                    longPressed = true;
+                    const ok = await copyText(item.url);
+                    showToast(ok ? '已复制历史链接' : '复制失败');
+                }, 480);
+            }, { passive: true });
+            el.addEventListener('touchend', () => {
+                clearTimeout(timer);
+                if (!longPressed) {
+                    hidePanel();
+                    replaceAndPlayMedia(item.url, null, itemKind);
+                }
+            });
+            el.addEventListener('click', (e) => {
+                // 桌面兼容
+                if (e.detail === 0) return;
+                if (!('ontouchstart' in window)) {
+                    hidePanel();
+                    replaceAndPlayMedia(item.url, null, itemKind);
+                }
+            });
+            // 双击历史项：下载该条
+            el.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                downloadMediaToLocal(item.url, item.title || '历史媒体', itemKind);
+            });
+        });
+    }
+
+    function escapeHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function showPanel() {
+        ensureUi();
+        const panel = document.getElementById(CFG.panelId);
+        if (!panel) return;
+        renderPanel();
+        panel.classList.add('show');
+    }
+
+    function hidePanel() {
+        const panel = document.getElementById(CFG.panelId);
+        if (panel) panel.classList.remove('show');
+    }
+
+    function togglePanel() {
+        const panel = document.getElementById(CFG.panelId);
+        if (panel && panel.classList.contains('show')) hidePanel();
+        else showPanel();
+    }
+
+    function resetBtnDefaultPos(btn) {
+        if (!btn) return;
+        btn.style.left = 'auto';
+        btn.style.top = 'auto';
+        btn.style.right = '15px';
+        btn.style.bottom = '80px';
+        try { sessionStorage.removeItem('hj_btn_pos'); } catch (e) {}
+    }
+
+    function clampBtnInViewport(btn) {
+        if (!btn || !btn.isConnected) return;
+        try {
+            const rect = btn.getBoundingClientRect();
+            const vw = window.innerWidth || 0;
+            const vh = window.innerHeight || 0;
+            // 完全看不见 / 尺寸异常 → 复位右下角
+            const off =
+                !vw || !vh ||
+                rect.width < 8 || rect.height < 8 ||
+                rect.right < 8 || rect.bottom < 8 ||
+                rect.left > vw - 8 || rect.top > vh - 8;
+            if (off) {
+                resetBtnDefaultPos(btn);
+                return;
+            }
+            // 部分越界：钳制回视口
+            if (btn.style.left && btn.style.left !== 'auto') {
+                const maxL = Math.max(4, vw - rect.width - 4);
+                const maxT = Math.max(4, vh - rect.height - 4);
+                const nl = Math.min(maxL, Math.max(4, rect.left));
+                const nt = Math.min(maxT, Math.max(4, rect.top));
+                btn.style.left = nl + 'px';
+                btn.style.top = nt + 'px';
+                btn.style.right = 'auto';
+                btn.style.bottom = 'auto';
+            }
+        } catch (e) {
+            resetBtnDefaultPos(btn);
+        }
+    }
+
+    function forceShowBtn(btn) {
+        if (!btn) return;
+        try {
+            btn.classList.add('show');
+            btn.style.setProperty('display', 'block', 'important');
+            btn.style.setProperty('visibility', 'visible', 'important');
+            btn.style.setProperty('opacity', '1', 'important');
+            btn.style.setProperty('pointer-events', 'auto', 'important');
+            btn.style.setProperty('z-index', '2147483646', 'important');
+            btn.style.setProperty('position', 'fixed', 'important');
+            btn.style.setProperty('width', '56px', 'important');
+            btn.style.setProperty('height', '56px', 'important');
+            // 若被站点改到屏外，保活时钳制
+            clampBtnInViewport(btn);
+        } catch (e) {}
+    }
+
+    function enableDrag(btn) {
+        if (!btn || btn.__hjDragBound) return;
+        btn.__hjDragBound = true;
+        let dragging = false;
+        let moved = false;
+        let startX = 0, startY = 0, origL = 0, origT = 0;
+
+        const onStart = (x, y) => {
+            dragging = true;
+            moved = false;
+            const rect = btn.getBoundingClientRect();
+            // 切到 left/top 定位，便于拖动
+            btn.style.left = rect.left + 'px';
+            btn.style.top = rect.top + 'px';
+            btn.style.right = 'auto';
+            btn.style.bottom = 'auto';
+            startX = x;
+            startY = y;
+            origL = rect.left;
+            origT = rect.top;
+        };
+        const onMove = (x, y) => {
+            if (!dragging) return;
+            const dx = x - startX;
+            const dy = y - startY;
+            if (Math.abs(dx) + Math.abs(dy) > 6) moved = true;
+            const maxL = window.innerWidth - btn.offsetWidth - 4;
+            const maxT = window.innerHeight - btn.offsetHeight - 4;
+            const nl = Math.min(maxL, Math.max(4, origL + dx));
+            const nt = Math.min(maxT, Math.max(4, origT + dy));
+            btn.style.left = nl + 'px';
+            btn.style.top = nt + 'px';
+        };
+        const onEnd = () => {
+            if (!dragging) return;
+            dragging = false;
+            // 贴边吸附
+            const rect = btn.getBoundingClientRect();
+            const mid = rect.left + rect.width / 2;
+            if (mid < window.innerWidth / 2) {
+                btn.style.left = '12px';
+            } else {
+                btn.style.left = (window.innerWidth - rect.width - 12) + 'px';
+            }
+            clampBtnInViewport(btn);
+            try {
+                sessionStorage.setItem('hj_btn_pos', JSON.stringify({
+                    left: btn.style.left,
+                    top: btn.style.top
+                }));
+            } catch (e) {}
+            return moved;
+        };
+
+        btn.addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            onStart(t.clientX, t.clientY);
+        }, { passive: true });
+        btn.addEventListener('touchmove', (e) => {
+            if (!dragging) return;
+            const t = e.touches[0];
+            onMove(t.clientX, t.clientY);
+        }, { passive: true });
+        btn.addEventListener('touchend', () => {
+            const wasMoved = onEnd();
+            btn._hjMoved = wasMoved;
+        });
+
+        // 桌面拖动
+        btn.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            onStart(e.clientX, e.clientY);
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            onMove(e.clientX, e.clientY);
+        });
+        window.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            btn._hjMoved = onEnd();
+        });
+
+        // 恢复位置（非法值直接丢弃，避免按钮飞出屏幕）
+        try {
+            const pos = JSON.parse(sessionStorage.getItem('hj_btn_pos') || 'null');
+            if (pos && pos.left && pos.top) {
+                const left = parseFloat(pos.left);
+                const top = parseFloat(pos.top);
+                const vw = window.innerWidth || 0;
+                const vh = window.innerHeight || 0;
+                if (
+                    Number.isFinite(left) && Number.isFinite(top) &&
+                    left > -20 && top > -20 &&
+                    left < vw - 20 && top < vh - 20
+                ) {
+                    btn.style.left = pos.left;
+                    btn.style.top = pos.top;
+                    btn.style.right = 'auto';
+                    btn.style.bottom = 'auto';
+                } else {
+                    resetBtnDefaultPos(btn);
+                }
+            }
+        } catch (e) {
+            resetBtnDefaultPos(btn);
+        }
+        // 下一帧再钳一次（样式计算完成）
+        setTimeout(() => clampBtnInViewport(btn), 0);
+    }
+
+    function bindBtnEvents(btn) {
+        if (!btn || btn.__hjEventsBound) return;
+        btn.__hjEventsBound = true;
+
+        const isTouch = () =>
+            ('ontouchstart' in window) ||
+            (navigator.maxTouchPoints > 0);
+
+        let pressTimer = null;
+        let longPress = false;
+
+        const clearPress = () => {
+            clearTimeout(pressTimer);
+            pressTimer = null;
+        };
+
+        // —— 手机：短按播放，长按菜单 ——
+        btn.addEventListener('touchstart', () => {
+            longPress = false;
+            btn.classList.add('active');
+            pressTimer = setTimeout(() => {
+                longPress = true;
+                showPanel();
+                if (navigator.vibrate) try { navigator.vibrate(15); } catch (e) {}
+            }, 420);
+        }, { passive: true });
+
+        btn.addEventListener('touchend', () => {
+            btn.classList.remove('active');
+            clearPress();
+            if (btn._hjMoved) {
+                btn._hjMoved = false;
+                return;
+            }
+            if (longPress) return;
+            playDefault(capturedM3u8Url, btn);
+        });
+
+        // —— 电脑：左键播放，右键菜单 ——
+        btn.addEventListener('click', (e) => {
+            if (isTouch() && e.detail !== 0 && ('ontouchstart' in window)) return;
+            if (e.button === 2) return;
+            // 刚拖完不触发播放
+            if (btn._hjMoved) {
+                btn._hjMoved = false;
+                return;
+            }
+            btn.classList.add('active');
+            setTimeout(() => btn.classList.remove('active'), 100);
+            if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                togglePanel();
+                return;
+            }
+            playDefault(capturedM3u8Url, btn);
+        });
+
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            togglePanel();
+        });
+
+        btn.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                togglePanel();
+            }
+        });
+    }
+
+    function ensureUi() {
+        try {
+            if (!document.body) return false;
+
+            let btn = document.getElementById(CFG.btnId);
+            if (!btn || !btn.isConnected) {
+                // 残留节点（被移出树）清掉再建
+                if (btn && !btn.isConnected) {
+                    try { btn.remove(); } catch (e) {}
+                }
+                btn = document.createElement('div');
+                btn.id = CFG.btnId;
+                btn.textContent = '▶️';
+                btn.title = '左键播放 · 右键打开菜单（复制/跳转/历史）';
+                // 默认右下角，避免无样式时不可见
+                btn.style.cssText = [
+                    'position:fixed',
+                    'bottom:80px',
+                    'right:15px',
+                    'width:56px',
+                    'height:56px',
+                    'border-radius:50%',
+                    'background:linear-gradient(145deg,rgba(30,60,114,0.96),rgba(42,82,152,0.96))',
+                    'color:#fff',
+                    'border:2px solid rgba(255,255,255,0.35)',
+                    'z-index:2147483646',
+                    'font-size:22px',
+                    'text-align:center',
+                    'line-height:52px',
+                    'display:block',
+                    'visibility:visible',
+                    'opacity:1',
+                    'pointer-events:auto',
+                    'user-select:none',
+                    'box-shadow:0 6px 16px rgba(0,0,0,0.45)'
+                ].join(';');
+                document.body.appendChild(btn);
+                bindBtnEvents(btn);
+                enableDrag(btn);
+            } else {
+                bindBtnEvents(btn);
+                enableDrag(btn);
+            }
+
+            if (!document.getElementById(CFG.panelId)) {
+                const panel = document.createElement('div');
+                panel.id = CFG.panelId;
+                document.body.appendChild(panel);
+                if (!document.__hjPanelOutsideClose) {
+                    document.__hjPanelOutsideClose = true;
+                    document.addEventListener('click', (e) => {
+                        const panelEl = document.getElementById(CFG.panelId);
+                        const btnEl = document.getElementById(CFG.btnId);
+                        if (!panelEl || !panelEl.classList.contains('show')) return;
+                        if (panelEl.contains(e.target) || (btnEl && btnEl.contains(e.target))) return;
+                        hidePanel();
+                    }, true);
+                }
+            }
+
+            forceShowBtn(document.getElementById(CFG.btnId));
+            updateHistoryBadge();
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function startUiWatchdog() {
+        if (startUiWatchdog._started) return;
+        startUiWatchdog._started = true;
+        // 高频前几秒：body 晚到 / Vue 重建
+        let n = 0;
+        const boot = setInterval(() => {
+            ensureUi();
+            if (++n >= 20) clearInterval(boot);
+        }, 300);
+        // 长期保活：被删就补、跑偏就拉回
+        setInterval(() => {
+            try { ensureUi(); } catch (e) {}
+        }, CFG.uiWatchMs);
+        // body 被整页替换时也能补挂
+        try {
+            const mo = new MutationObserver(() => {
+                if (!document.getElementById(CFG.btnId)) ensureUi();
+            });
+            const bootMo = () => {
+                if (document.documentElement) {
+                    mo.observe(document.documentElement, { childList: true, subtree: true });
+                }
+            };
+            if (document.documentElement) bootMo();
+            else document.addEventListener('DOMContentLoaded', bootMo, { once: true });
+        } catch (e) {}
+    }
+
+    function resetCaptureForRoute() {
+        capturedM3u8Url = '';
+        capturedScore = -1;
+        capturedTitle = '';
+        capturedKind = '';
+        probedUrlSet.clear();
+        if (previewOnlyNoticeTimer) {
+            clearTimeout(previewOnlyNoticeTimer);
+            previewOnlyNoticeTimer = 0;
+        }
+        // 路由切换时中止进行中的下载，避免串帖写错文件
+        if (DL.active && DL.abort) {
+            try { DL.abort.abort(); } catch (e) {}
+        }
+        destroyInlinePlayer();
+        hidePanel();
+        ensureUi();
+        const btn = document.getElementById(CFG.btnId);
+        if (btn) {
+            btn.classList.remove('audio-mode');
+            markReady(btn);
+        }
+        updateHistoryBadge();
+        setTimeout(cleanUpAds, 300);
+        setTimeout(cleanUpAds, 1000);
+        // 等页面关键接口返回后再弱兜底
+        setTimeout(scanPerformanceEntries, 1500);
+        setTimeout(scanPerformanceEntries, 3500);
+        setTimeout(scanDomVideoSources, 800);
+        setTimeout(scanDomVideoSources, 2200);
+        schedulePreviewOnlyNotice();
+    }
+
+    function init() {
+        try {
+            ensureUi();
+            startUiWatchdog();
+            cleanUpAds();
+            scanPerformanceEntries();
+            scanDomVideoSources();
+            schedulePreviewOnlyNotice();
+            // body 晚到时再补
+            setTimeout(ensureUi, 200);
+            setTimeout(ensureUi, 800);
+            setTimeout(ensureUi, 2000);
+            setTimeout(scanDomVideoSources, 1200);
+        } catch (e) {
+            try { ensureUi(); startUiWatchdog(); } catch (e2) {}
+        }
+    }
+
+    // document-start 时 body 可能还不在：轮询到 body 立刻挂按钮
+    (function waitBody() {
+        if (document.body) {
+            init();
+            return;
+        }
+        const t = setInterval(() => {
+            if (document.body) {
+                clearInterval(t);
+                init();
+            }
+        }, 50);
+        setTimeout(() => clearInterval(t), 15000);
+    })();
+
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', () => { try { init(); } catch (e) {} });
+    }
+
+    window.addEventListener('popstate', resetCaptureForRoute);
+
+    // SPA 路由切换后补清（Vue Router pushState / replaceState）
+    try {
+        const _pushState = history.pushState;
+        history.pushState = function() {
+            const ret = _pushState.apply(this, arguments);
+            resetCaptureForRoute();
+            setTimeout(cleanUpAds, 1200);
+            return ret;
+        };
+        const _replaceState = history.replaceState;
+        history.replaceState = function() {
+            const ret = _replaceState.apply(this, arguments);
+            resetCaptureForRoute();
+            return ret;
+        };
+    } catch (e) {}
+
+    // 页面加载完再扫一次
+    window.addEventListener('load', () => {
+        setTimeout(ensureUi, 100);
+        setTimeout(scanPerformanceEntries, 500);
+        setTimeout(scanDomVideoSources, 600);
+        setTimeout(cleanUpAds, 500);
+    });
+
+})();

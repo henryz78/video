@@ -1,0 +1,2369 @@
+// ==UserScript==
+// @name         JerkMotion 去广告·隐私·下载
+// @namespace    local.jerkmotion.clean
+// @version      1.2.0
+// @description  桌面/手机通用：保证 jerkmotion.com 可播、去广告、悬浮下载 MP4、阻断追踪。兼容 Tampermonkey / Violentmonkey / ScriptCat / Via / Userscripts / Stay / 狐猴 等
+// @author       Richy
+// @match        *://jerkmotion.com/*
+// @match        *://*.jerkmotion.com/*
+// @match        *://www.jerkmotion.com/*
+// @match        http://jerkmotion.com/*
+// @match        http://*.jerkmotion.com/*
+// @run-at       document-start
+// @grant        none
+// @inject-into  page
+// @noframes
+// @homepageURL  https://jerkmotion.com/
+// @license      MIT
+// ==/UserScript==
+
+/**
+ * JerkMotion Clean v1.2
+ * - 保播放：放行本站 / api / cdn 媒体 / cdn.plyr.io
+ * - 去广告：IMA 片前、ExoClick/Monetag 横幅、partners 外联、弹窗
+ * - 下载：悬浮按钮 · 捕获直链 MP4 · 下载/复制/分享/新标签
+ * - 隐私：阻断 GA / Umami / 会话录制 / sendBeacon / 敏感 API
+ * - 手机扩展：Via / Stay / Userscripts / ScriptCat 隔离环境自动注入页面；
+ *             触摸手势、安全区、晚注入重试、iOS/安卓下载与分享兜底
+ */
+(function JM_BOOTSTRAP() {
+  'use strict';
+
+  var BOOT_FLAG = '__JERKMOTION_CLEAN_BOOT__';
+
+  function isIsolatedWorld() {
+    try {
+      if (typeof exportFunction === 'function') return true;
+      if (typeof cloneInto === 'function') return true;
+      if (typeof wrappedJSObject !== 'undefined' && wrappedJSObject && wrappedJSObject !== window) {
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function injectPage(code) {
+    function run(root) {
+      if (!root) return false;
+      try {
+        var s = document.createElement('script');
+        s.textContent = code;
+        root.appendChild(s);
+        s.remove();
+        return true;
+      } catch (e1) {}
+      try {
+        var url = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+        var s2 = document.createElement('script');
+        s2.src = url;
+        s2.onload = function () {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          try { s2.remove(); } catch (e) {}
+        };
+        root.appendChild(s2);
+        return true;
+      } catch (e2) {}
+      try {
+        var s3 = document.createElement('script');
+        s3.src = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(code);
+        root.appendChild(s3);
+        return true;
+      } catch (e3) {}
+      return false;
+    }
+
+    var root = document.documentElement || document.head || document.body;
+    if (root) return run(root);
+
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries += 1;
+      var r = document.documentElement || document.head;
+      if (r) {
+        clearInterval(timer);
+        run(r);
+      } else if (tries > 200) {
+        clearInterval(timer);
+      }
+    }, 5);
+    return false;
+  }
+
+function JM_MAIN() {
+  'use strict';
+
+  const BOOT_FLAG = '__JERKMOTION_CLEAN_BOOT__';
+  try {
+    if (window[BOOT_FLAG]) return;
+    window[BOOT_FLAG] = 1;
+  } catch {
+    /* ignore */
+  }
+
+  const UA = String(navigator.userAgent || '');
+  const IS_MOBILE =
+    /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini|HarmonyOS|MicroMessenger|Quark|UCBrowser|HuaweiBrowser|MiuiBrowser|SamsungBrowser|VivoBrowser|OppoBrowser|HeyTapBrowser|Baidu|SogouMobile|QihooBrowser|360Browser|MQQBrowser|EdgA|EdgiOS|Firefox.*Mobile|Meizu|Lenovo|Smartisan|Via|Alook/i.test(
+      UA
+    ) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(UA)) ||
+    (Math.min(screen.width || 0, screen.height || 0) > 0 &&
+      Math.min(screen.width, screen.height) <= 820 &&
+      navigator.maxTouchPoints > 0);
+  const IS_IOS =
+    /iPhone|iPad|iPod/i.test(UA) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+    /EdgiOS|FxiOS|CriOS/i.test(UA);
+  const IS_ANDROID = /Android/i.test(UA) || /EdgA|HarmonyOS/i.test(UA);
+  const IS_TOUCH = IS_MOBILE || navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  const MAX_FILENAME = IS_MOBILE ? 80 : 120;
+  const UI_RETRY_MS = IS_MOBILE
+    ? [0, 200, 500, 1000, 2000, 3500, 6000, 10000, 15000]
+    : [0, 400, 1200, 2500, 5000];
+
+  const LOG_PREFIX = '[jerkmotion-clean]';
+  const STYLE_ID = 'jm-clean-style';
+  const UI_ID = 'jm-clean-root';
+  const UI_STYLE_ID = 'jm-clean-ui-style';
+
+  const SETTINGS = Object.freeze({
+    privacyLock: true,
+    blockSiteTelemetry: true,
+    blockSessionRecorder: true,
+    stripPreroll: true,
+    fakeEmptyPartners: true,
+    autoDismissAgeGate: true,
+  });
+
+  const state = {
+    sources: [], // { label, url, server, size }
+    selected: 0,
+    title: '',
+    slug: '',
+    busy: false,
+    controller: null,
+  };
+
+  // 本站业务域（播放必需）
+  const ALLOW_HOST_RE =
+    /(?:^|\.)(?:jerkmotion\.com|plyr\.io)$/i;
+
+  // 媒体/静态资源（必须放行）
+  const MEDIA_PATH_RE =
+    /\/(?:videos|posters|thumbnails|thumbnails-previews|sprites|assets|_next)\//i;
+
+  // 明确广告 / 追踪 / 外联宿主
+  const BLOCK_HOST_RE = new RegExp(
+    [
+      'googletagmanager\\.com',
+      'google-analytics\\.com',
+      'googlesyndication\\.com',
+      'googleadservices\\.com',
+      'doubleclick\\.net',
+      '2mdn\\.net',
+      'gstatic\\.com',
+      'imasdk\\.googleapis\\.com',
+      'pagead2\\.googlesyndication\\.com',
+      'securepubads\\.g\\.doubleclick\\.net',
+      'stats\\.jerkmotion\\.com',
+      'tsyndicate\\.com',
+      'cdn\\.tsyndicate\\.com',
+      'exoclick\\.com',
+      'exdynsrv\\.com',
+      'exosrv\\.com',
+      'exacdn\\.com',
+      'magsrv\\.com',
+      'pemsrv\\.com',
+      'realsrv\\.com',
+      'juicyads',
+      'trafficjunky',
+      'popads',
+      'popcash',
+      'propellerads',
+      'clickadu',
+      'monetag',
+      'admoxi',
+      'applzr\\.com',
+      'live\\.applzr\\.com',
+      'madcheddar\\.net',
+      'gw\\.madcheddar\\.net',
+      'gsrv\\.dev',
+      'cdn\\.gsrv\\.dev',
+      'bkcdn\\.net',
+      'theporndude\\.com',
+      'theporndude\\.vip',
+      'fivestarpornsites\\.com',
+      'leakifyhub\\.fun',
+      'undress\\.cc',
+      'pornworks\\.com',
+      'leakgallery\\.com',
+      't\\.me',
+      'telegram\\.me',
+      'telegram\\.org',
+      'facebook\\.net',
+      'hotjar\\.com',
+      'clarity\\.ms',
+      'scorecardresearch\\.com',
+      'cloudflareinsights\\.com',
+    ].join('|'),
+    'i'
+  );
+
+  // 本站广告/合作方/浏览量上报 API（阻断，不影响视频元数据与列表）
+  const SITE_AD_PATH_RE =
+    /\/(?:partners\b|m\/(?:decide|z|i)\b|view\/)/i;
+
+  // 追踪特征
+  const TRACKER_RE =
+    /(?:googletagmanager|google-analytics|googletagservices|doubleclick|googleadservices|\/g\/collect|\/j\/collect|imasdk|pagead|adsystem|umami|recorder\.js|\/api\/send|stats\.jerkmotion|tsyndicate|exoclick|magsrv|pemsrv|vast\.go|\/instream\/|omweb-v1|gpt\.js)/i;
+
+  const REMOVE_SELECTORS = [
+    '.plyr__ads',
+    'iframe[src*="imasdk"]',
+    'iframe[src*="doubleclick"]',
+    'iframe[src*="googlesyndication"]',
+    'iframe[src*="exoclick"]',
+    'iframe[src*="magsrv"]',
+    'iframe[src*="tsyndicate"]',
+    'iframe[id^="google_ads"]',
+    'iframe[name^="google_ads"]',
+    'ins.adsbygoogle',
+    'ins[class*="eas"]',
+    'ins[data-zoneid]',
+    'div[id^="google_ads"]',
+    'div[id^="ad-"]',
+    'script[src*="googletagmanager"]',
+    'script[src*="google-analytics"]',
+    'script[src*="gtag/js"]',
+    'script[src*="imasdk"]',
+    'script[src*="tsyndicate"]',
+    'script[src*="stats.jerkmotion"]',
+    'script[src*="exoclick"]',
+    'script[src*="magsrv"]',
+    'script[src*="ad-provider"]',
+    'a[href*="theporndude"]',
+    'a[href*="applzr.com"]',
+    'a[href*="fivestarpornsites"]',
+    'a[href*="leakifyhub"]',
+    'a[href*="undress.cc"]',
+    'a[href*="pornworks.com"]',
+    'a[href*="leakgallery"]',
+    'a[href*="t.me/"]',
+    'a[href*="telegram"]',
+    'img[src*="/partners/"]',
+    'img[src*="cdn.jerkmotion.com/partners"]',
+  ].join(',');
+
+  function log(...args) {
+    try {
+      console.debug(LOG_PREFIX, ...args);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function securityError(api) {
+    return new DOMException(`[JerkMotion Clean] blocked ${api}`, 'SecurityError');
+  }
+
+  function replaceValue(target, name, value) {
+    try {
+      Object.defineProperty(target, name, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value,
+      });
+    } catch {
+      try {
+        target[name] = value;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function safeUrl(value) {
+    try {
+      return new URL(String(value), location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function hostOf(value) {
+    const url = safeUrl(value);
+    return url ? url.hostname : '';
+  }
+
+  function getUrl(input) {
+    try {
+      if (!input) return '';
+      if (typeof input === 'string') return input;
+      if (input instanceof URL) return String(input);
+      if (typeof input.url === 'string') return input.url;
+      if (typeof Request !== 'undefined' && input instanceof Request) return input.url;
+      return String(input);
+    } catch {
+      return '';
+    }
+  }
+
+  function isSameSite(value) {
+    const host = hostOf(value);
+    if (!host) return true;
+    return host === location.hostname || /(^|\.)jerkmotion\.com$/i.test(host);
+  }
+
+  function isAllowedHost(value) {
+    const host = hostOf(value);
+    if (!host) return true;
+    return ALLOW_HOST_RE.test(host);
+  }
+
+  function isMediaAsset(value) {
+    const u = safeUrl(value);
+    if (!u) return false;
+    if (!/(^|\.)(?:jerkmotion\.com|plyr\.io)$/i.test(u.hostname)) return false;
+    if (/(^|\.)stats\.jerkmotion\.com$/i.test(u.hostname)) return false;
+    if (/\/partners\//i.test(u.pathname)) return false;
+    if (MEDIA_PATH_RE.test(u.pathname)) return true;
+    if (/\.(?:mp4|webm|m3u8|vtt|jpg|jpeg|png|webp|svg|css|js|woff2?)(?:$|\?)/i.test(u.pathname)) {
+      return true;
+    }
+    // 业务 API（视频元数据、列表、搜索）
+    if (/(^|\.)api\.jerkmotion\.com$/i.test(u.hostname)) {
+      if (SITE_AD_PATH_RE.test(u.pathname + u.search)) return false;
+      return true;
+    }
+    // 页面自身 / RSC
+    if (/(^|\.)jerkmotion\.com$/i.test(u.hostname) && !/(^|\.)stats\./i.test(u.hostname)) {
+      if (SITE_AD_PATH_RE.test(u.pathname + u.search)) return false;
+      return true;
+    }
+    if (/(^|\.)plyr\.io$/i.test(u.hostname)) return true;
+    return false;
+  }
+
+  function isSiteAdApi(value) {
+    const u = safeUrl(value);
+    if (!u) return false;
+    if (!/(^|\.)(?:api\.)?jerkmotion\.com$/i.test(u.hostname)) return false;
+    const pathq = u.pathname + u.search;
+    if (/\/partners\b/i.test(pathq)) return true;
+    if (/\/m\/(?:decide|z|i)\b/i.test(pathq)) return true;
+    if (/[?&]placement=/i.test(pathq) && /partners|decide/i.test(pathq)) return true;
+    return false;
+  }
+
+  function isBlockedUrl(value) {
+    const raw = String(value || '');
+    if (!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return false;
+    if (raw.startsWith('about:')) return false;
+
+    const u = safeUrl(raw);
+    if (!u) return TRACKER_RE.test(raw) || BLOCK_HOST_RE.test(raw);
+
+    // 明确放行媒体与本站业务
+    if (isMediaAsset(u.href) && !isSiteAdApi(u.href)) return false;
+
+    if (BLOCK_HOST_RE.test(u.hostname) || BLOCK_HOST_RE.test(u.href)) return true;
+    if (TRACKER_RE.test(u.href)) return true;
+    if (isSiteAdApi(u.href)) return true;
+    if (/\/partners\//i.test(u.pathname)) return true;
+    if (/(?:^|\.)stats\.jerkmotion\.com$/i.test(u.hostname)) return true;
+
+    // 非白名单第三方
+    if (!isAllowedHost(u.href) && !isSameSite(u.href)) {
+      // 允许常见无害相对/协议相对已在 isSameSite 处理
+      return true;
+    }
+    return false;
+  }
+
+  function isTracker(value) {
+    return isBlockedUrl(value) || TRACKER_RE.test(String(value || ''));
+  }
+
+  function isExternalNav(value) {
+    const href = String(value || '').trim();
+    if (!href || href.startsWith('#') || href.toLowerCase().startsWith('javascript:')) return false;
+    if (href.startsWith('mailto:') || href.startsWith('tel:')) return false;
+    return !isSameSite(href);
+  }
+
+  function fakeJsonResponse(data, status = 200) {
+    try {
+      return new Response(JSON.stringify(data), {
+        status,
+        statusText: 'OK',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function fakeEmptyResponse() {
+    try {
+      return new Response('', {
+        status: 204,
+        statusText: 'No Content',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    } catch {
+      try {
+        return new Response('{}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  function partnersEmptyResponse() {
+    return fakeJsonResponse({ success: true, data: [] });
+  }
+
+  function decideEmptyResponse() {
+    return fakeJsonResponse({ network: null, placement: null, config: null });
+  }
+
+  // ---------- 隐私加固 ----------
+  function hardenPrivacy() {
+    try {
+      replaceValue(window, 'dataLayer', []);
+      replaceValue(window, 'gtag', function gtag() { /* no-op */ });
+      replaceValue(window, 'ga', function ga() { /* no-op */ });
+      replaceValue(window, '_gaq', { push() {} });
+      replaceValue(window, 'googletag', {
+        cmd: { push() {} },
+        pubads() {
+          return {
+            enableSingleRequest() {},
+            collapseEmptyDivs() {},
+            addEventListener() {},
+            setTargeting() {},
+            refresh() {},
+          };
+        },
+        defineSlot() {
+          return { addService() { return this; } };
+        },
+        enableServices() {},
+        display() {},
+        sizeMapping() {
+          return { addSize() { return this; }, build() { return []; } };
+        },
+      });
+    } catch {
+      /* ignore */
+    }
+
+    // Umami / 会话录制
+    try {
+      const noopUmami = function umami() { /* no-op */ };
+      noopUmami.track = function () {};
+      noopUmami.identify = function () {};
+      replaceValue(window, 'umami', noopUmami);
+    } catch {
+      /* ignore */
+    }
+
+    if (SETTINGS.privacyLock) {
+      try {
+        const rawBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+        if (rawBeacon) {
+          navigator.sendBeacon = function (url) {
+            try {
+              if (isTracker(String(url || ''))) return true;
+            } catch {
+              /* ignore */
+            }
+            // 默认丢弃第三方 beacon
+            try {
+              if (!isSameSite(String(url || '')) || /stats\.jerkmotion/i.test(String(url || ''))) {
+                return true;
+              }
+            } catch {
+              return true;
+            }
+            return rawBeacon.apply(navigator, arguments);
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+
+      try {
+        blockMethod(Navigator.prototype, 'getBattery', 'battery');
+        blockMethod(window.Geolocation?.prototype, 'getCurrentPosition', 'geolocation');
+        blockMethod(window.Geolocation?.prototype, 'watchPosition', 'geolocation');
+        blockMethod(window.MediaDevices?.prototype, 'getUserMedia', 'camera/microphone');
+        blockMethod(window.MediaDevices?.prototype, 'enumerateDevices', 'media devices');
+      } catch {
+        /* ignore */
+      }
+
+      try {
+        const blockedRtc = function blockedRtc() {
+          throw securityError('WebRTC');
+        };
+        replaceValue(window, 'RTCPeerConnection', blockedRtc);
+        if ('webkitRTCPeerConnection' in window) {
+          replaceValue(window, 'webkitRTCPeerConnection', blockedRtc);
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // 清理常见追踪 cookie（保留站点必要功能）
+      try {
+        document.cookie.split(';').forEach((c) => {
+          const name = (c.split('=')[0] || '').trim();
+          if (!name) return;
+          if (/^_ga|^_gid|^_gat|^__utm|^_gcl|^IDE|^TP|^umami/i.test(name)) {
+            document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+            document.cookie =
+              name +
+              '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.' +
+              location.hostname.replace(/^www\./, '');
+          }
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  function blockMethod(target, name, label) {
+    if (!target || typeof target[name] !== 'function') return;
+    replaceValue(target, name, function blocked() {
+      throw securityError(label);
+    });
+  }
+
+  // ---------- 伪造/瘫痪 IMA，避免片前广告卡住播放 ----------
+  function installImaStub() {
+    if (!SETTINGS.stripPreroll) return;
+
+    const EventTargetMini = function () {
+      this._listeners = Object.create(null);
+    };
+    EventTargetMini.prototype.addEventListener = function (type, fn) {
+      const t = String(type);
+      if (!this._listeners[t]) this._listeners[t] = [];
+      this._listeners[t].push(fn);
+    };
+    EventTargetMini.prototype.removeEventListener = function (type, fn) {
+      const t = String(type);
+      const list = this._listeners[t];
+      if (!list) return;
+      this._listeners[t] = list.filter((x) => x !== fn);
+    };
+    EventTargetMini.prototype.dispatchEvent = function (event) {
+      const t = String(event?.type || '');
+      const list = (this._listeners[t] || []).slice();
+      for (const fn of list) {
+        try {
+          fn.call(this, event);
+        } catch {
+          /* ignore */
+        }
+      }
+      return true;
+    };
+
+    function makeErrorEvent() {
+      return {
+        type: 'adError',
+        getError() {
+          return {
+            getErrorCode() {
+              return 1009;
+            },
+            getMessage() {
+              return 'ads blocked by jerkmotion-clean';
+            },
+            getType() {
+              return 'adLoadError';
+            },
+          };
+        },
+      };
+    }
+
+    const AdsLoader = function AdsLoader() {
+      EventTargetMini.call(this);
+    };
+    AdsLoader.prototype = Object.create(EventTargetMini.prototype);
+    AdsLoader.prototype.constructor = AdsLoader;
+    AdsLoader.prototype.getSettings = function () {
+      return {
+        setAutoPlayAdBreaks() {},
+        setDisableCustomPlaybackForIOS10Plus() {},
+        setLocale() {},
+        setPlayerType() {},
+        setPlayerVersion() {},
+        setVpaidMode() {},
+      };
+    };
+    AdsLoader.prototype.contentComplete = function () {};
+    AdsLoader.prototype.destroy = function () {};
+    AdsLoader.prototype.requestAds = function () {
+      const self = this;
+      setTimeout(() => {
+        try {
+          self.dispatchEvent(makeErrorEvent());
+        } catch {
+          /* ignore */
+        }
+      }, 0);
+    };
+
+    const AdsRequest = function AdsRequest() {
+      this.adTagUrl = '';
+      this.linearAdSlotWidth = 0;
+      this.linearAdSlotHeight = 0;
+      this.nonLinearAdSlotWidth = 0;
+      this.nonLinearAdSlotHeight = 0;
+    };
+    AdsRequest.prototype.setAdWillAutoPlay = function () {};
+    AdsRequest.prototype.setAdWillPlayMuted = function () {};
+    AdsRequest.prototype.setContinuousPlayback = function () {};
+
+    const AdDisplayContainer = function AdDisplayContainer() {};
+    AdDisplayContainer.prototype.initialize = function () {};
+    AdDisplayContainer.prototype.destroy = function () {};
+
+    const imaStub = {
+      AdDisplayContainer,
+      AdsLoader,
+      AdsRequest,
+      AdsRenderingSettings: function () {},
+      AdsManagerLoadedEvent: { Type: { ADS_MANAGER_LOADED: 'adsManagerLoaded' } },
+      AdEvent: {
+        Type: {
+          CONTENT_PAUSE_REQUESTED: 'contentPauseRequested',
+          CONTENT_RESUME_REQUESTED: 'contentResumeRequested',
+          ALL_ADS_COMPLETED: 'allAdsCompleted',
+          COMPLETE: 'complete',
+          SKIPPED: 'skipped',
+          LOADED: 'loaded',
+          STARTED: 'started',
+          PAUSED: 'paused',
+          RESUMED: 'resumed',
+          AD_BREAK_READY: 'adBreakReady',
+          AD_METADATA: 'adMetadata',
+          LOG: 'log',
+        },
+      },
+      AdErrorEvent: { Type: { AD_ERROR: 'adError' } },
+      ViewMode: { NORMAL: 'normal', FULLSCREEN: 'fullscreen' },
+      settings: {
+        setDisableCustomPlaybackForIOS10Plus() {},
+        setLocale() {},
+        setPlayerType() {},
+        setPlayerVersion() {},
+        setVpaidMode() {},
+        setNumRedirects() {},
+      },
+      ImaSdkSettings: { VpaidMode: { DISABLED: 0, ENABLED: 1, INSECURE: 2 } },
+    };
+
+    const install = () => {
+      try {
+        const g = window.google || {};
+        // 若真实 IMA 已加载，覆盖其关键入口
+        g.ima = imaStub;
+        replaceValue(window, 'google', g);
+        replaceValue(window, 'ima', imaStub);
+      } catch {
+        try {
+          window.google = { ima: imaStub };
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    install();
+    // Plyr 可能异步加载 IMA，持续覆盖
+    let n = 0;
+    const timer = setInterval(() => {
+      install();
+      n += 1;
+      if (n > 40) clearInterval(timer);
+    }, 250);
+  }
+
+  // ---------- 网络守卫 ----------
+  function classifyAndMaybeFake(url) {
+    const raw = String(url || '');
+    if (!raw) return null;
+    if (isSiteAdApi(raw)) {
+      if (/\/partners\b/i.test(raw) && SETTINGS.fakeEmptyPartners) {
+        return partnersEmptyResponse();
+      }
+      if (/\/m\/decide\b/i.test(raw)) {
+        return decideEmptyResponse();
+      }
+      return fakeEmptyResponse();
+    }
+    if (isBlockedUrl(raw) || isTracker(raw)) {
+      return fakeEmptyResponse();
+    }
+    return null;
+  }
+
+  function installNetworkGuards() {
+    if (typeof window.fetch === 'function') {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = function patchedFetch(input, init) {
+        try {
+          const url = getUrl(input);
+          const fake = classifyAndMaybeFake(url);
+          if (fake) {
+            log('block fetch', url.slice(0, 160));
+            return Promise.resolve(fake);
+          }
+          // 捕获直链 / 视频 API
+          if (isMp4Url(url)) captureFromUrl(url);
+          const req = nativeFetch(input, init);
+          if (/api\.jerkmotion\.com\/video\//i.test(url)) {
+            return req
+              .then(async (res) => {
+                try {
+                  const clone = res.clone();
+                  const data = await clone.json();
+                  captureFromApiPayload(data);
+                } catch {
+                  /* ignore */
+                }
+                return res;
+              })
+              .catch((err) => Promise.reject(err));
+          }
+          return req;
+        } catch {
+          /* ignore */
+        }
+        return nativeFetch(input, init);
+      };
+    }
+
+    const nativeOpen = XMLHttpRequest.prototype.open;
+    const nativeSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function patchedOpen(method, url, ...rest) {
+      try {
+        this.__jmUrl = String(url || '');
+        this.__jmBlock = !!(classifyAndMaybeFake(this.__jmUrl) || isBlockedUrl(this.__jmUrl));
+        if (isMp4Url(this.__jmUrl)) captureFromUrl(this.__jmUrl);
+      } catch {
+        this.__jmBlock = false;
+      }
+      if (this.__jmBlock) return undefined;
+      return nativeOpen.call(this, method, url, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function patchedSend(body) {
+      if (this.__jmBlock) {
+        const self = this;
+        setTimeout(() => {
+          try {
+            Object.defineProperty(self, 'readyState', { configurable: true, get: () => 4 });
+            Object.defineProperty(self, 'status', { configurable: true, get: () => 200 });
+            const payload =
+              self.__jmUrl && /\/partners\b/i.test(self.__jmUrl)
+                ? '{"success":true,"data":[]}'
+                : self.__jmUrl && /\/m\/decide\b/i.test(self.__jmUrl)
+                  ? '{"network":null,"placement":null,"config":null}'
+                  : '';
+            Object.defineProperty(self, 'responseText', { configurable: true, get: () => payload });
+            Object.defineProperty(self, 'response', { configurable: true, get: () => payload });
+            if (typeof self.onreadystatechange === 'function') self.onreadystatechange();
+            if (typeof self.onload === 'function') self.onload();
+          } catch {
+            /* ignore */
+          }
+        }, 0);
+        return undefined;
+      }
+      try {
+        if (this.__jmUrl && /api\.jerkmotion\.com\/video\//i.test(this.__jmUrl)) {
+          this.addEventListener('load', function onJmVideoXhr() {
+            try {
+              captureFromApiPayload(JSON.parse(this.responseText || '{}'));
+            } catch {
+              /* ignore */
+            }
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+      return nativeSend.call(this, body);
+    };
+  }
+
+  function patchElementSetters() {
+    const rawSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function patchedSetAttribute(name, value) {
+      try {
+        if (
+          typeof name === 'string' &&
+          typeof value === 'string' &&
+          /^(src|href|data-src|data-href)$/i.test(name) &&
+          isBlockedUrl(value)
+        ) {
+          log('block setAttribute', name, String(value).slice(0, 120));
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      return rawSetAttribute.apply(this, arguments);
+    };
+
+    const patchSrc = (Tag) => {
+      if (!Tag || !Tag.prototype) return;
+      try {
+        const desc = Object.getOwnPropertyDescriptor(Tag.prototype, 'src');
+        if (!desc || !desc.set) return;
+        Object.defineProperty(Tag.prototype, 'src', {
+          configurable: true,
+          enumerable: desc.enumerable,
+          get: desc.get,
+          set(v) {
+            const s = String(v || '');
+            if (isBlockedUrl(s)) {
+              log('block src', Tag.name, s.slice(0, 120));
+              return;
+            }
+            return desc.set.call(this, s);
+          },
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+
+    patchSrc(HTMLScriptElement);
+    patchSrc(HTMLIFrameElement);
+    patchSrc(HTMLImageElement);
+    patchSrc(HTMLSourceElement);
+
+    try {
+      const hrefDesc = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
+      if (hrefDesc?.set) {
+        Object.defineProperty(HTMLAnchorElement.prototype, 'href', {
+          configurable: true,
+          enumerable: hrefDesc.enumerable,
+          get: hrefDesc.get,
+          set(v) {
+            const s = String(v || '');
+            if (isExternalNav(s) || isBlockedUrl(s)) {
+              log('block anchor href', s.slice(0, 120));
+              return;
+            }
+            return hrefDesc.set.call(this, s);
+          },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function installNavigationGuard() {
+    const nativeOpen = window.open?.bind(window);
+    window.open = function patchedOpen(url, ...rest) {
+      const raw = url == null ? '' : String(url);
+      if (raw && (isExternalNav(raw) || isBlockedUrl(raw))) {
+        log('block window.open', raw.slice(0, 120));
+        return null;
+      }
+      if (!nativeOpen) return null;
+      return nativeOpen(url, ...rest);
+    };
+
+    const blockExternal = (event) => {
+      try {
+        const anchor = event.target?.closest?.('a[href]');
+        if (!anchor) return;
+        if (anchor.getAttribute('data-jm-dl') === '1') return;
+        if (event.target?.closest?.('#' + UI_ID)) return;
+        const href = anchor.getAttribute('href') || anchor.href || '';
+        if (!href || href.startsWith('#') || href.toLowerCase().startsWith('javascript:')) return;
+        if (isExternalNav(href) || isBlockedUrl(href)) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          log('block click', href.slice(0, 120));
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    ['click', 'auxclick', 'mousedown', 'pointerdown', 'touchend'].forEach((type) => {
+      document.addEventListener(type, blockExternal, true);
+    });
+  }
+
+  // ---------- DOM 清扫 ----------
+  function isPartnerTile(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      // 含外链且无站内视频链接的推广块
+      const links = [...el.querySelectorAll?.('a[href]') || []];
+      if (!links.length && el.matches?.('a[href]')) links.push(el);
+      if (!links.length) return false;
+      const hasExternal = links.some((a) => isExternalNav(a.getAttribute('href') || a.href));
+      const hasInternalVideo = links.some((a) => {
+        const href = a.getAttribute('href') || '';
+        return isSameSite(href) && /\/video\//i.test(href);
+      });
+      if (hasExternal && !hasInternalVideo) {
+        // 侧栏/页脚合作方网格
+        if (
+          el.matches?.('a[href]') ||
+          el.querySelector?.('img[src*="partners"]') ||
+          /partner|sponsor|affiliate/i.test(el.className || '') ||
+          /theporndude|undress|leakify|pornworks|adult zone|telegram/i.test(el.textContent || '')
+        ) {
+          return true;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+
+  function killPreroll(root = document) {
+    if (!SETTINGS.stripPreroll) return;
+    try {
+      root.querySelectorAll?.('.plyr__ads').forEach((ads) => {
+        try {
+          ads.querySelectorAll('video').forEach((v) => {
+            try {
+              v.pause();
+              v.removeAttribute('src');
+              v.load?.();
+            } catch {
+              /* ignore */
+            }
+            v.remove();
+          });
+          ads.innerHTML = '';
+          ads.style.display = 'none';
+          ads.style.pointerEvents = 'none';
+          ads.setAttribute('aria-hidden', 'true');
+        } catch {
+          /* ignore */
+        }
+      });
+
+      // 移除广告/追踪 iframe（不误伤空 src 占位）
+      root.querySelectorAll?.('iframe').forEach((iframe) => {
+        const src = iframe.src || iframe.getAttribute('src') || '';
+        if (src && (isBlockedUrl(src) || /imasdk|doubleclick|googlesyndication|tsyndicate/i.test(src))) {
+          iframe.remove();
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function prepareMobileVideo(video) {
+    if (!video) return;
+    try {
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.setAttribute('x5-playsinline', 'true');
+      video.setAttribute('x5-video-player-type', 'h5');
+      video.setAttribute('x5-video-player-fullscreen', 'true');
+      video.setAttribute('x5-video-orientation', 'portrait');
+      video.playsInline = true;
+      try { video.disableRemotePlayback = true; } catch { /* ignore */ }
+      if (IS_MOBILE && !video.getAttribute('controls') && !video.closest('.plyr')) {
+        video.setAttribute('controls', '');
+      }
+    } catch { /* ignore */ }
+  }
+
+  function ensureContentPlayable() {
+    try {
+      const plyr = document.querySelector('.plyr');
+      document.querySelectorAll('video').forEach((video) => {
+        const title = String(video.getAttribute('title') || '').toLowerCase();
+        if (title === 'advertisement') return;
+        prepareMobileVideo(video);
+      });
+      if (plyr) plyr.classList.remove('plyr--ads');
+      const ads = document.querySelector('.plyr__ads');
+      if (ads) {
+        ads.style.display = 'none';
+        ads.style.pointerEvents = 'none';
+      }
+    } catch { /* ignore */ }
+  }
+
+  function removeExternalAnchors(root = document) {
+    try {
+      const scope = root.querySelectorAll ? root : document;
+      const nodes = [];
+      if (root?.matches?.('a[href]')) nodes.push(root);
+      scope.querySelectorAll?.('a[href]').forEach((a) => nodes.push(a));
+
+      for (const anchor of nodes) {
+        if (!anchor?.isConnected) continue;
+        const href = anchor.getAttribute('href') || '';
+        if (!isExternalNav(href) && !isBlockedUrl(href)) continue;
+
+        // 优先删掉整块推广卡片
+        const card =
+          anchor.closest(
+            'a[href], li, [class*="partner" i], [class*="sponsor" i], [data-partner], grid, .grid > div'
+          ) || anchor;
+
+        // 避免误删主导航：主导航都是站内路径
+        if (anchor.closest?.('nav, aside nav, header nav')) {
+          // 侧栏里的外链（Telegram / partners）可删
+          if (isExternalNav(href)) {
+            const row = anchor.closest('a, div, li, button') || anchor;
+            row.remove();
+          }
+          continue;
+        }
+
+        if (card && card !== document.body && card !== document.documentElement) {
+          // 若父级是合作方网格中的单项
+          const parent = card.parentElement;
+          card.remove();
+          // 空网格清理
+          if (parent && parent !== document.body && parent.children.length === 0) {
+            const maybeSection = parent.closest('section, div');
+            if (
+              maybeSection &&
+              maybeSection !== document.body &&
+              /partner|sponsor|recommended links|friend/i.test(maybeSection.textContent || '')
+            ) {
+              // 仅当几乎全是外链文案时删除
+            }
+          }
+        } else {
+          anchor.remove();
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function cleanAds(root = document) {
+    if (!root) return;
+    try {
+      killPreroll(root);
+
+      if (root.nodeType === 1) {
+        if (root.matches?.(REMOVE_SELECTORS)) {
+          root.remove();
+          return;
+        }
+        if (isPartnerTile(root)) {
+          root.remove();
+          return;
+        }
+      }
+
+      root.querySelectorAll?.(REMOVE_SELECTORS).forEach((node) => {
+        try {
+          node.remove();
+        } catch {
+          /* ignore */
+        }
+      });
+
+      // 合作方 logo 图
+      root.querySelectorAll?.('img[src*="/partners/"], source[srcset*="/partners/"]').forEach((img) => {
+        const box = img.closest('a, div, li, section') || img;
+        try {
+          box.remove();
+        } catch {
+          /* ignore */
+        }
+      });
+
+      removeExternalAnchors(root);
+      ensureContentPlayable();
+      dismissAgeGate();
+    } catch (err) {
+      log('cleanAds error', err);
+    }
+  }
+
+  function dismissAgeGate() {
+    if (!SETTINGS.autoDismissAgeGate) return;
+    try {
+      // 年龄确认弹窗：自动点确认，减少干扰（不外泄信息）
+      const dialogs = document.querySelectorAll('[role="dialog"], [id^="radix-"]');
+      dialogs.forEach((dlg) => {
+        const text = (dlg.textContent || '').toLowerCase();
+        if (!/age|18\+|restricted|adult|年龄|成年/.test(text)) return;
+        const btn = [...dlg.querySelectorAll('button')].find((b) =>
+          /enter|agree|confirm|continue|i am|进入|同意|确认|已满/i.test(b.textContent || '')
+        );
+        if (btn) {
+          try {
+            btn.click();
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function installStyle() {
+    const css = `
+      ${REMOVE_SELECTORS}{
+        display:none!important;
+        visibility:hidden!important;
+        pointer-events:none!important;
+        width:0!important;height:0!important;
+        overflow:hidden!important;
+        opacity:0!important;
+      }
+      .plyr__ads, .plyr__ads *{
+        display:none!important;
+        pointer-events:none!important;
+        opacity:0!important;
+        max-height:0!important;
+      }
+      iframe[src*="imasdk"],
+      iframe[src*="doubleclick"],
+      iframe[src*="googlesyndication"],
+      iframe[src*="tsyndicate"]{
+        display:none!important;width:0!important;height:0!important;
+      }
+      a[href*="theporndude"],
+      a[href*="applzr.com"],
+      a[href*="fivestarpornsites"],
+      a[href*="leakifyhub"],
+      a[href*="undress.cc"],
+      a[href*="pornworks.com"],
+      a[href*="leakgallery"],
+      a[href*="t.me/"],
+      a[href*="telegram."]{
+        display:none!important;
+      }
+      img[src*="/partners/"]{display:none!important}
+      /* 保证播放器可点 */
+      .plyr, .plyr__video-wrapper, .plyr video{
+        pointer-events:auto!important;
+      }
+      .plyr--paused .plyr__control--overlaid,
+      .plyr--stopped .plyr__control--overlaid{
+        display:flex!important;
+        pointer-events:auto!important;
+        z-index:30!important;
+      }
+    `;
+
+    const mount = () => {
+      let style = document.getElementById(STYLE_ID);
+      if (!style) {
+        style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.setAttribute('data-jm', 'clean');
+        style.textContent = css;
+      }
+      const parent = document.head || document.documentElement;
+      if (parent && !style.isConnected) parent.appendChild(style);
+    };
+
+    mount();
+    const obs = new MutationObserver(() => mount());
+    obs.observe(document.documentElement || document, { childList: true, subtree: true });
+  }
+
+  function installAdCleaner() {
+    installStyle();
+
+    const obs = new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) cleanAds(node);
+        });
+      }
+      // 轻量周期清理片前残留
+      killPreroll(document);
+      ensureContentPlayable();
+    });
+
+    const start = () => {
+      try {
+        obs.observe(document.documentElement || document, { childList: true, subtree: true });
+      } catch {
+        /* ignore */
+      }
+      cleanAds(document);
+    };
+
+    if (document.documentElement) start();
+    else document.addEventListener('DOMContentLoaded', start, { once: true });
+
+    const boot = () => cleanAds(document);
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot, { once: true });
+    } else {
+      boot();
+    }
+    window.addEventListener('load', boot, { once: true });
+
+    // 片前广告可能延迟插入
+    [300, 800, 1500, 3000, 5000, 8000].forEach((ms) => {
+      setTimeout(() => {
+        killPreroll(document);
+        cleanAds(document);
+        ensureContentPlayable();
+      }, ms);
+    });
+  }
+
+  // 拦截动态 createElement 写入广告脚本
+  function patchCreateElement() {
+    const nativeCreate = Document.prototype.createElement;
+    Document.prototype.createElement = function patchedCreate(tagName, options) {
+      const el = nativeCreate.call(this, tagName, options);
+      const tag = String(tagName || '').toLowerCase();
+      if (tag === 'script' || tag === 'iframe' || tag === 'embed' || tag === 'object') {
+        try {
+          const nativeSetAttribute = el.setAttribute.bind(el);
+          el.setAttribute = function (name, value) {
+            if (String(name).toLowerCase() === 'src' && isBlockedUrl(value)) {
+              log('block createElement src', tag, String(value).slice(0, 120));
+              return;
+            }
+            return nativeSetAttribute(name, value);
+          };
+          let currentSrc = '';
+          Object.defineProperty(el, 'src', {
+            configurable: true,
+            enumerable: true,
+            get() {
+              return currentSrc || el.getAttribute?.('src') || '';
+            },
+            set(v) {
+              const val = String(v || '');
+              if (isBlockedUrl(val)) {
+                currentSrc = '';
+                log('block createElement .src', tag, val.slice(0, 120));
+                return;
+              }
+              currentSrc = val;
+              nativeSetAttribute('src', val);
+            },
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      return el;
+    };
+  }
+
+  // ---------- 视频捕获 / 下载 ----------
+  function isMp4Url(url) {
+    return typeof url === 'string' && /\.mp4(?=$|\?|#)/i.test(url) && !/thumbnail|preview|sprite|partner|advertisement/i.test(url);
+  }
+
+  function isDetailPage() {
+    try {
+      return /\/video\/[^/]+/i.test(location.pathname) || !!document.querySelector('.plyr video, video');
+    } catch {
+      return false;
+    }
+  }
+
+  function getSlug() {
+    try {
+      const m = location.pathname.match(/\/video\/([^/?#]+)/i);
+      return m ? decodeURIComponent(m[1]) : '';
+    } catch {
+      return '';
+    }
+  }
+
+  function readPageTitle() {
+    try {
+      const h = document.querySelector('h1, article h1, main h1');
+      if (h && h.textContent) {
+        return h.textContent
+          .trim()
+          .replace(/\s*[-|].*JerkMotion.*$/i, '')
+          .trim()
+          .slice(0, MAX_FILENAME);
+      }
+      return (document.title || 'jerkmotion')
+        .replace(/\s*[-|].*JerkMotion.*$/i, '')
+        .trim()
+        .slice(0, MAX_FILENAME);
+    } catch {
+      return 'jerkmotion';
+    }
+  }
+
+  function sanitizeFilename(name) {
+    return (
+      String(name || 'jerkmotion')
+        .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, MAX_FILENAME) || 'jerkmotion'
+    );
+  }
+
+  function buildFilename(label) {
+    const base = sanitizeFilename(state.title || readPageTitle() || state.slug || 'jerkmotion');
+    const tag = label && !/^mp4$/i.test(label) && !/^直链$/i.test(label) ? `_${String(label).replace(/\s+/g, '')}` : '';
+    return `${base}${tag}.mp4`;
+  }
+
+  function formatSize(bytes) {
+    const n = Number(bytes);
+    if (!n || n < 0) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  }
+
+  function currentSource() {
+    if (!state.sources.length) return null;
+    const idx = Math.min(Math.max(0, state.selected), state.sources.length - 1);
+    return state.sources[idx] || state.sources[0];
+  }
+
+  function addSource(label, url, extra) {
+    if (!url || !isMp4Url(url)) return;
+    const absU = safeUrl(url);
+    if (!absU) return;
+    // 只要本站 CDN / 允许媒体
+    if (!isMediaAsset(absU.href) && !/(^|\.)cdn\.jerkmotion\.com$/i.test(absU.hostname)) return;
+    if (/\/partners\//i.test(absU.pathname)) return;
+
+    const abs = absU.href;
+    const key = abs.split('?')[0];
+    const item = {
+      label: label || 'MP4',
+      url: abs,
+      server: (extra && extra.server) || '',
+      size: (extra && extra.size) || '',
+    };
+    const idx = state.sources.findIndex((s) => s.url.split('?')[0] === key);
+    if (idx >= 0) {
+      const old = state.sources[idx];
+      if (!old.size && item.size) old.size = item.size;
+      if (item.server && !old.server) old.server = item.server;
+      if (item.label && (old.label === 'MP4' || old.label === '直链')) old.label = item.label;
+    } else {
+      state.sources.push(item);
+      log('source', item.label, abs.slice(0, 100));
+    }
+    if (extra && extra.title) state.title = String(extra.title);
+    refreshUi();
+  }
+
+  function captureFromUrl(url, label) {
+    if (!isMp4Url(url)) return;
+    // 过滤预览小片
+    if (/thumbnails-previews|\/preview/i.test(url) && !/\/videos\//i.test(url)) return;
+    if (/\/videos\//i.test(url)) {
+      addSource(label || 'MP4', url);
+    }
+  }
+
+  function captureFromApiPayload(payload) {
+    try {
+      const data = payload && payload.data ? payload.data : payload;
+      if (!data || typeof data !== 'object') return;
+      if (data.title) state.title = String(data.title);
+      if (data.slug) state.slug = String(data.slug);
+
+      const streams = Array.isArray(data.streams) ? data.streams : [];
+      streams.forEach((s, i) => {
+        if (!s || !s.stream_url) return;
+        if (!s.is_active && s.is_active !== undefined && s.is_active !== 1) return;
+        const label =
+          s.server_name ||
+          s.play_type ||
+          (s.priority != null ? `线路${s.priority}` : `线路${i + 1}`);
+        addSource(String(label), s.stream_url, { server: s.server_name || '' });
+      });
+
+      // 偶发 downloads 字段
+      const dls = Array.isArray(data.downloads) ? data.downloads : [];
+      dls.forEach((d, i) => {
+        const u = d && (d.url || d.download_url || d.stream_url);
+        if (u) addSource(d.label || d.quality || `下载${i + 1}`, u);
+      });
+    } catch (err) {
+      log('capture api', err);
+    }
+  }
+
+  function captureFromDom() {
+    try {
+      document.querySelectorAll('video').forEach((v) => {
+        const title = (v.getAttribute('title') || '').toLowerCase();
+        if (title === 'advertisement') return;
+        const src = v.currentSrc || v.src || '';
+        if (src) captureFromUrl(src, '播放中');
+        v.querySelectorAll('source[src]').forEach((s) => captureFromUrl(s.src, 'MP4'));
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function probeFromApi() {
+    const slug = getSlug();
+    if (!slug) return;
+    state.slug = slug;
+    try {
+      const res = await fetch(`https://api.jerkmotion.com/video/${encodeURIComponent(slug)}`, {
+        credentials: 'omit',
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      captureFromApiPayload(json);
+    } catch (err) {
+      log('probe api', err);
+    }
+  }
+
+  function probeFromPage() {
+    captureFromDom();
+    if (!state.title) state.title = readPageTitle();
+    if (!state.slug) state.slug = getSlug();
+    // 异步拉 API，不阻塞 UI
+    probeFromApi();
+  }
+
+  function resetDownloadState(hard) {
+    if (state.controller) {
+      try {
+        state.controller.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+    state.controller = null;
+    state.busy = false;
+    if (hard) {
+      state.sources = [];
+      state.selected = 0;
+      state.title = '';
+      state.slug = getSlug();
+    }
+  }
+
+  function bindTap(el, handler) {
+    if (!el) return;
+    let touched = false;
+    let lastTs = 0;
+    const fire = (e) => {
+      const now = Date.now();
+      if (now - lastTs < 350) {
+        try { e.preventDefault(); e.stopPropagation(); } catch { /* ignore */ }
+        return;
+      }
+      lastTs = now;
+      try {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      } catch { /* ignore */ }
+      handler(e);
+    };
+
+    el.addEventListener(
+      'touchend',
+      (e) => {
+        if (e.touches && e.touches.length > 0) return;
+        touched = true;
+        fire(e);
+        setTimeout(() => { touched = false; }, 450);
+      },
+      { passive: false }
+    );
+
+    el.addEventListener(
+      'pointerup',
+      (e) => {
+        if (e.pointerType === 'mouse' && !IS_TOUCH) return;
+        if (touched) return;
+        if (e.button != null && e.button !== 0) return;
+        fire(e);
+      },
+      { passive: false }
+    );
+
+    el.addEventListener('click', (e) => {
+      if (touched) {
+        try { e.preventDefault(); e.stopPropagation(); } catch { /* ignore */ }
+        return;
+      }
+      fire(e);
+    });
+  }
+
+  function setStatus(text, busy) {
+    const btn = document.getElementById('jm-dl-btn');
+    const status = document.getElementById('jm-dl-status');
+    if (typeof busy === 'boolean') {
+      state.busy = busy;
+      if (btn) btn.dataset.busy = busy ? '1' : '0';
+    }
+    if (btn) {
+      btn.setAttribute('aria-label', text || '下载视频');
+      btn.title = text || '下载视频';
+      const label = btn.querySelector('.jm-label');
+      if (label && !IS_MOBILE) {
+        label.textContent = busy ? String(text || '下载中').slice(0, 8) : '下载';
+      }
+    }
+    if (status) status.textContent = text || '';
+  }
+
+  function refreshUi() {
+    const root = document.getElementById(UI_ID);
+    if (!root) return;
+    const src = currentSource();
+    const qRow = root.querySelector('.jm-q-row');
+    if (qRow) {
+      if (!state.sources.length) {
+        qRow.innerHTML =
+          '<span style="color:#888;font:12px/1.4 system-ui,sans-serif;padding:4px">探测视频中…</span>';
+      } else {
+        qRow.innerHTML = state.sources
+          .map((s, i) => {
+            const size = s.size ? ` ${s.size}` : '';
+            const name = s.server ? `${s.label}` : s.label;
+            return `<button type="button" class="jm-q${i === state.selected ? ' is-active' : ''}" data-q="${i}">${name}${size}</button>`;
+          })
+          .join('');
+        qRow.querySelectorAll('[data-q]').forEach((btn) => {
+          bindTap(btn, () => {
+            state.selected = parseInt(btn.getAttribute('data-q') || '0', 10);
+            refreshUi();
+            const cur = currentSource();
+            setStatus(cur ? `已选 ${cur.label}` : '', false);
+          });
+        });
+      }
+    }
+
+    const actDl = root.querySelector('#jm-act-download');
+    const actCopy = root.querySelector('#jm-act-copy');
+    const actOpen = root.querySelector('#jm-act-open');
+    const actShare = root.querySelector('#jm-act-share');
+    if (actDl) actDl.disabled = !src || state.busy;
+    if (actCopy) actCopy.disabled = !src;
+    if (actOpen) actOpen.disabled = !src;
+    if (actShare) actShare.disabled = !src;
+
+    if (!state.busy) {
+      if (src) {
+        setStatus(
+          `${src.label}${src.size ? ' · ' + src.size : ''} · 共${state.sources.length}条`,
+          false
+        );
+      } else if (isDetailPage()) {
+        setStatus(IS_MOBILE ? '等待播放器…可先点播放' : '等待加载视频地址', false);
+      }
+    }
+  }
+
+  function anchorDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'video.mp4';
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none';
+    // 标记为本工具触发，避免被外链守卫误伤（本就同站 CDN）
+    a.setAttribute('data-jm-dl', '1');
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        a.remove();
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
+  }
+
+  async function copyText(text) {
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch { /* ignore */ }
+
+    if (!ok) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      if (IS_IOS) {
+        ta.contentEditable = 'true';
+        ta.readOnly = false;
+      } else {
+        ta.setAttribute('readonly', '');
+      }
+      ta.style.cssText =
+        'position:fixed;top:10px;left:10px;width:2px;height:2px;padding:0;border:0;opacity:0.01;z-index:2147483647;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.setSelectionRange(0, ta.value.length);
+      try {
+        if (IS_IOS) {
+          const range = document.createRange();
+          range.selectNodeContents(ta);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          ta.setSelectionRange(0, ta.value.length);
+        }
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      try { ta.remove(); } catch { /* ignore */ }
+    }
+
+    if (!ok && IS_MOBILE && navigator.share) {
+      try {
+        await navigator.share({ title: state.title || 'video', text, url: text });
+        return 'share';
+      } catch (err) {
+        if (err && err.name === 'AbortError') return 'cancel';
+      }
+    }
+
+    if (!ok) {
+      window.prompt(IS_IOS ? '长按全选并复制链接：' : '复制视频链接：', text);
+      return 'prompt';
+    }
+    return 'copy';
+  }
+
+  function openMediaUrl(url) {
+    if (!url) return false;
+    try {
+      const win = window.open(url, '_blank');
+      if (win) {
+        try { win.opener = null; } catch { /* ignore */ }
+        return true;
+      }
+    } catch { /* ignore */ }
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.setAttribute('data-jm-dl', '1');
+      a.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { try { a.remove(); } catch { /* ignore */ } }, 1500);
+      return true;
+    } catch { /* ignore */ }
+    if (IS_IOS || IS_MOBILE) {
+      try {
+        location.href = url;
+        return true;
+      } catch { /* ignore */ }
+    }
+    return false;
+  }
+
+  function iframeDownload(url) {
+    try {
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText =
+        'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none;border:0';
+      iframe.src = url;
+      iframe.setAttribute('data-jm-dl', '1');
+      document.body.appendChild(iframe);
+      setTimeout(() => { try { iframe.remove(); } catch { /* ignore */ } }, 60000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * CDN 无 CORS，页面内 fetch 读不了正文。
+   * 下载策略：浏览器直链（a[download]）→ 新标签打开 → 复制给下载器。
+   * 若运行环境注入了 GM_download / GM_xmlhttpRequest，则优先走油猴通道（可自定义文件名）。
+   */
+  function getGmDownload() {
+    try {
+      if (typeof GM_download === 'function') return GM_download;
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (typeof GM !== 'undefined' && typeof GM.download === 'function') return GM.download.bind(GM);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function getGmXhr() {
+    try {
+      if (typeof GM_xmlhttpRequest === 'function') return GM_xmlhttpRequest;
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (typeof GM !== 'undefined' && typeof GM.xmlHttpRequest === 'function') {
+        return GM.xmlHttpRequest.bind(GM);
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function downloadViaGm(url, filename) {
+    const gmDl = getGmDownload();
+    if (gmDl) {
+      return new Promise((resolve, reject) => {
+        try {
+          const ret = gmDl({
+            url,
+            name: filename,
+            saveAs: !IS_MOBILE,
+            onload: () => resolve('gm_download'),
+            onerror: (e) => reject(e || new Error('GM_download failed')),
+            ontimeout: () => reject(new Error('GM_download timeout')),
+          });
+          // 部分实现返回 Promise
+          if (ret && typeof ret.then === 'function') {
+            ret.then(() => resolve('gm_download')).catch(reject);
+          }
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+
+    const gmXhr = getGmXhr();
+    if (!gmXhr) return Promise.reject(new Error('no gm'));
+
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let total = 0;
+      let received = 0;
+      gmXhr({
+        method: 'GET',
+        url,
+        responseType: 'blob',
+        onprogress: (e) => {
+          if (!e) return;
+          if (e.lengthComputable && e.total) {
+            total = e.total;
+            received = e.loaded;
+            const pct = Math.round((received / total) * 100);
+            setStatus(`下载 ${pct}% · ${formatSize(received)}`, true);
+          } else if (e.loaded) {
+            setStatus(`已接收 ${formatSize(e.loaded)}`, true);
+          }
+        },
+        onload: async (res) => {
+          try {
+            const blob =
+              res.response instanceof Blob
+                ? res.response
+                : new Blob([res.response], { type: 'video/mp4' });
+            // 手机优先系统分享
+            if (IS_MOBILE && navigator.canShare) {
+              try {
+                const file = new File([blob], filename, { type: 'video/mp4' });
+                if (navigator.canShare({ files: [file] })) {
+                  await navigator.share({ files: [file], title: filename });
+                  resolve('share');
+                  return;
+                }
+              } catch (err) {
+                if (err && err.name === 'AbortError') {
+                  reject(err);
+                  return;
+                }
+              }
+            }
+            const obj = URL.createObjectURL(blob);
+            anchorDownload(obj, filename);
+            setTimeout(() => URL.revokeObjectURL(obj), IS_IOS ? 180000 : 60000);
+            resolve('gm_xhr_blob');
+          } catch (err) {
+            reject(err);
+          }
+        },
+        onerror: () => reject(new Error('GM_xhr failed')),
+        ontimeout: () => reject(new Error('GM_xhr timeout')),
+      });
+    });
+  }
+
+  async function startDownload(src) {
+    const item = src || currentSource();
+    if (!item) {
+      setStatus('尚未捕获到视频，请先播放或等待加载');
+      probeFromPage();
+      return;
+    }
+    if (state.busy) return;
+
+    const filename = buildFilename(item.label);
+    state.busy = true;
+    state.controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    setStatus(IS_MOBILE ? `下载 ${item.label}…` : `正在下载 ${item.label}…`, true);
+    refreshUi();
+
+    try {
+      // 1) 油猴通道（若宿主提供）
+      if (getGmDownload() || getGmXhr()) {
+        try {
+          const mode = await downloadViaGm(item.url, filename);
+          setStatus(
+            mode === 'share' ? '已分享/保存' : IS_MOBILE ? '已触发下载' : '下载已开始',
+            false
+          );
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            setStatus('已取消', false);
+            return;
+          }
+          log('gm download fallback', err);
+        }
+      }
+
+      // 2) iOS / iPadOS：a[download] 基本无效
+      if (IS_IOS) {
+        const opened = openMediaUrl(item.url);
+        if (!opened) anchorDownload(item.url, filename);
+        setStatus('若未开始：点「复制/分享」用「文件 / 迅雷」', false);
+        return;
+      }
+
+      // 3) 安卓/手机：a[download] + 隐藏 iframe（Via/UC/X5 更稳）
+      if (IS_ANDROID || IS_MOBILE) {
+        anchorDownload(item.url, filename);
+        setTimeout(() => { try { iframeDownload(item.url); } catch { /* ignore */ } }, 200);
+        setStatus(
+          IS_ANDROID
+            ? '已触发下载，可看通知栏；不行就复制/分享直链'
+            : '已触发下载；不行就复制/分享直链',
+          false
+        );
+        return;
+      }
+
+      // 4) 桌面
+      anchorDownload(item.url, filename);
+      setStatus('已触发浏览器下载（跨域时文件名可能是 CDN 原名）', false);
+    } catch (e) {
+      setStatus('下载失败，请复制直链', false);
+      log('download err', e);
+    } finally {
+      state.busy = false;
+      state.controller = null;
+      refreshUi();
+    }
+  }
+
+  function uiCss() {
+    return `
+      #${UI_ID}{
+        position:fixed;
+        right:max(12px, env(safe-area-inset-right, 0px));
+        bottom:max(24px, calc(12px + env(safe-area-inset-bottom, 0px)));
+        z-index:2147483646;
+        font:600 13px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+        color:#fff;
+        user-select:none; -webkit-user-select:none;
+        touch-action:manipulation;
+        -webkit-tap-highlight-color:transparent;
+      }
+      #jm-dl-btn{
+        display:flex; align-items:center; justify-content:center; gap:8px;
+        min-width:44px; min-height:44px; height:44px; padding:0 14px 0 12px; border:0; border-radius:999px;
+        background:linear-gradient(135deg,#ff4d6d,#c9184a);
+        color:#fff; cursor:pointer;
+        box-shadow:0 8px 24px rgba(201,24,74,.35);
+      }
+      #jm-dl-btn:hover, #jm-dl-btn:active{ filter:brightness(1.06); }
+      #jm-dl-btn[data-busy="1"]{ background:linear-gradient(135deg,#fa541c,#d4380d); }
+      #jm-dl-menu{
+        position:absolute; right:0; bottom:calc(100% + 8px);
+        width:min(260px, calc(100vw - 24px));
+        padding:8px; border-radius:12px; background:#141414f2;
+        border:1px solid #ffffff22;
+        backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+        box-shadow:0 12px 32px #0008;
+      }
+      #jm-dl-menu[hidden]{ display:none !important; }
+      #jm-dl-menu .jm-q-row{
+        display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px;
+      }
+      #jm-dl-menu .jm-q{
+        appearance:none; border:1px solid #ffffff22; background:#222; color:#eee;
+        border-radius:999px; padding:6px 10px; font:600 12px/1 system-ui,sans-serif;
+        min-height:32px; cursor:pointer; touch-action:manipulation;
+        -webkit-tap-highlight-color:transparent;
+      }
+      #jm-dl-menu .jm-q.is-active{
+        background:linear-gradient(135deg,#ff4d6d,#c9184a);
+        border-color:transparent; color:#fff;
+      }
+      #jm-dl-menu button.jm-act{
+        display:block; width:100%; margin:0 0 6px; padding:12px;
+        border:0; border-radius:8px; background:#2a2a2a; color:#f5f5f5;
+        text-align:left; cursor:pointer; font:600 13px/1.2 system-ui,sans-serif;
+        min-height:44px; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+      }
+      #jm-dl-menu button.jm-act:hover,
+      #jm-dl-menu button.jm-act:active{ background:#3a3a3a; }
+      #jm-dl-menu button.jm-act:disabled{ opacity:.45; cursor:not-allowed; }
+      #jm-dl-status{
+        margin-top:4px; padding:4px 6px; color:#bbb; font:12px/1.4 system-ui,sans-serif;
+        word-break:break-word;
+      }
+      @media (max-width:820px){
+        #${UI_ID}{
+          right:max(10px, env(safe-area-inset-right, 0px));
+          bottom:max(72px, calc(56px + env(safe-area-inset-bottom, 0px)));
+        }
+        #jm-dl-btn{
+          width:56px; height:56px; min-width:56px; min-height:56px; padding:0;
+          border-radius:50%;
+          box-shadow:0 10px 28px rgba(201,24,74,.45);
+        }
+        #jm-dl-btn .jm-label{ display:none; }
+        #jm-dl-btn svg{ width:24px; height:24px; }
+        #jm-dl-menu{
+          width:min(300px, calc(100vw - 16px));
+          max-height:min(70vh, 420px);
+          overflow:auto;
+          -webkit-overflow-scrolling:touch;
+        }
+        #jm-dl-menu button.jm-act{
+          min-height:48px; padding:14px 12px; font-size:14px;
+        }
+        #jm-dl-menu .jm-q{ min-height:36px; padding:8px 12px; font-size:13px; }
+      }
+      @media (orientation: landscape) and (max-height:500px){
+        #${UI_ID}{
+          bottom:max(12px, env(safe-area-inset-bottom, 0px));
+          right:max(12px, env(safe-area-inset-right, 0px));
+        }
+        #jm-dl-menu{ max-height:min(80vh, 280px); }
+      }
+      @media (max-width:820px){
+        .plyr__controls{
+          padding-bottom:max(6px, env(safe-area-inset-bottom, 0px)) !important;
+        }
+        .plyr, .plyr__video-wrapper, video{
+          max-width:100vw !important;
+        }
+      }
+    `;
+  }
+
+  function ensureUiStyle() {
+    let style = document.getElementById(UI_STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = UI_STYLE_ID;
+      style.setAttribute('data-jm', 'ui');
+      style.textContent = uiCss();
+    } else if (!style.textContent) {
+      style.textContent = uiCss();
+    }
+    const parent = document.head || document.documentElement;
+    if (parent && !style.isConnected) parent.appendChild(style);
+  }
+
+  function createFloatingUI() {
+    if (!isDetailPage()) {
+      const existing = document.getElementById(UI_ID);
+      if (existing) existing.remove();
+      return;
+    }
+    if (document.getElementById(UI_ID)) {
+      refreshUi();
+      return;
+    }
+
+    ensureUiStyle();
+
+    const root = document.createElement('div');
+    root.id = UI_ID;
+    root.setAttribute('data-mobile', IS_MOBILE ? '1' : '0');
+    root.setAttribute('data-ios', IS_IOS ? '1' : '0');
+
+    const dlText = IS_IOS
+      ? '打开下载链接'
+      : IS_MOBILE
+        ? '保存视频 (MP4)'
+        : '下载视频 (MP4)';
+    const tip = IS_IOS
+      ? 'iOS/Stay/Userscripts：优先「分享/复制」到「文件/迅雷」'
+      : IS_MOBILE
+        ? '安卓/Via/ScriptCat：可直接下载；失败用分享或复制到 ADM/迅雷'
+        : '点击下载走 CDN 直链；可用 IDM/Aria2 吃复制的链接';
+
+    const shareBtn = IS_MOBILE
+      ? '<button type="button" class="jm-act" id="jm-act-share">系统分享链接</button>'
+      : '';
+
+    root.innerHTML = `
+      <button id="jm-dl-btn" type="button" data-busy="0" title="下载视频" aria-label="下载视频">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+          <path d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h1z"/>
+        </svg>
+        <span class="jm-label">下载</span>
+      </button>
+      <div id="jm-dl-menu" hidden>
+        <div class="jm-q-row"></div>
+        <button type="button" class="jm-act" id="jm-act-download">${dlText}</button>
+        <button type="button" class="jm-act" id="jm-act-copy">复制直链</button>
+        ${shareBtn}
+        <button type="button" class="jm-act" id="jm-act-open">${IS_MOBILE ? '打开直链' : '新标签打开'}</button>
+        <div id="jm-dl-status">${tip}</div>
+      </div>
+    `;
+
+    const mount = () => {
+      if (!document.body) return false;
+      ensureUiStyle();
+      if (!root.isConnected) document.body.appendChild(root);
+      return true;
+    };
+
+    if (!mount()) {
+      const obs = new MutationObserver(() => {
+        if (mount()) obs.disconnect();
+      });
+      obs.observe(document, { childList: true, subtree: true });
+    }
+
+    const menu = root.querySelector('#jm-dl-menu');
+    const btn = root.querySelector('#jm-dl-btn');
+
+    bindTap(btn, () => {
+      menu.hidden = !menu.hidden;
+      if (!menu.hidden) {
+        probeFromPage();
+        refreshUi();
+      }
+    });
+
+    bindTap(root.querySelector('#jm-act-download'), () => {
+      menu.hidden = true;
+      startDownload();
+    });
+
+    bindTap(root.querySelector('#jm-act-copy'), async () => {
+      const s = currentSource();
+      if (!s) return setStatus('没有可复制的地址', false);
+      const r = await copyText(s.url);
+      if (r === 'cancel') setStatus('已取消', false);
+      else if (r === 'share') setStatus('已分享链接', false);
+      else if (r === 'prompt') setStatus('请手动复制', false);
+      else setStatus('已复制直链', false);
+    });
+
+    const shareEl = root.querySelector('#jm-act-share');
+    if (shareEl) {
+      bindTap(shareEl, async () => {
+        const s = currentSource();
+        if (!s) return setStatus('没有可分享的地址', false);
+        try {
+          if (navigator.share) {
+            await navigator.share({
+              title: state.title || 'video',
+              text: state.title || s.url,
+              url: s.url,
+            });
+            setStatus('已打开系统分享', false);
+            menu.hidden = true;
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') {
+            setStatus('已取消分享', false);
+            return;
+          }
+        }
+        const r = await copyText(s.url);
+        setStatus(r === 'cancel' ? '已取消' : '当前环境无分享，已给出链接', false);
+      });
+    }
+
+    bindTap(root.querySelector('#jm-act-open'), () => {
+      const s = currentSource();
+      if (!s) return;
+      try {
+        const ok = openMediaUrl(s.url);
+        if (!ok) anchorDownload(s.url, buildFilename(s.label));
+        setStatus(ok ? '已打开播放地址' : '打开失败，请复制直链', false);
+        menu.hidden = true;
+      } catch {
+        setStatus('打开失败，请复制直链', false);
+      }
+    });
+
+    if (IS_MOBILE && window.visualViewport) {
+      const syncViewport = () => {
+        try {
+          const vv = window.visualViewport;
+          const bottomGap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+          root.style.bottom =
+            'max(12px, calc(56px + env(safe-area-inset-bottom, 0px) + ' + bottomGap + 'px))';
+        } catch { /* ignore */ }
+      };
+      window.visualViewport.addEventListener('resize', syncViewport);
+      window.visualViewport.addEventListener('scroll', syncViewport);
+      syncViewport();
+    }
+
+    const closeMenu = (e) => {
+      if (!menu.hidden && !root.contains(e.target)) menu.hidden = true;
+    };
+    document.addEventListener('click', closeMenu, true);
+    document.addEventListener('touchstart', closeMenu, { passive: true, capture: true });
+
+    refreshUi();
+  }
+
+  function installSpaWatch() {
+    let last = location.href;
+    const onChange = () => {
+      if (location.href === last) return;
+      last = location.href;
+      resetDownloadState(true);
+      // 等 Next 路由渲染
+      setTimeout(() => {
+        cleanAds(document);
+        if (isDetailPage()) {
+          probeFromPage();
+          createFloatingUI();
+        } else {
+          const root = document.getElementById(UI_ID);
+          if (root) root.remove();
+        }
+      }, 300);
+      setTimeout(() => {
+        if (isDetailPage()) {
+          probeFromPage();
+          createFloatingUI();
+          refreshUi();
+        }
+      }, 1200);
+    };
+
+    try {
+      const wrap = (type) => {
+        const raw = history[type];
+        if (typeof raw !== 'function') return;
+        history[type] = function patchedHistory() {
+          const ret = raw.apply(this, arguments);
+          try {
+            onChange();
+          } catch {
+            /* ignore */
+          }
+          return ret;
+        };
+      };
+      wrap('pushState');
+      wrap('replaceState');
+    } catch {
+      /* ignore */
+    }
+    window.addEventListener('popstate', onChange);
+    // 兜底轮询（部分路由不走 history 钩子）
+    setInterval(() => {
+      if (location.href !== last) onChange();
+    }, 1000);
+  }
+
+  function installMediaHooks() {
+    // 播放器 src 变化时捕获
+    try {
+      const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+      if (desc && desc.set) {
+        Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+          configurable: true,
+          enumerable: desc.enumerable,
+          get: desc.get,
+          set(v) {
+            try {
+              const s = String(v || '');
+              if (isMp4Url(s)) captureFromUrl(s, '播放中');
+            } catch {
+              /* ignore */
+            }
+            return desc.set.call(this, v);
+          },
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+
+    document.addEventListener(
+      'loadedmetadata',
+      (e) => {
+        try {
+          const v = e.target;
+          if (!v || v.tagName !== 'VIDEO') return;
+          if (String(v.getAttribute('title') || '').toLowerCase() === 'advertisement') return;
+          const src = v.currentSrc || v.src;
+          if (src) captureFromUrl(src, '播放中');
+        } catch {
+          /* ignore */
+        }
+      },
+      true
+    );
+  }
+
+    function bootUi() {
+    try { cleanAds(document); } catch { /* ignore */ }
+    probeFromPage();
+    createFloatingUI();
+    ensureContentPlayable();
+  }
+
+  function scheduleMobileRetries() {
+    UI_RETRY_MS.forEach((ms) => {
+      setTimeout(() => {
+        try {
+          cleanAds(document);
+          ensureContentPlayable();
+          if (!isDetailPage()) return;
+          captureFromDom();
+          probeFromPage();
+          createFloatingUI();
+          refreshUi();
+        } catch (err) {
+          log('retry', err);
+        }
+      }, ms);
+    });
+  }
+
+  // ---------- 启动 ----------
+  function boot() {
+    log('boot', {
+      href: location.href,
+      mobile: IS_MOBILE,
+      ios: IS_IOS,
+      android: IS_ANDROID,
+      touch: IS_TOUCH,
+    });
+    hardenPrivacy();
+    installImaStub();
+    patchCreateElement();
+    patchElementSetters();
+    installNetworkGuards();
+    installNavigationGuard();
+    installMediaHooks();
+    installAdCleaner();
+    installSpaWatch();
+
+    const startUi = () => {
+      bootUi();
+      scheduleMobileRetries();
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startUi, { once: true });
+    } else {
+      startUi();
+    }
+    window.addEventListener('load', () => bootUi(), { once: true });
+    window.addEventListener('pageshow', (ev) => {
+      if (ev.persisted || IS_MOBILE) {
+        cleanAds(document);
+        bootUi();
+      }
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        cleanAds(document);
+        ensureContentPlayable();
+        if (isDetailPage()) {
+          captureFromDom();
+          createFloatingUI();
+        }
+      }
+    });
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        createFloatingUI();
+        ensureContentPlayable();
+      }, 300);
+    });
+  }
+
+  boot();
+
+}
+
+  try {
+    if (window[BOOT_FLAG]) return;
+  } catch (e) {}
+
+  var needBridge = false;
+  try {
+    needBridge = isIsolatedWorld();
+  } catch (e) {
+    needBridge = false;
+  }
+
+  if (needBridge) {
+    var code = '(' + JM_MAIN.toString() + ')();';
+    var ok = injectPage(code);
+    if (!ok) {
+      try { JM_MAIN(); } catch (err) {
+        console.error('[jerkmotion-clean] boot failed', err);
+      }
+    }
+    return;
+  }
+
+  try {
+    JM_MAIN();
+  } catch (err) {
+    console.error('[jerkmotion-clean] main failed', err);
+  }
+})();

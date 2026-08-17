@@ -1,0 +1,1292 @@
+// ==UserScript==
+// @name         CherryGasp 去广告·隐私·下载
+// @namespace    local.cherrygasp.clean
+// @version      1.1.0
+// @description  桌面/手机通用：保证 cherrygasp.com 可播、去广告、紧凑悬浮下载、阻断追踪。兼容 Tampermonkey / Violentmonkey / ScriptCat / Via / Userscripts / Stay 等
+// @author       Richy
+// @match        *://cherrygasp.com/*
+// @match        *://*.cherrygasp.com/*
+// @match        *://www.cherrygasp.com/*
+// @run-at       document-start
+// @grant        none
+// @inject-into  page
+// @noframes
+// @homepageURL  https://cherrygasp.com/
+// @license      MIT
+// ==/UserScript==
+
+/**
+ * CherryGasp 工具 v1.1
+ * - 去广告：ExoClick 弹窗/横幅 + DOM/CSS 清扫（不误伤 kt_player）
+ * - 保播放：放行 get_file / player / static
+ * - 紧凑下载：仿 18j 悬浮按钮 + 小菜单（多清晰度）
+ * - 隐私：阻断 GA / stats / sendBeacon / 广告脚本
+ * - 手机：安卓/iOS 扩展适配（触摸、安全区、分享、复制兜底）
+ */
+(() => {
+  'use strict';
+
+  const BOOT_FLAG = '__CHERRYGASP_TOOLS_BOOT__';
+  try {
+    if (window[BOOT_FLAG]) return;
+    window[BOOT_FLAG] = 1;
+  } catch {
+    /* ignore */
+  }
+
+  const UA = String(navigator.userAgent || '');
+  const IS_MOBILE =
+    /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini|HarmonyOS|MicroMessenger|Quark|UCBrowser|HuaweiBrowser|MiuiBrowser|SamsungBrowser|VivoBrowser|OppoBrowser|HeyTapBrowser|Baidu|SogouMobile/i.test(
+      UA
+    ) ||
+    (navigator.maxTouchPoints > 1 && /Macintosh/i.test(UA)) || // iPadOS 桌面 UA
+    (Math.min(screen.width || 0, screen.height || 0) > 0 &&
+      Math.min(screen.width, screen.height) <= 820 &&
+      navigator.maxTouchPoints > 0);
+  const IS_IOS =
+    /iPhone|iPad|iPod/i.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const IS_ANDROID = /Android/i.test(UA);
+  const MAX_FILENAME = IS_MOBILE ? 80 : 120;
+
+  const LOG_PREFIX = '[cherrygasp]';
+  const UI_ID = 'cg-clean-root';
+  const STYLE_ID = 'cg-clean-style';
+
+  const AD_HOST_RE = new RegExp(
+    [
+      'doubleclick\\.net',
+      'googlesyndication\\.com',
+      'googletagmanager\\.com',
+      'google-analytics\\.com',
+      'googleadservices\\.com',
+      'analytics\\.google\\.com',
+      'region1\\.google-analytics\\.com',
+      'mc\\.yandex\\.(ru|com)',
+      'magsrv\\.com',
+      'pemsrv\\.com',
+      'exoclick\\.com',
+      'exdynsrv\\.com',
+      'exosrv\\.com',
+      'exacdn\\.com',
+      'opoxv\\.com',
+      'realsrv\\.com',
+      'realsrvcdn\\.com',
+      'juicyads',
+      'trafficjunky',
+      'tsyndicate',
+      'adsterra',
+      'popads',
+      'popcash',
+      'propellerads',
+      'clickadu',
+      'onclckbn',
+      'monetag',
+      'smartpop',
+      'stripchat',
+      'stripcash',
+      'chaturbate',
+      'xhamsterlive',
+      'bongacams',
+      'livejasmin',
+      'mayzaent',
+      'mavrtracktor',
+      'whitetrafsa',
+      'facebook\\.net',
+      'connect\\.facebook\\.net',
+      'hotjar\\.com',
+      'clarity\\.ms',
+      'scorecardresearch\\.com',
+    ].join('|'),
+    'i'
+  );
+
+  const KEEP_HOST_RE =
+    /(^|\.)(cherrygasp\.com|cloudflare\.com|fonts\.googleapis\.com|fonts\.gstatic\.com|cdnjs\.cloudflare\.com|jsdelivr\.net|unpkg\.com)$/i;
+
+  const REMOVE_SELECTORS = [
+    'ins.eas6a97888e31',
+    'ins[class*="eas6a97888e"]',
+    'ins[data-zoneid]',
+    'ins[class^="eas"]',
+    'iframe[src*="magsrv"]',
+    'iframe[src*="pemsrv"]',
+    'iframe[src*="exoclick"]',
+    'iframe[src*="exdynsrv"]',
+    'iframe[src*="exosrv"]',
+    'iframe[src*="googlesyndication"]',
+    'iframe[src*="doubleclick"]',
+    'iframe[src*="googletagmanager"]',
+    'script[src*="magsrv"]',
+    'script[src*="pemsrv"]',
+    'script[src*="exoclick"]',
+    'script[src*="ad-provider"]',
+    'script[src*="popunder"]',
+    'script[src*="googletagmanager"]',
+    'script[src*="google-analytics"]',
+    'script[src*="gtag/js"]',
+    'a[href*="magsrv.com"]',
+    'a[href*="pemsrv.com"]',
+    'a[href*="exoclick.com"]',
+    'a[href*="exdynsrv.com"]',
+    'div[id^="google_ads"]',
+  ].join(',');
+
+  const state = {
+    sources: [], // {label, url, size, downloadUrl}
+    selected: 0,
+    title: '',
+    videoId: '',
+    busy: false,
+  };
+
+  function log(...args) {
+    try {
+      console.debug(LOG_PREFIX, ...args);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function safeUrl(value) {
+    try {
+      return new URL(String(value), location.href);
+    } catch {
+      return null;
+    }
+  }
+
+  function hostOf(value) {
+    const u = safeUrl(value);
+    return u ? u.hostname : '';
+  }
+
+  function isSameSite(value) {
+    const host = hostOf(value);
+    return !host || host === location.hostname || /(^|\.)cherrygasp\.com$/i.test(host);
+  }
+
+  function isKeepUrl(url) {
+    if (!url) return true;
+    const u = safeUrl(url);
+    if (!u) return false;
+    if (KEEP_HOST_RE.test(u.hostname)) return true;
+    if (isSameSite(u.href)) return true;
+    if (/\/(get_file|player|static|contents|embed)\//i.test(u.pathname)) return true;
+    return false;
+  }
+
+  function isAdUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (isKeepUrl(url)) return false;
+    const u = safeUrl(url);
+    if (!u) return AD_HOST_RE.test(url);
+    if (AD_HOST_RE.test(u.hostname) || AD_HOST_RE.test(u.href)) return true;
+    if (/\/(ads?|banner|popunder|popup|sponsor|ad-provider)\b/i.test(u.pathname)) return true;
+    if (/monetag|adsbygoogle|pagead|popunder|popMagic|idzone=/i.test(u.href)) return true;
+    return false;
+  }
+
+  function isTrackerUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    const u = safeUrl(url);
+    if (!u) return /stats\.php|google-analytics|googletagmanager|\/g\/collect/i.test(url);
+    if (/\/player\/stats\.php/i.test(u.pathname)) return true;
+    if (/google-analytics|googletagmanager|\/g\/collect|\/j\/collect|analytics\.google/i.test(u.href)) {
+      return true;
+    }
+    return AD_HOST_RE.test(u.hostname);
+  }
+
+  function isMp4Url(url) {
+    return typeof url === 'string' && /\.mp4(\/?(\?|$)|\/)/i.test(url);
+  }
+
+  function getUrl(input) {
+    try {
+      if (!input) return '';
+      if (typeof input === 'string') return input;
+      if (typeof input.url === 'string') return input.url;
+      if (typeof Request !== 'undefined' && input instanceof Request) return input.url;
+      return String(input);
+    } catch {
+      return '';
+    }
+  }
+
+  function fakeEmptyResponse() {
+    try {
+      return new Response('', {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  // ---------- 隐私 / 广告守卫（尽早） ----------
+  function hardenPrivacy() {
+    try {
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push = function () {
+        return 0;
+      };
+      window.gtag = function () {};
+      window.ga = function () {};
+      window._gaq = { push() {} };
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      Object.defineProperty(window, 'popMagic', {
+        configurable: true,
+        get() {
+          return {
+            version: 0,
+            init() {},
+            preparePop() {},
+            shouldShow() {
+              return false;
+            },
+            venorShouldShow() {
+              return false;
+            },
+            config: {},
+            open_count: 999,
+          };
+        },
+        set() {},
+      });
+    } catch {
+      try {
+        window.popMagic = {
+          init() {},
+          preparePop() {},
+          shouldShow() {
+            return false;
+          },
+        };
+      } catch {
+        /* ignore */
+      }
+    }
+
+    try {
+      const ap = [];
+      ap.push = function () {
+        return 0;
+      };
+      window.AdProvider = ap;
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      const rawBeacon = navigator.sendBeacon && navigator.sendBeacon.bind(navigator);
+      if (rawBeacon) {
+        navigator.sendBeacon = function (url, data) {
+          try {
+            if (isTrackerUrl(String(url || '')) || isAdUrl(String(url || ''))) return true;
+          } catch {
+            /* ignore */
+          }
+          return rawBeacon(url, data);
+        };
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // 清广告 cookie，保留会话
+    try {
+      document.cookie.split(';').forEach((c) => {
+        const name = (c.split('=')[0] || '').trim();
+        if (!name) return;
+        if (/popmagic|pu_|idzone|exo|venor|^_ga|^_gid|^_gat|^__utm/i.test(name)) {
+          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+          document.cookie =
+            name +
+            '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.' +
+            location.hostname.replace(/^www\./, '');
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function patchElementSetters() {
+    const rawSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function (name, value) {
+      try {
+        if (
+          typeof name === 'string' &&
+          typeof value === 'string' &&
+          /^(src|href|data-src)$/i.test(name) &&
+          (isAdUrl(value) || isTrackerUrl(value))
+        ) {
+          return;
+        }
+      } catch {
+        /* ignore */
+      }
+      return rawSetAttribute.apply(this, arguments);
+    };
+
+    [HTMLScriptElement, HTMLIFrameElement, HTMLImageElement].forEach((Tag) => {
+      if (!Tag || !Tag.prototype) return;
+      try {
+        const desc = Object.getOwnPropertyDescriptor(Tag.prototype, 'src');
+        if (!desc || !desc.set) return;
+        Object.defineProperty(Tag.prototype, 'src', {
+          configurable: true,
+          enumerable: desc.enumerable,
+          get: desc.get,
+          set(v) {
+            const s = String(v);
+            if (isAdUrl(s) || isTrackerUrl(s)) return;
+            return desc.set.call(this, s);
+          },
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  function patchNetwork() {
+    if (typeof window.fetch === 'function') {
+      const rawFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        try {
+          const url = getUrl(input);
+          if (isMp4Url(url) && isSameSite(url)) captureFromUrl(url);
+          if (isAdUrl(url) || isTrackerUrl(url)) {
+            const fake = fakeEmptyResponse();
+            if (fake) return Promise.resolve(fake);
+          }
+        } catch {
+          /* ignore */
+        }
+        return rawFetch(input, init);
+      };
+    }
+
+    const XO = XMLHttpRequest.prototype.open;
+    const XS = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try {
+        const u = String(url || '');
+        this.__cgBlock = isAdUrl(u) || isTrackerUrl(u);
+        if (isMp4Url(u) && isSameSite(u)) captureFromUrl(u);
+      } catch {
+        this.__cgBlock = false;
+      }
+      return XO.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      if (this.__cgBlock) {
+        const self = this;
+        setTimeout(() => {
+          try {
+            Object.defineProperty(self, 'readyState', { configurable: true, get: () => 4 });
+            Object.defineProperty(self, 'status', { configurable: true, get: () => 200 });
+            Object.defineProperty(self, 'responseText', { configurable: true, get: () => '' });
+            Object.defineProperty(self, 'response', { configurable: true, get: () => '' });
+            if (typeof self.onreadystatechange === 'function') self.onreadystatechange();
+            if (typeof self.onload === 'function') self.onload();
+          } catch {
+            /* ignore */
+          }
+        }, 0);
+        return;
+      }
+      return XS.apply(this, arguments);
+    };
+  }
+
+  function patchWindowOpen() {
+    const rawOpen = window.open;
+    window.open = function (url) {
+      try {
+        if (url != null && url !== '' && (isAdUrl(String(url)) || isTrackerUrl(String(url)))) {
+          return null;
+        }
+      } catch {
+        /* ignore */
+      }
+      return rawOpen.apply(this, arguments);
+    };
+
+    const blockAdClick = (e) => {
+      try {
+        const a = e.target && e.target.closest && e.target.closest('a[href]');
+        if (!a) return;
+        if (isAdUrl(a.href)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    ['click', 'auxclick', 'mousedown', 'pointerdown'].forEach((type) => {
+      document.addEventListener(type, blockAdClick, true);
+    });
+  }
+
+  // ---------- 视频捕获 ----------
+  function qualityScore(label) {
+    const m = String(label || '').match(/(\d{3,4})\s*p/i);
+    if (m) return parseInt(m[1], 10);
+    if (/hd|high/i.test(label)) return 720;
+    if (/sd|low/i.test(label)) return 360;
+    return 0;
+  }
+
+  function sanitizeFilename(name) {
+    return (
+      String(name || 'cherrygasp')
+        .replace(/[\\/:*?"<>|]+/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, MAX_FILENAME) || 'cherrygasp'
+    );
+  }
+
+  function readPageTitle() {
+    try {
+      const h = document.querySelector('.video-header-meta h1, h1, .headline h1');
+      if (h && h.textContent) {
+        return h.textContent
+          .trim()
+          .replace(/\s*[-|].*CherryGasp.*$/i, '')
+          .trim()
+          .slice(0, MAX_FILENAME);
+      }
+      return (document.title || 'cherrygasp')
+        .replace(/\s*[-|].*CherryGasp.*$/i, '')
+        .trim()
+        .slice(0, MAX_FILENAME);
+    } catch {
+      return 'cherrygasp';
+    }
+  }
+
+  function buildFilename(label) {
+    const base = sanitizeFilename(state.title || readPageTitle());
+    const q = String(label || '').match(/(\d{3,4})\s*p/i);
+    return base + (q ? '_' + q[1] + 'p' : '') + '.mp4';
+  }
+
+  function toDownloadUrl(playUrl, filename) {
+    const u = safeUrl(playUrl);
+    if (!u) {
+      const join = String(playUrl).indexOf('?') >= 0 ? '&' : '?';
+      return (
+        playUrl +
+        join +
+        'download=true' +
+        (filename ? '&download_filename=' + encodeURIComponent(filename) : '')
+      );
+    }
+    u.searchParams.set('download', 'true');
+    if (filename) u.searchParams.set('download_filename', filename);
+    return u.href;
+  }
+
+  function addSource(label, url, extra) {
+    if (!url || !isMp4Url(url)) return;
+    const absU = safeUrl(url);
+    if (!absU) return;
+    const abs = absU.href;
+    if (/preview|timeline|\.jpg|\.png/i.test(abs) && !/v-acctoken=/i.test(abs)) return;
+
+    const key = abs.split('?')[0];
+    const item = {
+      label: label || 'MP4',
+      url: abs,
+      size: (extra && extra.size) || '',
+      downloadUrl: (extra && extra.downloadUrl) || toDownloadUrl(abs, buildFilename(label)),
+    };
+    const idx = state.sources.findIndex((s) => s.url.split('?')[0] === key);
+    if (idx >= 0) {
+      const old = state.sources[idx];
+      if (!old.size && item.size) old.size = item.size;
+      if (qualityScore(item.label) > qualityScore(old.label)) old.label = item.label;
+      if (item.downloadUrl.indexOf('download=true') >= 0) old.downloadUrl = item.downloadUrl;
+    } else {
+      state.sources.push(item);
+      state.sources.sort((a, b) => qualityScore(b.label) - qualityScore(a.label));
+      log('source', item.label, abs.slice(0, 80));
+    }
+    if (extra && extra.title) state.title = extra.title;
+    if (extra && extra.videoId) state.videoId = String(extra.videoId);
+    refreshUi();
+  }
+
+  function captureFromUrl(url) {
+    if (!url || !isMp4Url(url)) return;
+    if (/preview|timeline/i.test(url) && !/v-acctoken=/i.test(url)) return;
+    const m = String(url).match(/(\d{3,4})p/i);
+    addSource(m ? m[1] + 'p' : 'MP4', url);
+  }
+
+  function parseFlashvarsObject(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    try {
+      if (obj.video_id) state.videoId = String(obj.video_id);
+      if (obj.video_title) state.title = String(obj.video_title);
+      if (obj.event_reporting) obj.event_reporting = '';
+      if (obj.event_reporting2) obj.event_reporting2 = '';
+      if (obj.video_url) addSource(obj.video_url_text || '480p', obj.video_url);
+      if (obj.video_alt_url) addSource(obj.video_alt_url_text || '720p', obj.video_alt_url);
+      for (let i = 2; i <= 8; i++) {
+        const u = obj['video_alt_url' + i];
+        if (u) addSource(obj['video_alt_url' + i + '_text'] || i + 'p', u);
+      }
+    } catch (e) {
+      log('flashvars', e);
+    }
+  }
+
+  function hookKtPlayer() {
+    const wrap = (fn) =>
+      function () {
+        try {
+          for (let i = 0; i < arguments.length; i++) {
+            const a = arguments[i];
+            if (a && typeof a === 'object' && (a.video_url || a.video_alt_url || a.video_id)) {
+              parseFlashvarsObject(a);
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        return fn.apply(this, arguments);
+      };
+
+    try {
+      let current = window.kt_player;
+      if (typeof current === 'function') window.kt_player = wrap(current);
+      Object.defineProperty(window, 'kt_player', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return current;
+        },
+        set(v) {
+          current = typeof v === 'function' ? wrap(v) : v;
+        },
+      });
+    } catch (e) {
+      log('hook kt_player', e);
+    }
+  }
+
+  function isDetailPage() {
+    try {
+      return (
+        /\/video\//i.test(location.pathname) ||
+        !!document.getElementById('kt_player') ||
+        !!document.querySelector('.block-video, .player-holder')
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function probeFromPage() {
+    try {
+      if (window.pageContext && window.pageContext.videoId) {
+        state.videoId = String(window.pageContext.videoId);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
+        try {
+          const data = JSON.parse(el.textContent || '');
+          const list = Array.isArray(data) ? data : [data];
+          list.forEach((item) => {
+            if (!item || item['@type'] !== 'VideoObject') return;
+            if (item.name) state.title = state.title || item.name;
+            if (item.contentUrl) addSource('MP4', item.contentUrl, { title: item.name });
+          });
+        } catch {
+          /* ignore */
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      document.querySelectorAll('a[href*="download=true"], a.clean-pill[href*=".mp4"]').forEach((a) => {
+        const href = a.href || a.getAttribute('href') || '';
+        if (!isMp4Url(href)) return;
+        const text = (a.textContent || '').replace(/\s+/g, ' ').trim();
+        const qm = text.match(/(\d{3,4})\s*p/i);
+        const sm = text.match(/([\d.]+\s*[MG]b)/i);
+        let playUrl = href;
+        try {
+          const u = new URL(href);
+          u.searchParams.delete('download');
+          u.searchParams.delete('download_filename');
+          playUrl = u.href;
+        } catch {
+          /* ignore */
+        }
+        addSource(qm ? qm[1] + 'p' : 'MP4', playUrl, {
+          size: sm ? sm[1] : '',
+          downloadUrl: href,
+          title: readPageTitle(),
+        });
+      });
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      document.querySelectorAll('#kt_player video, .player video, video').forEach((v) => {
+        const src = v.currentSrc || v.src || '';
+        if (src && isMp4Url(src)) captureFromUrl(src);
+        v.querySelectorAll('source').forEach((s) => {
+          if (s.src && isMp4Url(s.src)) captureFromUrl(s.src);
+        });
+      });
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      document.querySelectorAll('script:not([src])').forEach((el) => {
+        const t = el.textContent || '';
+        if (!/video_url\s*:/.test(t)) return;
+        const urlRe =
+          /video_url\s*:\s*'([^']+)'|video_alt_url(\d*)\s*:\s*'([^']+)'|video_url_text\s*:\s*'([^']+)'|video_alt_url(\d*)_text\s*:\s*'([^']+)'|video_id\s*:\s*'([^']+)'|video_title\s*:\s*'([^']+)'/g;
+        let um;
+        const found = { urls: [], texts: {} };
+        while ((um = urlRe.exec(t))) {
+          if (um[1]) found.urls.push({ k: 'main', url: um[1] });
+          if (um[3]) found.urls.push({ k: 'alt' + (um[2] || ''), url: um[3] });
+          if (um[4]) found.texts.main = um[4];
+          if (um[6]) found.texts['alt' + (um[5] || '')] = um[6];
+          if (um[7]) state.videoId = um[7];
+          if (um[8]) state.title = um[8];
+        }
+        found.urls.forEach((it) => {
+          addSource(found.texts[it.k] || (it.k === 'main' ? '480p' : 'HD'), it.url);
+        });
+      });
+    } catch {
+      /* ignore */
+    }
+
+    try {
+      for (const k of Object.keys(window)) {
+        try {
+          const v = window[k];
+          if (v && typeof v === 'object' && v.video_url && v.video_id) parseFlashvarsObject(v);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    refreshUi();
+  }
+
+  function currentSource() {
+    if (!state.sources.length) return null;
+    const i = Math.max(0, Math.min(state.selected, state.sources.length - 1));
+    return state.sources[i];
+  }
+
+  // ---------- DOM 清扫 ----------
+  function injectAdCss() {
+    let style = document.getElementById(STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = STYLE_ID;
+      (document.head || document.documentElement).appendChild(style);
+    }
+    // 广告隐藏 + UI 样式合并
+    style.textContent = adCss() + uiCss();
+  }
+
+  function adCss() {
+    return `
+      ${REMOVE_SELECTORS},
+      iframe[src*="magsrv"], iframe[src*="pemsrv"], iframe[src*="exoclick"],
+      ins[data-zoneid], ins[class^="eas"],
+      a[href*="bestpornsites.top"], a[href*="theporndude.com"], a[href*="theporndude.vip"], a[href*="thepornblender.com"] {
+        display:none !important; visibility:hidden !important; opacity:0 !important;
+        pointer-events:none !important; max-height:0 !important; max-width:0 !important;
+        overflow:hidden !important; position:fixed !important; left:-99999px !important; top:-99999px !important;
+      }
+      body > iframe { display:none !important; pointer-events:none !important; }
+    `;
+  }
+
+  function cleanAds() {
+    injectAdCss();
+    try {
+      document.querySelectorAll(REMOVE_SELECTORS).forEach((el) => {
+        try {
+          el.remove();
+        } catch {
+          /* ignore */
+        }
+      });
+      document.querySelectorAll('script[src], iframe[src]').forEach((el) => {
+        const url = el.src || '';
+        if (url && (isAdUrl(url) || isTrackerUrl(url))) {
+          try {
+            el.remove();
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+      document.querySelectorAll('script:not([src])').forEach((el) => {
+        const t = el.textContent || '';
+        if (/popMagic\.init\s*\(|var\s+adConfig\s*=/.test(t) && !/kt_player|video_url/.test(t)) {
+          try {
+            el.remove();
+          } catch {
+            /* ignore */
+          }
+        }
+        if (/gtag\s*\(\s*['"]config['"]/.test(t) && t.length < 600 && !/kt_player|video_url/.test(t)) {
+          try {
+            el.remove();
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function observe() {
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type !== 'childList') continue;
+        m.addedNodes.forEach((n) => {
+          if (!n || n.nodeType !== 1) return;
+          try {
+            const tag = n.tagName;
+            if (tag === 'INS' && (n.getAttribute('data-zoneid') || /eas/i.test(n.className || ''))) {
+              n.remove();
+              return;
+            }
+            if ((tag === 'SCRIPT' || tag === 'IFRAME') && n.src && (isAdUrl(n.src) || isTrackerUrl(n.src))) {
+              n.remove();
+              return;
+            }
+            if (n.querySelectorAll) {
+              n.querySelectorAll('ins[data-zoneid], iframe[src*="magsrv"], iframe[src*="pemsrv"], script[src*="ad-provider"]').forEach(
+                (el) => {
+                  try {
+                    el.remove();
+                  } catch {
+                    /* ignore */
+                  }
+                }
+              );
+            }
+            if (tag === 'VIDEO' || n.id === 'kt_player') setTimeout(probeFromPage, 200);
+            if (tag === 'SOURCE' && n.src && isMp4Url(n.src)) captureFromUrl(n.src);
+          } catch {
+            /* ignore */
+          }
+        });
+      }
+    });
+    mo.observe(document.documentElement || document, { childList: true, subtree: true });
+  }
+
+  // ---------- 下载（手机优先） ----------
+  async function copyText(text) {
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      }
+    } catch {
+      /* 隐私模式 */
+    }
+
+    if (!ok) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      // iOS 需要在可视区
+      ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0.01;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.setSelectionRange(0, ta.value.length);
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      ta.remove();
+    }
+
+    if (!ok && IS_MOBILE && navigator.share) {
+      try {
+        await navigator.share({ title: state.title || 'video', text: text, url: text });
+        return 'share';
+      } catch (err) {
+        if (err && err.name === 'AbortError') return 'cancel';
+      }
+    }
+
+    if (!ok) {
+      window.prompt(IS_IOS ? '长按全选并复制链接：' : '复制视频链接：', text);
+      return 'prompt';
+    }
+    return 'copy';
+  }
+
+  function anchorDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'video.mp4';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        a.remove();
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
+  }
+
+  async function startDownload(src) {
+    const item = src || currentSource();
+    if (!item) {
+      setStatus('尚未捕获到视频，请先播放');
+      return;
+    }
+    if (state.busy) return;
+
+    const filename = buildFilename(item.label);
+    const dlUrl = item.downloadUrl || toDownloadUrl(item.url, filename);
+    state.busy = true;
+    setStatus(IS_MOBILE ? `下载 ${item.label}…` : `正在下载 ${item.label}…`, true);
+
+    try {
+      // iOS：a[download] 几乎无效，优先新开官方 download 链 / 分享链接
+      if (IS_IOS) {
+        try {
+          const win = window.open(dlUrl, '_blank');
+          if (!win) {
+            // 被拦则用 location 跳同页下载（部分 Safari 可下）
+            anchorDownload(dlUrl, filename);
+          }
+          setStatus('若未开始下载：点「复制链接」到文件 App / 迅雷', false);
+          return;
+        } catch {
+          /* fallthrough */
+        }
+      }
+
+      // 安卓 / 桌面：官方 download 直链最省内存
+      anchorDownload(dlUrl, filename);
+      setStatus(
+        IS_MOBILE
+          ? IS_ANDROID
+            ? '已触发下载，可看通知栏/下载管理'
+            : '已触发下载；不行就复制链接'
+          : '已触发浏览器下载',
+        false
+      );
+    } catch (e) {
+      setStatus('下载失败，请复制链接', false);
+      log('download err', e);
+    } finally {
+      state.busy = false;
+      refreshUi();
+    }
+  }
+
+  // ---------- 紧凑 UI（仿 18j） ----------
+  function bindTap(el, handler) {
+    if (!el) return;
+    let touched = false;
+    el.addEventListener(
+      'touchend',
+      (e) => {
+        if (!e.cancelable) return;
+        touched = true;
+        e.preventDefault();
+        e.stopPropagation();
+        handler(e);
+        setTimeout(() => {
+          touched = false;
+        }, 400);
+      },
+      { passive: false }
+    );
+    el.addEventListener('click', (e) => {
+      if (touched) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      handler(e);
+    });
+  }
+
+  function uiCss() {
+    return `
+      #${UI_ID}{
+        position:fixed;
+        right:max(12px, env(safe-area-inset-right, 0px));
+        bottom:max(24px, calc(12px + env(safe-area-inset-bottom, 0px)));
+        z-index:2147483646;
+        font:600 13px/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+        color:#fff;
+        user-select:none; -webkit-user-select:none;
+        touch-action:manipulation;
+        -webkit-tap-highlight-color:transparent;
+      }
+      #cg-dl-btn{
+        display:flex; align-items:center; justify-content:center; gap:8px;
+        min-width:44px; min-height:44px; height:44px; padding:0 14px 0 12px; border:0; border-radius:999px;
+        background:linear-gradient(135deg,#ff4d6d,#c9184a);
+        color:#fff; cursor:pointer;
+        box-shadow:0 8px 24px rgba(201,24,74,.35);
+      }
+      #cg-dl-btn:hover, #cg-dl-btn:active{ filter:brightness(1.06); }
+      #cg-dl-btn[data-busy="1"]{ background:linear-gradient(135deg,#fa541c,#d4380d); }
+      #cg-dl-menu{
+        position:absolute; right:0; bottom:calc(100% + 8px);
+        width:min(250px, calc(100vw - 24px));
+        padding:8px; border-radius:12px; background:#141414f2;
+        border:1px solid #ffffff22;
+        backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+        box-shadow:0 12px 32px #0008;
+      }
+      #cg-dl-menu[hidden]{ display:none !important; }
+      #cg-dl-menu .cg-q-row{
+        display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px;
+      }
+      #cg-dl-menu .cg-q{
+        appearance:none; border:1px solid #ffffff22; background:#222; color:#eee;
+        border-radius:999px; padding:6px 10px; font:600 12px/1 system-ui,sans-serif;
+        min-height:32px; cursor:pointer; touch-action:manipulation;
+        -webkit-tap-highlight-color:transparent;
+      }
+      #cg-dl-menu .cg-q.is-active{
+        background:linear-gradient(135deg,#ff4d6d,#c9184a);
+        border-color:transparent; color:#fff;
+      }
+      #cg-dl-menu button.cg-act{
+        display:block; width:100%; margin:0 0 6px; padding:12px;
+        border:0; border-radius:8px; background:#2a2a2a; color:#f5f5f5;
+        text-align:left; cursor:pointer; font:600 13px/1.2 system-ui,sans-serif;
+        min-height:44px; touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+      }
+      #cg-dl-menu button.cg-act:hover,
+      #cg-dl-menu button.cg-act:active{ background:#3a3a3a; }
+      #cg-dl-menu button.cg-act:disabled{ opacity:.45; cursor:not-allowed; }
+      #cg-dl-status{
+        margin-top:4px; padding:4px 6px; color:#bbb; font:12px/1.4 system-ui,sans-serif;
+        word-break:break-word;
+      }
+      @media (max-width:820px){
+        #${UI_ID}{
+          right:max(10px, env(safe-area-inset-right, 0px));
+          bottom:max(72px, calc(56px + env(safe-area-inset-bottom, 0px)));
+        }
+        #cg-dl-btn{
+          width:52px; height:52px; min-width:52px; min-height:52px; padding:0;
+          border-radius:50%;
+        }
+        #cg-dl-btn .cg-label{ display:none; }
+        #cg-dl-btn svg{ width:22px; height:22px; }
+        #cg-dl-menu{ width:min(270px, calc(100vw - 20px)); }
+      }
+      @media (orientation: landscape) and (max-height:500px){
+        #${UI_ID}{
+          bottom:max(12px, env(safe-area-inset-bottom, 0px));
+          right:max(12px, env(safe-area-inset-right, 0px));
+        }
+      }
+    `;
+  }
+
+  function setStatus(text, busy) {
+    const btn = document.getElementById('cg-dl-btn');
+    const status = document.getElementById('cg-dl-status');
+    if (typeof busy === 'boolean' && btn) {
+      btn.dataset.busy = busy ? '1' : '0';
+    }
+    if (btn) {
+      btn.setAttribute('aria-label', text || '下载视频');
+      btn.title = text || '下载视频';
+      const label = btn.querySelector('.cg-label');
+      if (label && !IS_MOBILE) {
+        label.textContent = busy ? String(text || '下载中').slice(0, 8) : '下载';
+      }
+    }
+    if (status) status.textContent = text || '';
+  }
+
+  function refreshUi() {
+    const root = document.getElementById(UI_ID);
+    if (!root) return;
+    const src = currentSource();
+    const qRow = root.querySelector('.cg-q-row');
+    if (qRow) {
+      if (!state.sources.length) {
+        qRow.innerHTML = '<span style="color:#888;font:12px/1.4 system-ui,sans-serif;padding:4px">探测视频中…</span>';
+      } else {
+        qRow.innerHTML = state.sources
+          .map((s, i) => {
+            const size = s.size ? ' ' + s.size : '';
+            return `<button type="button" class="cg-q${i === state.selected ? ' is-active' : ''}" data-q="${i}">${s.label}${size}</button>`;
+          })
+          .join('');
+        qRow.querySelectorAll('[data-q]').forEach((btn) => {
+          bindTap(btn, () => {
+            state.selected = parseInt(btn.getAttribute('data-q') || '0', 10);
+            refreshUi();
+            const cur = currentSource();
+            setStatus(cur ? `已选 ${cur.label}` : '', false);
+          });
+        });
+      }
+    }
+    const actDl = root.querySelector('#cg-act-download');
+    const actCopy = root.querySelector('#cg-act-copy');
+    const actOpen = root.querySelector('#cg-act-open');
+    if (actDl) actDl.disabled = !src || state.busy;
+    if (actCopy) actCopy.disabled = !src;
+    if (actOpen) actOpen.disabled = !src;
+
+    if (!state.busy) {
+      if (src) {
+        setStatus(
+          `${src.label}${src.size ? ' · ' + src.size : ''} · 共${state.sources.length}档`,
+          false
+        );
+      } else if (isDetailPage()) {
+        setStatus(IS_MOBILE ? '等待播放器…可先点播放' : '等待播放器加载视频地址', false);
+      }
+    }
+  }
+
+  function createFloatingUI() {
+    if (!isDetailPage()) return;
+    if (document.getElementById(UI_ID)) {
+      refreshUi();
+      return;
+    }
+
+    const root = document.createElement('div');
+    root.id = UI_ID;
+    root.setAttribute('data-mobile', IS_MOBILE ? '1' : '0');
+    root.setAttribute('data-ios', IS_IOS ? '1' : '0');
+
+    const dlText = IS_IOS ? '打开下载链接' : IS_MOBILE ? '保存视频 (MP4)' : '下载视频 (MP4)';
+    const tip = IS_IOS
+      ? 'iOS 建议复制链接用「文件/迅雷」；或点打开后长按视频存储'
+      : IS_MOBILE
+        ? '安卓可直接下载；失败就复制链接到下载器'
+        : '点击下载走官方直链，不占内存';
+
+    root.innerHTML = `
+      <button id="cg-dl-btn" type="button" data-busy="0" title="下载视频" aria-label="下载视频">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+          <path d="M5 20h14v-2H5v2zm7-18v10.17l3.59-3.58L17 10l-5 5-5-5 1.41-1.41L11 12.17V2h1z"/>
+        </svg>
+        <span class="cg-label">下载</span>
+      </button>
+      <div id="cg-dl-menu" hidden>
+        <div class="cg-q-row"></div>
+        <button type="button" class="cg-act" id="cg-act-download">${dlText}</button>
+        <button type="button" class="cg-act" id="cg-act-copy">复制直链</button>
+        <button type="button" class="cg-act" id="cg-act-open">新标签打开</button>
+        <div id="cg-dl-status">${tip}</div>
+      </div>
+    `;
+
+    injectAdCss();
+
+    const mount = () => {
+      if (!document.body) return false;
+      if (!document.getElementById(STYLE_ID)) injectAdCss();
+      if (!root.isConnected) document.body.appendChild(root);
+      return true;
+    };
+
+    if (!mount()) {
+      const obs = new MutationObserver(() => {
+        if (mount()) obs.disconnect();
+      });
+      obs.observe(document, { childList: true, subtree: true });
+    }
+
+    const menu = root.querySelector('#cg-dl-menu');
+    const btn = root.querySelector('#cg-dl-btn');
+
+    bindTap(btn, () => {
+      menu.hidden = !menu.hidden;
+      if (!menu.hidden) {
+        probeFromPage();
+        refreshUi();
+      }
+    });
+
+    bindTap(root.querySelector('#cg-act-download'), () => {
+      menu.hidden = true;
+      startDownload();
+    });
+
+    bindTap(root.querySelector('#cg-act-copy'), async () => {
+      const s = currentSource();
+      if (!s) return setStatus('没有可复制的地址', false);
+      const r = await copyText(s.downloadUrl || s.url);
+      if (r === 'cancel') setStatus('已取消', false);
+      else if (r === 'share') setStatus('已分享链接', false);
+      else if (r === 'prompt') setStatus('请手动复制', false);
+      else setStatus('已复制直链', false);
+    });
+
+    bindTap(root.querySelector('#cg-act-open'), () => {
+      const s = currentSource();
+      if (!s) return;
+      try {
+        window.open(s.url, '_blank', 'noopener');
+        setStatus('已打开播放地址', false);
+        menu.hidden = true;
+      } catch {
+        setStatus('打开失败', false);
+      }
+    });
+
+    const closeMenu = (e) => {
+      if (!menu.hidden && !root.contains(e.target)) menu.hidden = true;
+    };
+    document.addEventListener('click', closeMenu, true);
+    document.addEventListener('touchstart', closeMenu, { passive: true, capture: true });
+
+    refreshUi();
+  }
+
+  function resetOnNav() {
+    let last = location.href;
+    const check = () => {
+      if (location.href === last) return;
+      last = location.href;
+      state.sources = [];
+      state.selected = 0;
+      state.title = '';
+      state.videoId = '';
+      state.busy = false;
+      const old = document.getElementById(UI_ID);
+      if (old) old.remove();
+      setTimeout(() => {
+        cleanAds();
+        probeFromPage();
+        createFloatingUI();
+      }, 250);
+    };
+    setInterval(check, 900);
+    window.addEventListener('popstate', () => setTimeout(check, 50));
+    try {
+      const rawPush = history.pushState;
+      const rawReplace = history.replaceState;
+      history.pushState = function () {
+        const r = rawPush.apply(this, arguments);
+        setTimeout(check, 50);
+        return r;
+      };
+      history.replaceState = function () {
+        const r = rawReplace.apply(this, arguments);
+        setTimeout(check, 50);
+        return r;
+      };
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // ---------- 启动 ----------
+  hardenPrivacy();
+  patchElementSetters();
+  patchNetwork();
+  patchWindowOpen();
+  hookKtPlayer();
+  observe();
+  resetOnNav();
+
+  function bootUi() {
+    cleanAds();
+    probeFromPage();
+    createFloatingUI();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootUi, { once: true });
+  } else {
+    bootUi();
+  }
+
+  window.addEventListener('load', () => {
+    cleanAds();
+    probeFromPage();
+    createFloatingUI();
+  });
+
+  // 手机扩展偶发晚注入 / 返回 bfcache
+  const delays = IS_MOBILE ? [400, 1000, 2000, 4000, 8000] : [500, 1500, 3000];
+  delays.forEach((ms) => {
+    setTimeout(() => {
+      cleanAds();
+      probeFromPage();
+      createFloatingUI();
+    }, ms);
+  });
+
+  window.addEventListener('pageshow', (ev) => {
+    if (ev.persisted || IS_MOBILE) {
+      cleanAds();
+      probeFromPage();
+      createFloatingUI();
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      cleanAds();
+      if (isDetailPage()) {
+        probeFromPage();
+        createFloatingUI();
+      }
+    }
+  });
+
+  log('ready', { mobile: IS_MOBILE, ios: IS_IOS, android: IS_ANDROID });
+})();

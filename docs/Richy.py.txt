@@ -1,0 +1,1319 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+漫画下载 + 本地竖版阅读器（二合一）
+====================================
+一条命令完成「下载 → 像浏览器那样竖版阅读」：
+
+    python comic.py 52065                         # 下载全部章节 → 自动打开竖版阅读器
+    python comic.py "https://bz2vraf.live/comic?id=52065"  # 粘贴详情页链接也行
+    python comic.py 52065 --read                  # 已下载过：跳过下载，直接打开
+    python comic.py 52065 --force                 # 强制重新下载
+    python comic.py --list                        # 列出已下载的漫画
+
+保留原探测工具的用法（结果不进阅读器）：
+    python comic.py "https://host/path/to/file"        # 单链接探测，媒体则保存
+    python comic.py "https://host/comic/337/3/{n}"     # 含 {n} 模板枚举下载
+
+阅读器（同原站 viewer 的竖版 webtoon 风格）：
+    - 左侧章节列表，点击切换；图片竖着连成一长条，整页滚动
+    - 上一话/下一话按钮，键盘 ← → 翻章，Home 回到顶部
+    - 自动记住上次读到的章节
+
+加速下载参数:
+    python comic.py 52065 --workers 24 --chapter-workers 4
+    python comic.py 52065 --force --workers 32   # 强制重下 + 更高并发
+
+依赖: pip install requests
+"""
+
+import argparse
+import base64
+import binascii
+import json
+import os
+import re
+import sys
+import threading
+import time
+import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from html import escape
+from urllib.parse import urlparse, unquote
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# ---------------------------------------------------------------- 配置
+
+API_HOST = "https://api.mikdzer.com"
+IMG_HOST = "https://b5.kammy.cn"
+OUT_ROOT = "out"
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/150.0 Safari/537.36")
+
+# 测试用 JWT（仅用于拉取章节元数据，图片端点匿名可访问）
+TOKEN = ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+         "eyJzaWQiOiI1Mzg1Nzc5IiwibmFtZSI6IkdIVURCNlIzIiwiZXhwIjoxNzg4MDk2NTAwLCJpc3MiOiI0MTRlMTkyN2EzODg0ZjY4ZGVmNzlmNzI4MzgzN2ZkMCJ9."
+         "7himPg5HiPp-YJ35REIhWulD2R80_Fwh0EyZ2vGyckg")
+
+# 下载性能默认值
+DEFAULT_WORKERS = 16          # 全局图片并发数
+DEFAULT_CHAPTER_WORKERS = 3   # 同时下载的章节数
+DEFAULT_DELAY = 0.0           # 请求间隔（并发场景默认不限速）
+DEFAULT_BATCH = 24            # 每批探测/下载页数（单遍发现页数）
+CONNECT_TIMEOUT = 5
+READ_TIMEOUT = 20
+IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".bin")
+
+
+# ---------------------------------------------------------------- 通用网络
+
+_thread_local = threading.local()
+
+
+def _make_session():
+    """带连接池 + 自动重试的 Session（复用 TCP/TLS，显著减少建连开销）"""
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": UA,
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+    })
+    retry_kwargs = dict(
+        total=3,
+        connect=3,
+        read=2,
+        backoff_factor=0.4,
+        status_forcelist=(429, 500, 502, 503, 504),
+        raise_on_status=False,
+    )
+    # urllib3 v1.26+ 用 allowed_methods，更早版本用 method_whitelist
+    try:
+        retry = Retry(allowed_methods=frozenset({"GET"}), **retry_kwargs)
+    except TypeError:
+        retry = Retry(method_whitelist=frozenset({"GET"}), **retry_kwargs)
+    # pool_maxsize 要 >= 并发线程数，否则会排队等连接
+    adapter = HTTPAdapter(pool_connections=32, pool_maxsize=64, max_retries=retry)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+
+def _http_session():
+    """每线程独立 Session（requests.Session 非线程安全，并发下载必须分开）"""
+    s = getattr(_thread_local, "sess", None)
+    if s is None:
+        s = _make_session()
+        _thread_local.sess = s
+    return s
+
+
+def fetch(url, auth=None, timeout=None):
+    if timeout is None:
+        timeout = (CONNECT_TIMEOUT, READ_TIMEOUT)
+    headers = {}
+    if auth:
+        headers["Authorization"] = auth
+    return _http_session().get(url, headers=headers, timeout=timeout, allow_redirects=True)
+
+
+def fmt_bytes(n):
+    for unit in ("B", "KB", "MB"):
+        if n < 1024:
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}GB"
+
+
+def safe_name(url):
+    try:
+        name = unquote(urlparse(url).path).split("/")[-1] or "content"
+        return re.sub(r'[\\/:*?"<>|]', "_", name)
+    except Exception:
+        return "content"
+
+
+# ---------------------------------------------------------------- 媒体识别
+
+MAGIC_MAP = [
+    (b"\xff\xd8\xff",          "jpg",  "JPEG 图片"),
+    (b"\x89PNG\r\n\x1a\n",     "png",  "PNG 图片"),
+    (b"GIF87a",                "gif",  "GIF 图片"),
+    (b"GIF89a",                "gif",  "GIF 图片"),
+    (b"RIFF",                  "webp", "WebP 图片", 8),  # 占位，实际由 sniff_bytes 特判
+    (b"BM",                    "bmp",  "BMP 图片"),
+    (b"II*\x00",               "tif",  "TIFF 图片"),
+    (b"MM\x00*",               "tif",  "TIFF 图片"),
+    (b"ftyp",                  "mp4",  "MP4 视频", 4),
+    (b"PK\x03\x04",            "zip",  "ZIP 压缩包"),
+    (b"%PDF",                  "pdf",  "PDF 文档"),
+    (b"\x1f\x8b",              "gz",   "GZIP 压缩"),
+    (b"\x7fELF",               "elf",  "ELF 可执行文件"),
+    (b"MZ",                    "exe",  "PE/EXE 可执行文件"),
+]
+
+
+def sniff_bytes(raw: bytes):
+    # WebP 结构: 'RIFF'(0-3) + 文件大小(4-7) + 'WEBP'(8-11)
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp", "WebP 图片"
+    for magic, ext, desc, *rest in MAGIC_MAP:
+        offset = rest[0] if rest else 0
+        if offset + len(magic) > len(raw):
+            continue
+        if raw[offset:offset + len(magic)] == magic:
+            return ext, desc
+    return None
+
+
+def sniff_base64_text(text: str):
+    """识别 base64 文本编码的媒体。返回 (ext, desc, raw) 或 None"""
+    s = text.strip()
+    if not s:
+        return None
+    m = re.match(r"^data:([\w/+-]+);base64,", s)
+    if m:
+        return _sniff_decoded(s.split(",", 1)[1])
+    s2 = re.sub(r"\s+", "", s)
+    if not s2 or len(s2) < 24:
+        return None
+    if len(s2) % 4 == 1:
+        return None
+    s2 += "=" * (-len(s2) % 4)
+    if not re.fullmatch(r"[A-Za-z0-9+/]+=*", s2):
+        return None
+    try:
+        raw = base64.b64decode(s2, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw:
+        return None
+    hit = sniff_bytes(raw[:128])
+    if hit:
+        ext, desc = hit
+        return (ext, "base64 编码的 " + desc, raw)
+    return None
+
+
+def _sniff_decoded(b64):
+    try:
+        raw = base64.b64decode(re.sub(r"\s+", "", b64))
+    except (binascii.Error, ValueError):
+        return None
+    hit = sniff_bytes(raw[:128])
+    if hit:
+        ext, desc = hit
+        return (ext, "dataURI " + desc, raw)
+    return None
+
+
+def classify(status, ct, body: bytes):
+    """返回 dict: kind / desc / ext / raw / text / is_media"""
+    ct = (ct or "").split(";")[0].strip().lower()
+    if status != 200:
+        return {"kind": "error" if status >= 400 else "empty",
+                "desc": f"HTTP {status}", "raw": body, "ext": None, "is_media": False}
+
+    if "json" in ct or body.lstrip().startswith(b"{"):
+        try:
+            obj = json.loads(body.decode("utf-8", "replace"))
+            return {"kind": "json", "desc": "JSON 数据", "raw": body, "ext": "json",
+                    "text": json.dumps(obj, ensure_ascii=False)[:300], "is_media": False}
+        except Exception:
+            pass
+
+    hit = sniff_bytes(body[:128])
+    if hit:
+        ext, desc = hit
+        return {"kind": "media", "desc": desc + " (原始二进制)", "raw": body,
+                "ext": ext, "is_media": True}
+
+    try:
+        text = body.decode("utf-8", "replace")
+    except Exception:
+        text = ""
+    if text:
+        h64 = sniff_base64_text(text)
+        if h64:
+            ext, desc, raw = h64
+            return {"kind": "media", "desc": desc, "raw": raw, "ext": ext, "is_media": True}
+
+    low = text.lower().lstrip()
+    if low.startswith("<!doctype") or low.startswith("<html") or "<html" in low[:200]:
+        return {"kind": "html", "desc": "HTML 页面", "raw": body, "ext": "html",
+                "is_media": False, "text": re.sub(r"\s+", " ", text)[:150]}
+
+    return {"kind": "text", "desc": "纯文本", "raw": body, "ext": "txt",
+            "is_media": False, "text": text[:200]}
+
+
+# ---------------------------------------------------------------- 单链接探测 / 枚举
+
+def probe_and_save(url, outdir, auth=None):
+    """探测单链接，媒体则保存。返回 (clazz, saved_path 或 None)"""
+    r = fetch(url, auth=auth)
+    clazz = classify(r.status_code, r.headers.get("Content-Type", ""), r.content)
+    flag = ""
+    if clazz["is_media"]:
+        flag = "  <<< 匿名可访问的媒体内容！"
+    print(f"[{r.status_code}] {url}")
+    print(f"    {clazz['desc']} | 大小 {fmt_bytes(len(r.content))} | "
+          f"Content-Type: {r.headers.get('Content-Type', '-')}{flag}")
+    if clazz.get("text"):
+        print(f"    预览: {clazz['text'][:120]}")
+    saved = None
+    if clazz["is_media"] and clazz.get("raw"):
+        os.makedirs(outdir, exist_ok=True)
+        name = safe_name(url)
+        path = os.path.join(outdir, f"{name}.{clazz['ext']}")
+        with open(path, "wb") as f:
+            f.write(clazz["raw"])
+        saved = path
+        print(f"    已保存: {path}")
+    return clazz, saved
+
+
+def enum_and_save(template, outdir, start=1, stop=200, empty_limit=3, delay=0.2, auth=None):
+    print()
+    print("=" * 60)
+    print(f"枚举 {template}  从 {start} 开始, 连续 {empty_limit} 次空响应自动停止")
+    print("=" * 60)
+    hits, empty_run = 0, 0
+    files = []
+    for i in range(start, stop + 1):
+        u = template.replace("{n}", str(i))
+        try:
+            clazz, saved = probe_and_save(u, outdir, auth=auth)
+        except requests.RequestException as e:
+            print(f"[ERR] {u}\n      请求失败: {e}")
+            empty_run += 1
+        else:
+            if clazz["is_media"]:
+                hits += 1
+                empty_run = 0
+                if saved:
+                    files.append(saved)
+            elif clazz["kind"] == "error":
+                empty_run += 1
+            elif clazz["kind"] in ("empty", "text") and len(clazz.get("raw") or b"") < 150:
+                print("      (空响应, 视为结束)")
+                empty_run += 1
+            else:
+                empty_run = 0
+        if delay:
+            time.sleep(delay)
+        if empty_run >= empty_limit:
+            print(f"\n连续 {empty_run} 次无有效内容, 停止枚举。")
+            break
+    print("-" * 60)
+    print(f"枚举完成: 命中 {hits} 个媒体, 保存 {len(files)} 个文件 → {outdir}")
+    return files
+
+
+# ---------------------------------------------------------------- 下载进度条
+
+def _progress_bar(done, total, width=24):
+    """画一行文本进度条（ASCII，兼容 GBK 控制台）"""
+    if total <= 0:
+        # 页数未知时用不定长提示
+        n = min(done, width)
+        bar = "#" * n + "-" * (width - n)
+        return f"[{bar}] {done}/?  ..."
+    pct = min(done * 100.0 / total, 100.0)
+    filled = int(pct / 100 * width)
+    bar = "#" * filled + "-" * (width - filled)
+    return f"[{bar}] {done}/{total} {pct:5.1f}%"
+
+
+def _enable_ansi():
+    """Windows 10+ 开启虚拟终端，以便多行进度条用 ANSI 光标控制"""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        ENABLE_VT = 0x0004
+        return bool(kernel32.SetConsoleMode(handle, mode.value | ENABLE_VT))
+    except Exception:
+        return False
+
+
+class ChapterProgressDisplay:
+    """
+    多章并行时，为每一话固定一行进度条，实时刷新：
+
+      第 3 话  序章     [########--------] 12/24  50.0%
+      第 4 话  觉醒     [####------------]  8/?  ...
+      第 5 话  对决     [##############--] 20/22  90.9%
+      -------- 总进度 已完成 2/15 话 | 进行中 3 | 已下 40 张 --------
+    """
+
+    def __init__(self, total_chapters):
+        self.total_chapters = total_chapters
+        self.lock = threading.Lock()
+        self.active = {}          # key -> {label, title, done, total}
+        self.order = []           # 显示顺序
+        self.finished = 0
+        self.total_pages_done = 0
+        self.rendered = 0
+        self._last_draw = 0.0
+        self._min_interval = 0.08  # 限频，减少闪烁
+        self.ansi = _enable_ansi() and sys.stdout.isatty()
+        self._dirty = False
+
+    def start(self, key, label, title=""):
+        with self.lock:
+            if key not in self.active:
+                self.order.append(key)
+            self.active[key] = {
+                "label": label,
+                "title": (title or "")[:10],
+                "done": 0,
+                "total": 0,
+            }
+            self._draw(force=True)
+
+    def update(self, key, done, total=0):
+        with self.lock:
+            info = self.active.get(key)
+            if not info:
+                return
+            info["done"] = done
+            if total and total > 0:
+                info["total"] = total
+            now = time.time()
+            if now - self._last_draw >= self._min_interval:
+                self._draw(force=True)
+            else:
+                self._dirty = True
+
+    def finish(self, key, summary_line, pages=0):
+        """章完成：擦除动态区 → 打印固定结果行 → 重绘剩余进度条"""
+        with self.lock:
+            self._draw(force=True)  # 先把挂起的刷新画完
+            self._erase()
+            if key in self.active:
+                del self.active[key]
+                self.order = [k for k in self.order if k != key]
+            self.finished += 1
+            if pages:
+                self.total_pages_done += pages
+            sys.stdout.write(summary_line.rstrip() + "\n")
+            sys.stdout.flush()
+            self.rendered = 0
+            self._draw(force=True)
+
+    def close(self):
+        """全部结束，清掉动态进度区"""
+        with self.lock:
+            self._erase()
+            self.rendered = 0
+            self.active.clear()
+            self.order.clear()
+            sys.stdout.flush()
+
+    # ---- 内部渲染 ----
+
+    def _erase(self):
+        n = self.rendered
+        if n <= 0:
+            return
+        if self.ansi:
+            # 光标上移 n 行，逐行清空
+            sys.stdout.write(f"\033[{n}A")
+            for _ in range(n):
+                sys.stdout.write("\033[2K\033[1B")
+            sys.stdout.write(f"\033[{n}A")
+        else:
+            # 无 ANSI：只能清最后一行残留
+            sys.stdout.write("\r" + " " * 80 + "\r")
+
+    def _fmt_line(self, info):
+        label = info["label"]
+        title = info["title"]
+        head = f"{label}"
+        if title:
+            head = f"{label} {title}"
+        # 固定标签宽度，进度条对齐
+        head = f"{head[:14]:<14}"
+        return f"  {head} {_progress_bar(info['done'], info['total'])}"
+
+    def _draw(self, force=False):
+        if not force and not self._dirty:
+            return
+        self._dirty = False
+        self._last_draw = time.time()
+        self._erase()
+
+        lines = []
+        if self.ansi:
+            for key in self.order:
+                info = self.active.get(key)
+                if info:
+                    lines.append(self._fmt_line(info))
+            lines.append(
+                f"  -------- 总进度 已完成 {self.finished}/{self.total_chapters} 话"
+                f" | 进行中 {len(self.active)}"
+                f" | 已下 {self.total_pages_done + sum(i['done'] for i in self.active.values())} 张 --------"
+            )
+            for line in lines:
+                # 截断过长行，避免换行把布局打乱
+                sys.stdout.write(line[:100] + "\n")
+            self.rendered = len(lines)
+        else:
+            # 降级：单行轮流显示各章（用 | 拼接）
+            parts = []
+            for key in self.order:
+                info = self.active.get(key)
+                if not info:
+                    continue
+                t = info["total"]
+                if t > 0:
+                    parts.append(f"{info['label']} {info['done']}/{t}")
+                else:
+                    parts.append(f"{info['label']} {info['done']}/?")
+            summary = (
+                f"\r  [{self.finished}/{self.total_chapters}] "
+                + " | ".join(parts)
+            )
+            sys.stdout.write(summary[:120] + " " * 6)
+            self.rendered = 0  # 单行模式不用多行擦除
+        sys.stdout.flush()
+
+
+# ---------------------------------------------------------------- 漫画下载
+
+def get_comic_meta(comic_id):
+    r = fetch(f"{API_HOST}/comic/-/{comic_id}", auth="Bearer " + TOKEN)
+    if r.status_code != 200:
+        raise RuntimeError(f"拉取漫画详情失败: HTTP {r.status_code} {r.text[:200]}")
+    data = r.json()
+    if data.get("code") != "0000":
+        raise RuntimeError(f"接口错误: {data.get('desc')}")
+    return data["data"]
+
+
+def decode_media(body: bytes):
+    """把响应解码为 (bytes, ext)。兼容: base64 文本编码 / 原始二进制"""
+    if not body:
+        return b"", "bin"
+    # 1) 优先识别原始二进制（最快路径，绝大多数情况）
+    hit = sniff_bytes(body[:128])
+    if hit:
+        return body, hit[0]
+    # 2) base64 文本编码（站点偶发把图片 base64 后以纯文本返回）
+    #    只在看起来像 ASCII 文本时才尝试，避免大图无谓 decode
+    if len(body) < 50 or body[0] < 0x20 or body[0] > 0x7e:
+        return body, "bin"
+    try:
+        text = body.decode("ascii").strip()
+    except Exception:
+        return body, "bin"
+    if not text:
+        return body, "bin"
+    s = re.sub(r"\s+", "", text)
+    if s and len(s) % 4 != 1 and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", s):
+        try:
+            raw = base64.b64decode(s)
+            hit = sniff_bytes(raw[:128])
+            if hit:
+                return raw, hit[0]
+            if len(raw) < 300:
+                return raw, "bin"
+        except Exception:
+            pass
+    return body, "bin"
+
+
+def fetch_page(comic_id, chapter, page, delay=0):
+    url = f"{IMG_HOST}/content/comic/{comic_id}/{chapter}/{page}"
+    if delay:
+        time.sleep(delay)
+    return fetch(url)
+
+
+def _page_file_exists(ch_dir, page):
+    """判断某页是否已落盘（任意已知扩展名，且体积合理）"""
+    for ext in IMG_EXTS:
+        path = os.path.join(ch_dir, f"{page:03d}{ext}")
+        if os.path.isfile(path) and os.path.getsize(path) >= 400:
+            return True
+    return False
+
+
+def _existing_pages(ch_dir):
+    """扫描章节目录，返回已成功保存的页号集合"""
+    pages = set()
+    if not os.path.isdir(ch_dir):
+        return pages
+    for name in os.listdir(ch_dir):
+        m = re.match(r"^(\d+)\.(jpg|jpeg|png|webp|gif|bmp|bin)$", name, re.I)
+        if not m:
+            continue
+        path = os.path.join(ch_dir, name)
+        if os.path.isfile(path) and os.path.getsize(path) >= 400:
+            pages.add(int(m.group(1)))
+    return pages
+
+
+def _is_valid_image_response(status, body):
+    """判断响应是否为有效图片页（空页/错误 = 章节结束）"""
+    if status != 200 or not body or len(body) < 800:
+        return False
+    raw, _ext = decode_media(body)
+    return bool(raw) and len(raw) >= 400
+
+
+def _dl_one_page(comic_id, num, ch_dir, page, delay=0, force=False):
+    """
+    下载单页并落盘。
+    返回: ("ok", page) | ("empty", page) | ("err", page)
+    - empty: 真正没这页（章末），不要重试
+    - err: 网络/5xx 等，可重试；不可当成章末
+    """
+    if not force and _page_file_exists(ch_dir, page):
+        return "ok", page
+    try:
+        r = fetch_page(comic_id, num, page, delay)
+    except requests.RequestException:
+        return "err", page
+    # 服务端错误 / 限流 → 重试，切勿当章末
+    if r.status_code >= 500 or r.status_code == 429:
+        return "err", page
+    if r.status_code != 200:
+        return "empty", page
+    if not _is_valid_image_response(r.status_code, r.content):
+        return "empty", page
+    raw, ext = decode_media(r.content)
+    try:
+        os.makedirs(ch_dir, exist_ok=True)
+        with open(os.path.join(ch_dir, f"{page:03d}.{ext}"), "wb") as f:
+            f.write(raw)
+        return "ok", page
+    except OSError:
+        return "err", page
+
+
+def _download_chapter_fast(comic_id, num, ch_dir, max_pages, delay, executor,
+                           batch_size=DEFAULT_BATCH, progress_cb=None, force=False):
+    """
+    单遍并发下载一章：边下边发现页数，不再「先探测再下载」双倍流量。
+
+    策略：
+      1. 本地已有页直接跳过；从「最大已有页附近」继续向外探
+      2. 按 batch 并发拉页（默认 24 页一批）
+      3. 出现空页 → 取最小空页号 - 1 作为章末，补拉缺口
+      4. 失败页最多重试 3 轮
+    返回 (成功页数, 失败页号列表, 章末页号)
+    """
+    os.makedirs(ch_dir, exist_ok=True)
+    done = set() if force else _existing_pages(ch_dir)
+    failed = set()
+    end_page = None  # 已知的最后一页（含）；None 表示尚未触底
+    # 连续整批网络失败则停止，避免空转刷到 max_pages
+    all_err_streak = 0
+
+    def _run_pages(pages):
+        """并发下载一组页号，返回 {page: status}"""
+        if not force:
+            pages = [p for p in pages if p not in done]
+        if not pages:
+            return {}
+        futs = {
+            executor.submit(_dl_one_page, comic_id, num, ch_dir, p, delay, force): p
+            for p in pages
+        }
+        results = {}
+        for fut in as_completed(futs):
+            page = futs[fut]
+            try:
+                status, _ = fut.result()
+            except Exception:
+                status = "err"
+            results[page] = status
+            if status == "ok":
+                done.add(page)
+                failed.discard(page)
+            elif status == "empty":
+                failed.discard(page)
+            else:
+                failed.add(page)
+            if progress_cb:
+                # 尚未探到章末时 total=0 → 进度条显示 n/? ；触底后显示百分比
+                known_total = end_page if end_page is not None else 0
+                progress_cb(len(done), known_total)
+        return results
+
+    # 续传：先把已有页中间的空洞补上，再从 max+1 继续向后探
+    if done and not force:
+        mx = max(done)
+        holes = [p for p in range(1, mx + 1) if p not in done]
+        if holes:
+            _run_pages(holes)
+        start = mx + 1
+    else:
+        start = 1
+
+    while start <= max_pages:
+        if end_page is not None and start > end_page:
+            break
+        batch_end = min(start + batch_size - 1, max_pages)
+        if end_page is not None:
+            batch_end = min(batch_end, end_page)
+        batch = list(range(start, batch_end + 1))
+        results = _run_pages(batch)
+
+        # 已有本地文件的页视为 ok
+        for p in batch:
+            if p in done:
+                results.setdefault(p, "ok")
+
+        if not results:
+            # 整批都是本地已有
+            start = batch_end + 1
+            continue
+
+        empties = sorted(p for p, st in results.items() if st == "empty")
+        if empties:
+            first_empty = empties[0]
+            # 空页之前若还有未完成的 err，先不截断到更小；以 first_empty-1 为候选章末
+            end_page = first_empty - 1
+            for p in list(failed):
+                if p > end_page:
+                    failed.discard(p)
+            break
+
+        err_only = results and all(st == "err" for st in results.values())
+        if err_only:
+            all_err_streak += 1
+            if all_err_streak >= 2 and not done:
+                break
+            if all_err_streak >= 3:
+                break
+        else:
+            all_err_streak = 0
+
+        start = batch_end + 1
+
+    if end_page is None:
+        # 从未遇到空页：以已成功的最大页为准（可能触达 max_pages）
+        end_page = max(done) if done else 0
+
+    # 补拉 end_page 范围内的失败/缺口
+    if end_page > 0:
+        for _ in range(3):
+            missing = [p for p in range(1, end_page + 1) if p not in done]
+            if not missing:
+                break
+            _run_pages(missing)
+
+    final_failed = [p for p in range(1, end_page + 1) if p not in done]
+    if progress_cb and end_page > 0:
+        progress_cb(len(done), end_page)
+    return len(done), final_failed, end_page
+
+
+def load_title(comic_dir):
+    """读漫画目录下的 meta.json，取真实书名（无则返回 None）"""
+    try:
+        with open(os.path.join(comic_dir, "meta.json"), encoding="utf-8") as f:
+            return json.load(f).get("title")
+    except Exception:
+        return None
+
+
+def _chapter_dir_name(num, ch_title):
+    safe_title = re.sub(r'[\\/:*?"<>|]', "_", ch_title)
+    return f"ch{num:02d}_{safe_title}"
+
+
+def _find_existing_chapter_dir(base_dir, num):
+    """按章节号定位已有目录（标题可能变）"""
+    if not os.path.isdir(base_dir):
+        return None
+    prefix = f"ch{num:02d}_"
+    prefix2 = f"ch{num}_"
+    for entry in os.listdir(base_dir):
+        p = os.path.join(base_dir, entry)
+        if not os.path.isdir(p):
+            continue
+        if entry.startswith(prefix) or entry.startswith(prefix2):
+            return p
+        m = re.match(r"ch0*" + str(num) + r"(_|$)", entry, re.I)
+        if m:
+            return p
+    return None
+
+
+def _write_chapter_done_marker(ch_dir, page_count):
+    """章下载完成后写标记，下次可秒跳过（避免每章再发尾页探测）"""
+    try:
+        with open(os.path.join(ch_dir, ".done"), "w", encoding="utf-8") as f:
+            json.dump({"pages": page_count, "ts": int(time.time())}, f)
+    except OSError:
+        pass
+
+
+def _chapter_is_done(ch_dir):
+    """有 .done 标记且页文件基本齐全 → 可跳过"""
+    marker = os.path.join(ch_dir, ".done")
+    if not os.path.isfile(marker):
+        return False
+    try:
+        with open(marker, encoding="utf-8") as f:
+            meta = json.load(f)
+        expect = int(meta.get("pages") or 0)
+    except Exception:
+        return False
+    if expect <= 0:
+        return False
+    pages = _existing_pages(ch_dir)
+    return len(pages) >= expect and (not pages or max(pages) >= expect)
+
+
+def download_comic(comic_id, outdir=OUT_ROOT, delay=DEFAULT_DELAY, max_pages=200,
+                   force=False, workers=DEFAULT_WORKERS,
+                   chapter_workers=DEFAULT_CHAPTER_WORKERS, batch_size=DEFAULT_BATCH):
+    """
+    高速下载全部章节到 out/<id>/chXX_标题/。
+
+    优化点：
+      - 单遍并发：边下边发现页数，不再先探测再下载（流量减半）
+      - 多章并行：默认同时下 3 话
+      - 连接池复用 + 自动重试
+      - 页级断点续传：已有文件直接跳过；.done 标记秒跳整章
+    """
+    print(f"\n解析漫画 id={comic_id} ...")
+    meta = get_comic_meta(comic_id)
+    title = meta.get("title", str(comic_id))
+    chapters = meta["chapters"]
+    print(f"漫画: {title}  共 {len(chapters)} 话")
+    print(f"加速: 图片并发 {workers} / 章节并行 {chapter_workers} / "
+          f"每批 {batch_size} 页 / 间隔 {delay}s")
+
+    base_dir = os.path.join(outdir, str(comic_id))
+    os.makedirs(base_dir, exist_ok=True)
+
+    with open(os.path.join(base_dir, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump({"id": str(comic_id), "title": title}, f, ensure_ascii=False)
+
+    tasks = []
+    skipped = 0
+    for ch in chapters:
+        num = ch["number"]
+        point = ch.get("point", 0)
+        ch_title = ch.get("title", f"第{num}话")
+        exist_dir = _find_existing_chapter_dir(base_dir, num)
+        ch_dir = exist_dir or os.path.join(base_dir, _chapter_dir_name(num, ch_title))
+        if exist_dir and not force and _chapter_is_done(exist_dir):
+            n_pages = len(_existing_pages(exist_dir))
+            skipped += 1
+            vip = "VIP" if point > 0 else "免费"
+            print(f"{num:<6}{ch_title[:18]:<20}{point:<6}{n_pages:<6}{vip}  跳过(已有)")
+            continue
+        tasks.append({
+            "num": num,
+            "title": ch_title,
+            "point": point,
+            "ch_dir": ch_dir,
+        })
+
+    if not tasks:
+        print(f"全部 {skipped} 话已在本地，无需下载。")
+        return {"id": str(comic_id), "path": base_dir,
+                "chapters": find_chapters(base_dir), "title": title}
+
+    print(f"待下载 {len(tasks)} 话" + (f"（跳过已有 {skipped} 话）" if skipped else ""))
+    print("-" * 60)
+    print(f"{'话':<6}{'标题':<18}{'阅币':<6}{'页数':<6}{'状态'}")
+    print("-" * 60)
+
+    total_images = 0
+    total_failed = 0
+    t0 = time.time()
+    state_lock = threading.Lock()
+    progress = ChapterProgressDisplay(len(tasks))
+
+    # 全局图片线程池 + 章节级并行
+    with ThreadPoolExecutor(max_workers=workers) as img_pool:
+        def _one_chapter(task):
+            num = task["num"]
+            ch_dir = task["ch_dir"]
+            ch_title = task["title"]
+            key = num
+            label = f"第{num}话"
+            progress.start(key, label, ch_title)
+
+            def progress_cb(done, total):
+                progress.update(key, done, total if total else 0)
+
+            try:
+                count, failed, end_page = _download_chapter_fast(
+                    comic_id, num, ch_dir, max_pages, delay, img_pool,
+                    batch_size=batch_size, progress_cb=progress_cb, force=force,
+                )
+            except Exception as e:
+                progress.finish(key, f"{num:<6}{ch_title[:16]:<18}{'':<6}{0:<6}失败: {e}")
+                return task, 0, [], 0
+
+            if count and not failed and end_page > 0:
+                _write_chapter_done_marker(ch_dir, end_page)
+
+            point = task["point"]
+            vip = "VIP" if point > 0 else "免费"
+            if count:
+                status = "完成"
+                if failed:
+                    status = f"缺{len(failed)}页{failed[:6]}"
+                summary = (f"{num:<6}{ch_title[:16]:<18}{point:<6}{count:<6}"
+                           f"{vip}  {status}")
+            else:
+                summary = f"{num:<6}{ch_title[:16]:<18}{point:<6}{0:<6}无内容"
+            progress.finish(key, summary, pages=count)
+            return task, count, failed, end_page
+
+        chapter_workers = max(1, min(chapter_workers, len(tasks)))
+        try:
+            with ThreadPoolExecutor(max_workers=chapter_workers) as ch_pool:
+                futs = [ch_pool.submit(_one_chapter, t) for t in tasks]
+                for fut in as_completed(futs):
+                    task, count, failed, end_page = fut.result()
+                    with state_lock:
+                        total_images += count
+                        total_failed += len(failed)
+        finally:
+            progress.close()
+
+    elapsed = max(time.time() - t0, 0.001)
+    print("-" * 60)
+    print(f"完成！新下/续传 {total_images} 张"
+          + (f"（失败 {total_failed}）" if total_failed else "")
+          + f"  耗时 {elapsed:.1f}s  约 {total_images / elapsed:.1f} 张/秒")
+    print(f"保存位置: {os.path.abspath(base_dir)}")
+    return {"id": str(comic_id), "path": base_dir,
+            "chapters": find_chapters(base_dir), "title": title}
+
+
+# ---------------------------------------------------------------- 扫描已下载漫画
+
+def find_chapters(comic_dir):
+    """识别章节目录: ch01_标题 / 第1话 / 01_xxx 等"""
+    chapters = []
+    if not os.path.isdir(comic_dir):
+        return chapters
+    for entry in sorted(os.listdir(comic_dir)):
+        p = os.path.join(comic_dir, entry)
+        if not os.path.isdir(p):
+            continue
+        files = sorted(f for f in os.listdir(p)
+                       if re.search(r"\.(jpg|jpeg|png|webp|gif|bmp)$", f, re.I))
+        if not files:
+            continue
+        # 解析章节序号
+        num = None
+        m = re.match(r"ch(\d+)", entry, re.I)
+        if m:
+            num = int(m.group(1))
+        else:
+            m = re.match(r"第?\s*(\d+)\s*话", entry)
+            if m:
+                num = int(m.group(1))
+            else:
+                m = re.match(r"(\d+)", entry)
+                if m:
+                    num = int(m.group(1))
+        if num is None:
+            num = len(chapters) + 1
+        chapters.append({
+            "num": num,
+            "title": entry,
+            "dir": entry,
+            "files": files,
+        })
+    chapters.sort(key=lambda c: c["num"])
+    return chapters
+
+
+def find_comics(root):
+    """扫描 out/ 下所有含 ch* 章节目录的漫画目录"""
+    comics = []
+    if not os.path.isdir(root):
+        return comics
+    for entry in sorted(os.listdir(root)):
+        p = os.path.join(root, entry)
+        if os.path.isdir(p):
+            chapters = find_chapters(p)
+            if chapters:
+                comics.append({"id": entry, "path": p,
+                               "chapters": chapters, "title": load_title(p)})
+    return comics
+
+
+def load_local_comic(comic_id, outdir=OUT_ROOT):
+    """本地已下载则返回 comic 字典，否则 None"""
+    path = os.path.join(outdir, str(comic_id))
+    if not os.path.isdir(path):
+        return None
+    chapters = find_chapters(path)
+    if not chapters:
+        return None
+    return {"id": str(comic_id), "path": path, "chapters": chapters,
+            "title": load_title(path)}
+
+
+# ---------------------------------------------------------------- 竖版阅读器 HTML
+
+READER_HTML = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} · 本地阅读器</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  html,body {{ background:#0d0d12; color:#e8e8ef; font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif; height:100%; }}
+  #app {{ display:flex; height:100vh; overflow:hidden; }}
+  /* ---- 左侧章节栏 ---- */
+  #sidebar {{ width:230px; flex:0 0 230px; background:#16161f; border-right:1px solid #26262f;
+    display:flex; flex-direction:column; overflow:hidden; transition:margin-left .2s; }}
+  #sidebar.hidden {{ margin-left:-230px; }}
+  #side-head {{ padding:14px 12px; border-bottom:1px solid #26262f; }}
+  #side-head .c-title {{ font-size:15px; font-weight:bold; color:#ff5d66;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+  #side-head .c-sub {{ font-size:11px; color:#888; margin-top:2px; }}
+  #ch-list {{ flex:1; overflow-y:auto; padding:6px 0; }}
+  .ch-item {{ display:flex; align-items:center; gap:8px; padding:9px 14px; cursor:pointer;
+    color:#b8b8c8; border-left:3px solid transparent; }}
+  .ch-item:hover {{ background:#1f1f2b; }}
+  .ch-item.active {{ background:#242434; color:#fff; border-left-color:#ff5d66; }}
+  .ch-item .num {{ min-width:26px; text-align:center; background:#2a2a3a; border-radius:4px;
+    font:11px monospace; padding:1px 0; color:#9a9aaa; }}
+  .ch-item.active .num {{ background:#ff5d66; color:#fff; }}
+  .ch-item .t {{ flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+  .ch-item .pages {{ margin-left:auto; font-size:11px; color:#666; }}
+  /* ---- 主区域 ---- */
+  #main {{ flex:1; overflow-y:auto; overflow-x:hidden; }}
+  #topbar {{ position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:10px;
+    background:rgba(13,13,18,.95); backdrop-filter:blur(6px); border-bottom:1px solid #26262f;
+    padding:10px 16px; }}
+  #topbar button {{ background:#2a2a3a; color:#eee; border:none; border-radius:6px; padding:7px 14px;
+    cursor:pointer; font-size:13px; }}
+  #topbar button:hover {{ background:#3a3a4a; }}
+  #topbar button:disabled {{ opacity:.35; cursor:default; }}
+  #topbar .spacer {{ flex:1; }}
+  #topbar .cur {{ font-size:13px; color:#bbb; }}
+  #btn-side {{ background:transparent !important; color:#888; font-size:18px; padding:0 8px !important; }}
+  /* ---- 图片连页（竖版 webtoon 滚动） ----
+     统一宽度、高度自然延伸（同原站 viewer），--w 控制单页宽度（🖼️ 按钮可切换） */
+  #viewer {{ padding:0 0 40px; --w:400px; }}
+  #viewer img {{ display:block; width:min(96vw,var(--w)); height:auto;
+    margin:0 auto; background:#000; }}
+  .placeholder {{ text-align:center; padding:60px 20px; color:#666; font-size:15px; }}
+  #toast {{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:#ff5d66; color:#fff; padding:8px 18px; border-radius:20px; font-size:13px;
+    opacity:0; transition:opacity .25s; pointer-events:none; z-index:99; }}
+  #toast.show {{ opacity:1; }}
+  @media (max-width:768px) {{
+    #sidebar {{ width:180px; flex-basis:180px; }}
+    #sidebar.hidden {{ margin-left:-180px; }}
+  }}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div id="side-head">
+      <div class="c-title">{title}</div>
+      <div class="c-sub">共 {chapters_len} 话 · 本地图片阅读器</div>
+    </div>
+    <div id="ch-list"></div>
+  </div>
+  <div id="main">
+    <div id="topbar">
+      <button id="btn-side" title="章节列表">☰</button>
+      <button id="btn-prev" title="上一话 (←)">◀ 上一话</button>
+      <span class="cur" id="cur-info"></span>
+      <span class="spacer"></span>
+      <button id="btn-zoom" title="切换单页宽度: 480 / 400 / 320 / 240 像素">🖼️ 400</button>
+      <button id="btn-next" title="下一话 (→)">下一话 ▶</button>
+    </div>
+    <div id="viewer"><div class="placeholder">选择左侧章节开始阅读</div></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const COMIC_ID = {comic_id_json};
+const CHAPTERS = {chapters_json};
+
+const sidebar = document.getElementById("sidebar");
+const chList = document.getElementById("ch-list");
+const viewer = document.getElementById("viewer");
+const curInfo = document.getElementById("cur-info");
+const btnPrev = document.getElementById("btn-prev");
+const btnNext = document.getElementById("btn-next");
+const toast = document.getElementById("toast");
+const btnZoom = document.getElementById("btn-zoom");
+let currentIdx = -1;
+const ZOOMS = ["480px", "400px", "320px", "240px"];
+
+// HTML 转义（不能用 window.escape，会把中文转成 %uXXXX 乱码）
+function esc(s) {{
+  return String(s).replace(/[&<>"']/g, c =>
+    ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));
+}}
+
+// ---- 章节列表渲染 ----
+CHAPTERS.forEach((ch, i) => {{
+  const div = document.createElement("div");
+  div.className = "ch-item";
+  div.dataset.idx = i;
+  div.innerHTML = `<span class="num">${{ch.num}}</span><span class="t">${{esc(ch.title)}}</span>
+    <span class="pages">${{ch.files.length}}p</span>`;
+  div.onclick = () => selectChapter(i);
+  chList.appendChild(div);
+}});
+
+// ---- 切换章节 ----
+function selectChapter(i) {{
+  if (i < 0 || i >= CHAPTERS.length) return;
+  currentIdx = i;
+  const ch = CHAPTERS[i];
+  try {{ localStorage.setItem("reader_" + COMIC_ID, String(i)); }} catch (e) {{}}
+  document.querySelectorAll(".ch-item").forEach(el =>
+    el.classList.toggle("active", +el.dataset.idx === i));
+  const active = document.querySelector(".ch-item.active");
+  if (active) active.scrollIntoView({{ block: "nearest" }});
+  curInfo.textContent = `第 ${{ch.num}} 话 · ${{ch.title}} · ${{ch.files.length}} 页`;
+  btnPrev.disabled = i <= 0;
+  btnNext.disabled = i >= CHAPTERS.length - 1;
+
+  viewer.innerHTML = "";
+  ch.files.forEach((f, idx) => {{
+    const img = document.createElement("img");
+    img.src = ch.dir + "/" + f;
+    img.alt = `第 ${{idx + 1}} 页`;
+    img.loading = "lazy";
+    viewer.appendChild(img);
+  }});
+  document.getElementById("main").scrollTop = 0;
+  showToast(`已加载 第${{ch.num}}话 · ${{ch.files.length}} 页`);
+}}
+
+// ---- 控制 ----
+document.getElementById("btn-prev").onclick = () => selectChapter(currentIdx - 1);
+document.getElementById("btn-next").onclick = () => selectChapter(currentIdx + 1);
+document.getElementById("btn-side").onclick = () => sidebar.classList.toggle("hidden");
+
+document.addEventListener("keydown", e => {{
+  if (e.key === "ArrowLeft")  {{ e.preventDefault(); selectChapter(currentIdx - 1); }}
+  else if (e.key === "ArrowRight") {{ e.preventDefault(); selectChapter(currentIdx + 1); }}
+  else if (e.key === "Home") {{ document.getElementById("main").scrollTop = 0; }}
+}});
+
+function showToast(msg) {{
+  toast.textContent = msg;
+  toast.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove("show"), 1600);
+}}
+
+// ---- 图片宽度切换：480 / 400 / 320 / 240 像素 ----
+function applyZoom() {{
+  const w = ZOOMS[currentZoom];
+  viewer.style.setProperty("--w", w);
+  btnZoom.textContent = "🖼️ " + w.replace("px", "");
+  showToast(`单页宽度: ${{w}}`);
+}}
+btnZoom.onclick = () => {{
+  currentZoom = (currentZoom + 1) % ZOOMS.length;
+  try {{ localStorage.setItem("reader_zoom_" + COMIC_ID, String(currentZoom)); }} catch (e) {{}}
+  applyZoom();
+}};
+document.addEventListener("keydown", e => {{
+  if (e.key === "+" || e.key === "=") {{ e.preventDefault(); btnZoom.onclick(); }}
+}});
+let currentZoom = 1;
+try {{
+  const savedZoom = parseInt(localStorage.getItem("reader_zoom_" + COMIC_ID), 10);
+  if (!isNaN(savedZoom) && savedZoom >= 0 && savedZoom < ZOOMS.length) currentZoom = savedZoom;
+}} catch (e) {{}}
+applyZoom();
+
+// 恢复上次章节
+try {{
+  const saved = parseInt(localStorage.getItem("reader_" + COMIC_ID), 10);
+  if (!isNaN(saved) && saved >= 0 && saved < CHAPTERS.length) selectChapter(saved);
+  else selectChapter(0);
+}} catch (e) {{ selectChapter(0); }}
+</script>
+</body>
+</html>
+"""
+
+
+def generate_reader(comic):
+    """生成竖版阅读器 HTML，返回文件路径"""
+    chapters_json = []
+    for ch in comic["chapters"]:
+        chapters_json.append({
+            "num": ch["num"],
+            "title": ch["title"],
+            "dir": ch["dir"],
+            "files": ch["files"],
+        })
+    html = READER_HTML.format(
+        title=escape(comic.get("title") or comic["id"]),
+        chapters_len=len(comic["chapters"]),
+        comic_id_json=repr(comic["id"]),
+        chapters_json=repr(chapters_json),
+    )
+    out_path = os.path.join(comic["path"], "reader.html")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return out_path
+
+
+def open_reader(comic, no_open=False):
+    """生成阅读器并（默认）在浏览器中打开"""
+    path = generate_reader(comic)
+    total_pages = sum(len(c["files"]) for c in comic["chapters"])
+    print(f"\n[{comic['id']}] {comic.get('title', comic['id'])}  "
+          f"{len(comic['chapters'])} 话 / {total_pages} 页 → {path}")
+    if not no_open:
+        webbrowser.open("file:///" + os.path.abspath(path).replace("\\", "/"))
+        print("已在浏览器打开，竖版连页阅读。")
+    else:
+        print("双击 reader.html 即可打开阅读器。")
+
+
+# ---------------------------------------------------------------- 主流程
+
+def detect_target(s):
+    """判断输入类型: 漫画id/详情页 / 含{n}模板 / 单链接"""
+    s = s.strip()
+    if "{n}" in s:
+        return "enum", s
+    m = re.search(r"[?&]id=(\d+)", s)
+    if m and re.search(r"comic|manga|detail", s, re.I):
+        return "comic", m.group(1)
+    if s.isdigit():
+        return "comic", s
+    return "probe", s
+
+
+def cmd_list(root):
+    comics = find_comics(root)
+    if not comics:
+        print(f"还没有下载任何漫画（{os.path.abspath(root)} 下无 ch* 章节目录）")
+        print("先运行: python comic.py <漫画id>")
+        return 1
+    print("已下载的漫画:")
+    for i, c in enumerate(comics):
+        pages = sum(len(ch["files"]) for ch in c["chapters"])
+        title = c.get("title") or c["id"]
+        print(f"  [{i}] {title}  (id={c['id']})  {len(c['chapters'])}话/{pages}页")
+    print("\n打开阅读器: python comic.py <漫画id> --read")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(
+        description="漫画下载 + 本地竖版阅读器（二合一）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__)
+    p.add_argument("target", nargs="?",
+                   help="漫画id / 详情页链接 / 含{n}模板 / 单链接（留空则交互输入）")
+    p.add_argument("--read", action="store_true",
+                   help="跳过下载，直接打开已下载漫画的阅读器")
+    p.add_argument("--force", action="store_true", help="强制重新下载")
+    p.add_argument("--list", action="store_true", help="列出已下载的漫画")
+    p.add_argument("--out", default=OUT_ROOT, help=f"下载根目录（默认 {OUT_ROOT}）")
+    p.add_argument("--no-open", action="store_true", help="不自动打开浏览器")
+    p.add_argument("--delay", type=float, default=DEFAULT_DELAY,
+                   help=f"请求间隔秒数（默认 {DEFAULT_DELAY}，一般无需限速）")
+    p.add_argument("--max-pages", type=int, default=200, help="单话最大页数（默认 200）")
+    p.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                   help=f"图片并发线程数（默认 {DEFAULT_WORKERS}，网络好可调 24-32）")
+    p.add_argument("--chapter-workers", type=int, default=DEFAULT_CHAPTER_WORKERS,
+                   help=f"同时下载的章节数（默认 {DEFAULT_CHAPTER_WORKERS}）")
+    p.add_argument("--batch", type=int, default=DEFAULT_BATCH,
+                   help=f"每批探测/下载页数（默认 {DEFAULT_BATCH}）")
+    args = p.parse_args()
+
+    if args.list:
+        return cmd_list(args.out)
+
+    target = args.target
+    if not target:
+        # 交互模式：什么都不带时提示输入
+        try:
+            target = input("输入漫画ID或链接 (回车退出): ").strip()
+        except EOFError:
+            return 0
+        if not target:
+            print("再见。")
+            return 0
+
+    kind, payload = detect_target(target)
+
+    if kind == "enum":
+        enum_and_save(payload, os.path.join(args.out, "enum"))
+        return 0
+
+    if kind == "probe":
+        clazz, saved = probe_and_save(payload, os.path.join(args.out, "single"))
+        print()
+        if clazz["is_media"]:
+            print("结论: 该链接无需登录/凭据即可获取媒体内容")
+            print("     若为付费/VIP/私有内容，说明存在访问控制缺失。")
+        elif clazz["kind"] == "json":
+            print("结论: 该链接匿名返回 JSON 数据")
+        elif clazz["kind"] == "html":
+            print("结论: 该链接返回 HTML 页面")
+        else:
+            print("结论: 该链接匿名可访问（非媒体内容）")
+        return 0
+
+    # ---- 漫画：下载（如需要）→ 打开竖版阅读器 ----
+    comic_id = payload
+    if args.read:
+        comic = load_local_comic(comic_id, args.out)
+        if comic is None:
+            print(f"本地还没有 {comic_id}，先下载: python comic.py {comic_id}")
+            return 1
+    else:
+        # 始终走下载入口：内部会跳过 .done 章节、续传缺页（--force 全量重下）
+        try:
+            comic = download_comic(
+                comic_id, args.out, args.delay, args.max_pages,
+                force=args.force, workers=args.workers,
+                chapter_workers=args.chapter_workers, batch_size=args.batch,
+            )
+        except RuntimeError as e:
+            print(f"[错误] {e}")
+            return 1
+
+    if comic is None or not comic["chapters"]:
+        print("未下载到任何章节图片，检查漫画ID或网络。")
+        return 1
+
+    open_reader(comic, no_open=args.no_open)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n已中断。")
+        sys.exit(0)

@@ -1,0 +1,350 @@
+// ==UserScript==
+// @name         Pornhub 无广告播放（桌面/移动端）
+// @namespace    local.pornhub.ad-free
+// @version      1.1.0
+// @description  去除桌面和移动端的前贴片、暂停/片尾广告、横幅、弹窗和原生推广，同时保留原生播放器与全部视频源。
+// @author       Richy
+// @match        *://pornhub.com/*
+// @match        *://*.pornhub.com/*
+// @run-at       document-start
+// @grant        none
+// @inject-into  page
+// @sandbox      raw
+// @noframes
+// @compatible   chrome
+// @compatible   firefox
+// @compatible   safari
+// ==/UserScript==
+(() => {
+  'use strict';
+  const RUNTIME_KEY = Symbol.for('local.pornhub.adFreeRuntime');
+  if (window[RUNTIME_KEY]) return;
+  Object.defineProperty(window, RUNTIME_KEY, { value: true });
+
+  const STYLE_ID = 'ph-ad-free-style';
+  const HIDDEN_ATTRIBUTE = 'data-ph-ad-hidden';
+  const PLAYER_HOOK = Symbol('phAdFreePlayerHook');
+  const INSERTION_HOOK = Symbol('phAdFreeInsertionHook');
+  const ELEMENT_NODE = Node.ELEMENT_NODE;
+  const MAX_COLLAPSE_CHILDREN = 3;
+  const URL_RESOURCE_TAGS = new Set(['a', 'iframe', 'img', 'link', 'script', 'source']);
+  const AD_PATH_PATTERN = /^\/_xa\/(?:ads(?:_batch)?|deep_click|fla\/)/i;
+  const MEDIA_HOST_PATTERN = /(^|\.)(?:phncdn\.com|phprcdn\.com)$/i;
+  const PORNHUB_HOST_PATTERN = /(^|\.)pornhub\.com$/i;
+  const AD_HOST_PATTERN = new RegExp(
+    `(^|\\.)(?:${[
+      'trafficjunky\\.(?:com|net)',
+      'adtng\\.com',
+      'dzhjmp\\.com',
+      'fluxtrck\\.site',
+      'doubleclick\\.net',
+      'googlesyndication\\.com',
+      'googleadservices\\.com',
+      'sacdnssedge\\.com',
+      'livehdcams\\.com',
+      'erosmate\\.ai',
+      'spicevids\\.com',
+      'fancentro\\.com',
+      'stripchat\\.com',
+    ].join('|')})$`,
+    'i',
+  );
+
+  const VISUAL_AD_SELECTORS = [
+    'iframe[data-spot-id]',
+    'iframe[srcdoc*="Ad delivery system" i]',
+    'iframe[src*="trafficjunky" i]',
+    'iframe[src*="/_xa/fla/" i]',
+    'script[src*="trafficjunky" i]',
+    'link[href*="trafficjunky" i]',
+    'meta[name="adsbytrafficjunkycontext" i]',
+    '.adsbytrafficjunky',
+    '[id^="adsbytrafficjunky" i]',
+    '#popsByTrafficJunky',
+    '.js-nativeTjVideoGrid',
+    '.js_promoItem',
+    '.mgp_adRollContainer',
+    '.mgp_eudsa',
+    '.prerollAd',
+    '.adsRemoveButtonWrapper',
+    '#pb_template',
+    '#pb_block',
+    '.adLinks',
+    '#adBlockAlert',
+    '.adBlockAlert',
+    '.headerCampaignDiv',
+    '.headerUpgradePremiumBtn',
+    'a.customUpgradeBtn[href*="spicevids.com" i]',
+    'a[href*="livehdcams.com" i]',
+    'a[href*="erosmate.ai" i]',
+  ];
+  const VISUAL_AD_SELECTOR = VISUAL_AD_SELECTORS.join(',');
+  const PROTECTED_SELECTOR = [
+    'html',
+    'body',
+    'head',
+    'main',
+    '#player',
+    '[id^="playerDiv_"]',
+    '.mgp_container',
+    '.video-wrapper',
+    '.video-element-wrapper-js',
+  ].join(',');
+  const HIDE_CSS = `
+    [${HIDDEN_ATTRIBUTE}],
+    ${VISUAL_AD_SELECTORS.join(',\n    ')} {
+      display: none !important;
+    }
+  `;
+  const nativeOpen = window.open;
+
+  function parseUrl(value) {
+    if (!value) return null;
+    if (value instanceof URL) return value;
+    const raw = typeof value === 'string' ? value : value.url;
+    if (typeof raw !== 'string') return null;
+    return new URL(raw, location.href);
+  }
+  function isAdUrl(value) {
+    const url = parseUrl(value);
+    if (!url || /^(?:blob|data):$/i.test(url.protocol)) return false;
+    if (MEDIA_HOST_PATTERN.test(url.hostname)) return false;
+    if (AD_HOST_PATTERN.test(url.hostname)) return true;
+    return PORNHUB_HOST_PATTERN.test(url.hostname) && AD_PATH_PATTERN.test(url.pathname);
+  }
+  function isAdResource(element) {
+    if (!element || element.nodeType !== ELEMENT_NODE) return false;
+    if (element.id === 'popsByTrafficJunky') return true;
+    const tagName = element.localName;
+    const metaName = tagName === 'meta' ? element.getAttribute('name') : null;
+    if (metaName) return metaName.toLowerCase() === 'adsbytrafficjunkycontext';
+    if (!URL_RESOURCE_TAGS.has(tagName)) return false;
+    if (tagName === 'iframe' && element.hasAttribute('data-spot-id')) return true;
+    if (tagName === 'iframe' && /Ad delivery system/i.test(element.getAttribute('srcdoc') || '')) return true;
+    const source = element.getAttribute('src') || element.getAttribute('href');
+    return isAdUrl(source);
+  }
+
+  function isRemovableResource(element) {
+    return /^(?:iframe|ins|link|meta|script)$/.test(element.localName);
+  }
+
+  function findCollapseTarget(element) {
+    const listItem = element.closest('li.js-nativeTjVideoGrid, li.js_promoItem');
+    if (listItem) return listItem;
+    if (element.closest('.mgp_container')) return element;
+    if (!element.matches('iframe, img, ins')) return element;
+    const parent = element.parentElement;
+    if (!parent || parent.matches(PROTECTED_SELECTOR)) return element;
+    if (parent.querySelector('video, #player, .mgp_container')) return element;
+    return parent.childElementCount <= MAX_COLLAPSE_CHILDREN ? parent : element;
+  }
+
+  function hideAdElement(element) {
+    const target = findCollapseTarget(element);
+    target.setAttribute(HIDDEN_ATTRIBUTE, '');
+    if (isRemovableResource(element)) element.remove();
+  }
+
+  function inspectNode(root) {
+    if (root.nodeType === ELEMENT_NODE) {
+      if (root.matches(VISUAL_AD_SELECTOR) || isAdResource(root)) {
+        hideAdElement(root);
+        return;
+      }
+      if (!root.firstElementChild) return;
+    }
+    if (!root.querySelectorAll) return;
+    for (const element of root.querySelectorAll(VISUAL_AD_SELECTOR)) hideAdElement(element);
+  }
+  function installStyle() {
+    if (document.getElementById(STYLE_ID)) return true;
+    const root = document.head || document.documentElement;
+    if (!root) return false;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = HIDE_CSS;
+    root.appendChild(style);
+    return true;
+  }
+  function cleanFlashvars(value) {
+    return {
+      ...value,
+      adRollGlobalConfig: [],
+      pauseroll_url: '',
+      postroll_url: '',
+      htmlPauseRoll: 'false',
+      htmlPostRoll: 'false',
+    };
+  }
+  function cleanPlayerConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    const mainRoll = {
+      ...config.mainRoll,
+      overlays: [],
+      textLinks: [],
+      overlayTextAd: {},
+    };
+    const flashSettings = {
+      ...config.flashSettings,
+      postRollUrl: '',
+      pauseRollUrl: '',
+      htmlPauseRoll: 'false',
+      htmlPostRoll: 'false',
+    };
+    return { ...config, adRolls: [], mainRoll, flashSettings };
+  }
+  function cleanPlayerGlobals() {
+    const names = Object.getOwnPropertyNames(window).filter((name) => /^flashvars_\d+$/.test(name));
+    for (const name of names) {
+      const value = window[name];
+      if (value && typeof value === 'object') window[name] = cleanFlashvars(value);
+    }
+    if (Array.isArray(window.TEXTLINKS)) window.TEXTLINKS = [];
+  }
+
+  function wrapCreatePlayer(createPlayer) {
+    if (typeof createPlayer !== 'function' || createPlayer[PLAYER_HOOK]) return createPlayer;
+    const adFreeCreatePlayer = function (playerId, config, ...args) {
+      cleanPlayerGlobals();
+      const cleanConfig = cleanPlayerConfig(config);
+      return Reflect.apply(createPlayer, this, [playerId, cleanConfig, ...args]);
+    };
+    Object.defineProperty(adFreeCreatePlayer, PLAYER_HOOK, { value: true });
+    return adFreeCreatePlayer;
+  }
+
+  function installCreatePlayerWatcher(mgp) {
+    if (!mgp || !/^(?:function|object)$/.test(typeof mgp)) return false;
+    if (typeof mgp.createPlayer === 'function') {
+      mgp.createPlayer = wrapCreatePlayer(mgp.createPlayer);
+      return true;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(mgp, 'createPlayer');
+    if (descriptor && !descriptor.configurable) {
+      console.error('[Pornhub Ad Free] MGP.createPlayer is not configurable.');
+      return false;
+    }
+    const enumerable = descriptor ? descriptor.enumerable : true;
+    Object.defineProperty(mgp, 'createPlayer', {
+      configurable: true,
+      enumerable,
+      get: () => undefined,
+      set(createPlayer) {
+        Object.defineProperty(mgp, 'createPlayer', {
+          configurable: true,
+          enumerable,
+          value: wrapCreatePlayer(createPlayer),
+          writable: true,
+        });
+      },
+    });
+    return true;
+  }
+
+  function installMgpAssignmentHook() {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'MGP');
+    if (window.MGP) return installCreatePlayerWatcher(window.MGP);
+    if (descriptor && !descriptor.configurable) {
+      console.error('[Pornhub Ad Free] window.MGP is not configurable.');
+      return false;
+    }
+    const enumerable = descriptor ? descriptor.enumerable : true;
+    Object.defineProperty(window, 'MGP', {
+      configurable: true,
+      enumerable,
+      get: () => undefined,
+      set(mgp) {
+        installCreatePlayerWatcher(mgp);
+        Object.defineProperty(window, 'MGP', {
+          configurable: true,
+          enumerable,
+          value: mgp,
+          writable: true,
+        });
+      },
+    });
+    return true;
+  }
+
+  function installPlayerHook() {
+    const mgp = window.MGP;
+    if (!mgp || typeof mgp.createPlayer !== 'function') return false;
+    if (mgp.createPlayer[PLAYER_HOOK]) return true;
+    mgp.createPlayer = wrapCreatePlayer(mgp.createPlayer);
+    return true;
+  }
+  function markInsertionHook(callback) {
+    Object.defineProperty(callback, INSERTION_HOOK, { value: true });
+    return callback;
+  }
+
+  function hideInsertionParent(parent) {
+    if (parent.nodeType !== ELEMENT_NODE || parent.matches(PROTECTED_SELECTOR)) return;
+    parent.setAttribute(HIDDEN_ATTRIBUTE, '');
+  }
+
+  function installInsertionGuards() {
+    const prototype = Node.prototype;
+    if (prototype.appendChild[INSERTION_HOOK]) return;
+    const appendChild = prototype.appendChild;
+    const insertBefore = prototype.insertBefore;
+    prototype.appendChild = markInsertionHook(function (node) {
+      if (!isAdResource(node)) return Reflect.apply(appendChild, this, [node]);
+      hideInsertionParent(this);
+      return node;
+    });
+    prototype.insertBefore = markInsertionHook(function (node, reference) {
+      if (!isAdResource(node)) return Reflect.apply(insertBefore, this, [node, reference]);
+      hideInsertionParent(this);
+      return node;
+    });
+  }
+  function observePage() {
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'attributes') inspectNode(mutation.target);
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === ELEMENT_NODE) inspectNode(node);
+        }
+      }
+      installPlayerHook();
+    });
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src', 'href', 'srcdoc', 'data-spot-id'],
+    });
+  }
+
+  function blockAdNavigation(event) {
+    const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+    if (!anchor || !isAdUrl(anchor.href)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+
+  function installNavigationGuards() {
+    window.open = function (url, ...args) {
+      if (isAdUrl(url)) return null;
+      return Reflect.apply(nativeOpen, this, [url, ...args]);
+    };
+    document.addEventListener('click', blockAdNavigation, { capture: true, passive: false });
+    document.addEventListener('auxclick', blockAdNavigation, { capture: true, passive: false });
+  }
+
+  installMgpAssignmentHook();
+  installInsertionGuards();
+  installNavigationGuards();
+  if (!installStyle()) {
+    document.addEventListener('readystatechange', installStyle, { once: true });
+  }
+  installPlayerHook();
+  observePage();
+  document.addEventListener('DOMContentLoaded', () => inspectNode(document), { once: true });
+  window.addEventListener('pageshow', () => {
+    inspectNode(document);
+    installPlayerHook();
+  });
+})();
