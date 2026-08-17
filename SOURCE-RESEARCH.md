@@ -550,4 +550,5 @@
 - 同一媒体 CDN 的 manifest、16 字节 `key.key`、首个 TS 均可无 Cookie HTTP 200，CORS 为 `*`；HLS 使用 AES-128，manifest 的 `#EXT-X-KEY` URI 为 `key.key`、IV 为全 0。
 - 匿名 curl 直接访问 dmn12 分类/详情/搜索/`play.php` 会遇到 Cloudflare managed challenge（403），不是账号 401；内置浏览器可通过年龄页。已按用户授权的年龄流程在研究 adapter 中动态读取公开 `safeid` 并重试 `_safe` cookie。**Pages 边缘实测已通过**：列表 200（1017 页/30 卡）、搜索「西野」200（58 页/30 条，包含 3691532）、详情 3691532 200（tid/pid/vid 正确）、动态 HLS manifest/key/TS 全部 200+CORS。
 - `providers/runtime.js` 的 `kan98` adapter 已在 Pages 边缘验证有效，并已注册到 `PROVIDERS`/`ROUTE_CONFIGS`；门户 98 卡现在显示 ONLINE。真实本地 Node 仍可能被源站 CF challenge 拦截，因此本地开发若出现来源 502 属出口差异，Pages 部署端是当前可用出口。
+- 部署端完整用户链路验收：`/site/98` 列表 24 卡，封面经 `/provider-api/kan98?action=image&url=` 受限代理后 24/24 加载；分页第 2 页 24 卡；搜索「西野」返回 24 卡；同源条目 3691532 详情可打开，动态 HLS 播放 `readyState=4`、时间推进，详情海报回填正常。参考站的 210 条静态快照与 dmn12 实时 1017 页目录数量/排序不相同，这是独立实时源的预期差异；参考子站专用热门/最新/分类壳与本地通用详情弹窗仍有 UI 差异，但浏览→搜索→详情→播放链路可用。
 - **状态：专用已验收（Pages 边缘）。** 实现实时抓 dmn12 HTML（分类/搜索/详情）→ 从 `data-tid/pid/vid` 调 `play.php` → 直连 `tyjs.ypxjft.cn` HLS；没有复制参考 `/data/*.json` 快照。
