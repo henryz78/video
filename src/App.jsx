@@ -247,9 +247,9 @@ function DecoyPage({ onUnlock }) {
       <p>If you see this page, the nginx web server is successfully installed and
       working. Further configuration is required.</p>
 
-      <p>For online documentation and support please refer to
+      <p>For online documentation and support please refer to{" "}
       <a href="http://nginx.org/" onClick={(event) => event.stopPropagation()}>nginx.org</a>.<br />
-      Commercial support is available at
+      Commercial support is available at{" "}
       <a href="http://nginx.com/" onClick={(event) => event.stopPropagation()}>nginx.com</a>.</p>
 
       <p><em>Thank you for using nginx.</em></p>
@@ -747,7 +747,7 @@ export function App() {
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
   const isHome = !site;
   const unlock = () => { localStorage.setItem("cf-decoy", "1"); setUnlocked(true); };
-  if (isHome && !unlocked) return <DecoyPage onUnlock={unlock} />;
+  if (!unlocked) return <DecoyPage onUnlock={unlock} />;
   return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
   </div>;
