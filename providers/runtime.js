@@ -3061,7 +3061,7 @@ async function phPage(pathname) {
 function phCard(html) {
   const vkey = html.match(/data-video-vkey="([^"]+)"/)?.[1] || "";
   const title = decodeHtml(html.match(/<a[^>]+href="\/view_video\.php\?viewkey=[^"]*"[^>]*title="([^"]*)"/)?.[1] || vkey);
-  const cover = html.match(/<img[^>]+src="(https:\/\/(?:ei|pix-fl)\.phncdn\.com\/[^"]+)"/)?.[1] || "";
+  const cover = html.match(/<img[^>]+src="(https:\/\/(?:[a-z0-9-]+\.)?phncdn\.com\/[^"]+)"/)?.[1] || "";
   const duration = html.match(/<var class="duration">([^<]+)<\/var>/)?.[1] || "";
   return {
     vod_id: vkey,
