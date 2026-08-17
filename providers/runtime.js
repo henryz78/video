@@ -2649,7 +2649,13 @@ const KAN98_ORIGIN = "https://dmn12.vip";
 const KAN98_MIRRORS = ["https://sehuatang.net", "https://sehuatang.org"];
 const KAN98_HEADERS = {
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
   "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+  "sec-fetch-dest": "document",
+  "sec-fetch-mode": "navigate",
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-user": "?1",
+  "upgrade-insecure-requests": "1",
 };
 const KAN98_CATEGORIES = {
   41: "国产自拍",
@@ -2671,8 +2677,22 @@ async function kan98Page(pathname, init = {}) {
         headers: { ...KAN98_HEADERS, ...(init.headers || {}) },
         signal: init.signal || AbortSignal.timeout(20_000),
       });
-      const text = await response.text();
-      if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated)/i.test(text.slice(0, 5000))) {
+      let text = await response.text();
+      // dmn12/sehuatang 的公开年龄页由 safeid 生成 host-only `_safe` cookie。
+      // 用户已明确允许进入年龄页；这里仅复现该公开流程，不读取用户浏览器 Cookie。
+      const safeId = text.match(/var\s+safeid\s*=\s*["']([^"']+)["']/i)?.[1] || "";
+      if (safeId) {
+        const retry = await fetch(url, {
+          ...init,
+          headers: { ...KAN98_HEADERS, ...(init.headers || {}), cookie: `_safe=${safeId}` },
+          signal: init.signal || AbortSignal.timeout(20_000),
+        });
+        text = await retry.text();
+        if (retry.ok && !/(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
+          return { text, url: retry.url || url.href };
+        }
+      }
+      if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
         lastError = new Error(`kan98 upstream ${response.status || 502} (${origin})`);
         continue;
       }
