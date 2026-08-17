@@ -37,21 +37,13 @@ test("removes multiple oxax marker chunks without truncating the player JSON", (
   );
 });
 
-test("rewrites oxax manifests through the allowlisted same-origin proxy", { concurrency: false }, async (t) => {
+test("redirects oxax manifests to the direct signed stream (no proxy)", { concurrency: false }, async (t) => {
   const originalFetch = globalThis.fetch;
-  const upstreamUrl = "https://s.oxax.tv/live/channel/index.m3u8?k=signed";
+  const upstreamUrl = "https://s.oxax.tv/1/index.m3u8?k=signed";
   globalThis.fetch = async (input, init) => {
     assert.equal(String(input), upstreamUrl);
     assert.equal(init.headers.referer, "http://oxax.tv/oh-ah.html");
-    return new Response([
-      "#EXTM3U",
-      '#EXT-X-KEY:METHOD=AES-128,URI="keys/key.bin"',
-      "variants/low.m3u8",
-      "segments/0001.ts?token=abc",
-      "",
-    ].join("\n"), {
-      headers: { "content-type": "application/vnd.apple.mpegurl" },
-    });
+    return new Response("should not be fetched", { status: 404 });
   };
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -61,25 +53,9 @@ test("rewrites oxax manifests through the allowlisted same-origin proxy", { conc
   requestUrl.searchParams.set("id", "oh-ah");
   requestUrl.searchParams.set("url", upstreamUrl);
   const response = await handleProviderRequest(requestUrl);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("content-type"), "application/vnd.apple.mpegurl; charset=utf-8");
-
-  const manifest = await response.text();
-  const keyProxy = new URL(manifest.match(/URI="([^"]+)"/)?.[1]);
-  const mediaLines = manifest.split("\n").filter((line) => line && !line.startsWith("#")).map((line) => new URL(line));
-  const [variantProxy, segmentProxy] = mediaLines;
-  for (const proxy of [keyProxy, variantProxy, segmentProxy]) {
-    assert.equal(proxy.origin, "https://app.example");
-    assert.equal(proxy.pathname, "/provider-api/adulttv");
-    assert.equal(proxy.searchParams.get("action"), "media");
-    assert.equal(proxy.searchParams.get("id"), "oh-ah");
-  }
-  assert.equal(keyProxy.searchParams.get("type"), "segment");
-  assert.equal(keyProxy.searchParams.get("url"), "https://s.oxax.tv/live/channel/keys/key.bin");
-  assert.equal(variantProxy.searchParams.get("type"), "manifest");
-  assert.equal(variantProxy.searchParams.get("url"), "https://s.oxax.tv/live/channel/variants/low.m3u8");
-  assert.equal(segmentProxy.searchParams.get("type"), "segment");
-  assert.equal(segmentProxy.searchParams.get("url"), "https://s.oxax.tv/live/channel/segments/0001.ts?token=abc");
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("location"), upstreamUrl);
+  assert.equal(await response.text(), "");
 });
 
 test("rejects non-oxax media proxy targets", async () => {

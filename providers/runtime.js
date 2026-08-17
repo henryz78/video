@@ -1795,19 +1795,6 @@ function oxaxProxyUrl(requestUrl, id, source, type = "segment") {
   return proxy.href;
 }
 
-function rewriteOxaxManifest(manifest, sourceUrl, requestUrl, id) {
-  return manifest.split(/\r?\n/).map((line) => {
-    if (!line) return line;
-    if (!line.startsWith("#")) {
-      const resolved = new URL(line, sourceUrl);
-      return oxaxProxyUrl(requestUrl, id, resolved.href, /\.m3u8$/i.test(resolved.pathname) ? "manifest" : "segment");
-    }
-    return line.replace(/URI="([^"]+)"/g, (_, uri) => (
-      `URI="${oxaxProxyUrl(requestUrl, id, new URL(uri, sourceUrl).href)}"`
-    ));
-  }).join("\n");
-}
-
 async function adultTvMedia(requestUrl) {
   const id = requestUrl.searchParams.get("id") || "";
   if (!/^[a-z0-9-]+$/i.test(id)) return json({ message: "invalid id" }, { status: 400 });
@@ -1826,6 +1813,13 @@ async function adultTvMedia(requestUrl) {
   }
   if (!source) return json({ message: "invalid media source" }, { status: 400 });
 
+  if (type === "manifest" && channel.live_provider === "oxax") {
+    // s.oxax.tv rejects Cloudflare datacenter IPs (404) but serves residential
+    // browsers directly (ACAO echoes Origin). Let the browser fetch the
+    // signed session stream itself via a redirect instead of proxying.
+    return Response.redirect(source, 302);
+  }
+
   const upstream = await fetch(source, {
     headers: {
       accept: type === "manifest" ? "application/vnd.apple.mpegurl, application/x-mpegURL, */*" : "*/*",
@@ -1836,18 +1830,13 @@ async function adultTvMedia(requestUrl) {
   });
   if (!upstream.ok) return json({ message: `adulttv media ${upstream.status}` }, { status: 502 });
   if (type === "manifest") {
-    let rewritten;
-    if (channel.live_provider === "oxax") {
-      rewritten = rewriteOxaxManifest(await upstream.text(), source, requestUrl, id);
-    } else {
-      // AdultIPTV CDN only serves real TS segments at the ROOT path (mycamtv/
-      // subpath segment requests fall back to a playlist and stall hls.js);
-      // rewrite every segment line to https://cdn.adultiptv.net/{basename}.
-      rewritten = (await upstream.text()).split(/\r?\n/).map((line) => {
-        if (!line || line.startsWith("#")) return line;
-        return `https://cdn.adultiptv.net/${line.split("/").pop()}`;
-      }).join("\n");
-    }
+    // AdultIPTV CDN only serves real TS segments at the ROOT path (mycamtv/
+    // subpath segment requests fall back to a playlist and stall hls.js);
+    // rewrite every segment line to https://cdn.adultiptv.net/{basename}.
+    const rewritten = (await upstream.text()).split(/\r?\n/).map((line) => {
+      if (!line || line.startsWith("#")) return line;
+      return `https://cdn.adultiptv.net/${line.split("/").pop()}`;
+    }).join("\n");
     return new Response(rewritten, {
       headers: {
         "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
