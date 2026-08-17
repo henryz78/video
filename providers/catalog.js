@@ -146,6 +146,13 @@ kan98: {
     discoveredFrom: "爱看参考站 app.js 源码标注数据源 https://h5.xxoo473.org，接口/条目/媒体逐项同源核对（2026-08-17）",
     capabilities: "分类目录 / 搜索 / 排序 / 详情 / VIP 锁定 Richy 反推完整片（preview KEY → master）AES-128 HLS",
   },
+  ph: {
+    id: "ph",
+    name: "Pornhub 公开目录（实验来源）",
+    upstream: "www.pornhub.com + *.phncdn.com 媒体 CDN",
+    discoveredFrom: "用户单独要求的实验来源（docs/Richy (13).txt 线索），2026-08-17 全链路实测：列表/搜索/分类/详情 SSR 直抓 + mediaDefinitions 内联 HLS + 媒体无 CORS 需同源代理",
+    capabilities: "列表 / 搜索 / 分类 / 详情 / 多清晰度 HLS（同源代理）",
+  },
 };
 
 const ROUTE_CONFIGS = {

@@ -3040,6 +3040,150 @@ async function kanxoList(requestUrl) {
   });
 }
 
+/* ---------------- Pornhub 公开目录 (ph, www.pornhub.com + *.phncdn.com, 实验来源) ---------------- */
+const PH_ORIGIN = "https://www.pornhub.com";
+const PH_HEADERS = {
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+};
+const PH_MEDIA_HEADERS = {
+  ...PH_HEADERS,
+  referer: "https://www.pornhub.com/view_video.php",
+};
+const PH_MEDIA_HOST = /^(iv-h|hv-h|ei|ev-h|ev|pix-fl)\.phncdn\.com$/i;
+
+async function phPage(pathname) {
+  const response = await fetch(new URL(pathname, PH_ORIGIN), { headers: PH_HEADERS, signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error(`pornhub page ${response.status}`);
+  return response.text();
+}
+
+function phCard(html) {
+  const vkey = html.match(/data-video-vkey="([^"]+)"/)?.[1] || "";
+  const title = decodeHtml(html.match(/<a[^>]+href="\/view_video\.php\?viewkey=[^"]*"[^>]*title="([^"]*)"/)?.[1] || vkey);
+  const cover = html.match(/<img[^>]+src="(https:\/\/(?:ei|pix-fl)\.phncdn\.com\/[^"]+)"/)?.[1] || "";
+  const duration = html.match(/<var class="duration">([^<]+)<\/var>/)?.[1] || "";
+  return {
+    vod_id: vkey,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: duration || "VIDEO",
+    vod_area: "PORNHUB",
+    type_name: "PORNHUB",
+    media_kind: "video",
+    needs_detail: true,
+    provider: "ph",
+  };
+}
+
+async function phList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd") || requestUrl.searchParams.get("q") || "";
+  const preset = requestUrl.searchParams.get("preset") || requestUrl.searchParams.get("category") || "";
+  let path;
+  if (keyword) path = `/video/search?search=${encodeURIComponent(keyword)}&page=${page}`;
+  else if (/^c:\d+$/.test(preset)) path = `/video?c=${preset.slice(2)}&page=${page}`;
+  else if (/^slug:/.test(preset)) path = `/categories/${encodeURIComponent(preset.slice(5))}?page=${page}`;
+  else path = `/video?page=${page}`;
+  const html = await phPage(path);
+  const items = (html.match(/<li[^>]*class="[^"]*pcVideoListItem[^"]*"[^>]*>[\s\S]*?<\/li>/g) || [])
+    .map(phCard)
+    .filter((card) => card.vod_id);
+  const pages = [...html.matchAll(/[?&]page=(\d+)/g)].map((m) => Number(m[1])).filter((n) => n > 0);
+  return json({ list: items, totalPages: Math.max(1, ...pages), provider: "ph" }, { headers: { "cache-control": "public, max-age=300" } });
+}
+
+function phMediaUrl(url) {
+  return `/provider-api/ph?action=media&url=${encodeURIComponent(url)}`;
+}
+
+function phResolveRef(reference, base) {
+  const resolved = new URL(reference, base);
+  if (!resolved.search && base.search) resolved.search = base.search;
+  return resolved.toString();
+}
+
+function phExtractMediaDefinitions(html) {
+  const start = html.indexOf('"mediaDefinitions"');
+  if (start === -1) return [];
+  const bracketStart = html.indexOf("[", start);
+  if (bracketStart === -1) return [];
+  let depth = 0, inString = false, escaped = false;
+  for (let i = bracketStart; i < html.length; i++) {
+    const ch = html[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "[") depth++;
+    else if (ch === "]") { depth--; if (depth === 0) return JSON.parse(html.slice(bracketStart, i + 1)); }
+  }
+  return [];
+}
+
+async function phDetail(id) {
+  const html = await phPage(`/view_video.php?viewkey=${encodeURIComponent(id)}`);
+  const title = decodeHtml(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] || html.match(/<title>([\s\S]*?)<\/title>/)?.[1] || id);
+  const duration = Number(html.match(/"video_duration":(\d+)/)?.[1] || 0);
+  const cover = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "";
+  const hls = phExtractMediaDefinitions(html)
+    .filter((d) => d.format === "hls" && d.videoUrl)
+    .sort((a, b) => (Number(b.quality) || 0) - (Number(a.quality) || 0));
+  const card = {
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: duration ? formatDuration(duration) : "VIDEO",
+    vod_area: "PORNHUB",
+    type_name: "PORNHUB",
+    media_kind: "video",
+    provider: "ph",
+  };
+  if (hls.length) {
+    card.vod_play_url = phMediaUrl(hls[0].videoUrl);
+    card.streams = hls.map((d) => ({ label: `${d.quality}P`, url: phMediaUrl(d.videoUrl) }));
+    card.play_notice = `公开 ${hls[0].quality}P HLS · 未加密`;
+  } else {
+    card.play_notice = "此条目无公开 HLS 播放地址";
+  }
+  return json(card);
+}
+
+async function phMedia(requestUrl) {
+  const raw = requestUrl.searchParams.get("url") || "";
+  let target;
+  try { target = new URL(raw); } catch { return json({ message: "invalid media url" }, { status: 400 }); }
+  if (!PH_MEDIA_HOST.test(target.hostname)) return json({ message: "invalid media host" }, { status: 400 });
+  const isPlaylist = /\.m3u8$/i.test(target.pathname);
+  const upstream = await fetch(target, { headers: PH_MEDIA_HEADERS, signal: AbortSignal.timeout(isPlaylist ? 15_000 : 30_000) });
+  if (!upstream.ok) return json({ message: `ph media ${upstream.status}` }, { status: 502 });
+  if (isPlaylist) {
+    const text = await upstream.text();
+    const rewritten = text.split(/\r?\n/).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+      return phMediaUrl(phResolveRef(trimmed, target));
+    }).join("\n");
+    return new Response(rewritten, {
+      headers: {
+        "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "cache-control": "public, max-age=60",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  return new Response(upstream.body, {
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/octet-stream",
+      "cache-control": "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -3088,6 +3232,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
 if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
     if (provider === "kanxo") return await (action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
+    if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

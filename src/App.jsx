@@ -791,6 +791,72 @@ function JmModal({ comic, onClose, onChapter }) {
   </article></div>;
 }
 
+function PhDemoPage({ go, setHealth }) {
+  const PH_TABS = [
+    ["", "最新"],
+    ["c:27", "Lesbian"],
+    ["c:29", "MILF"],
+    ["c:35", "Anal"],
+    ["c:65", "Threesome"],
+    ["c:28", "Mature"],
+    ["c:17", "Ebony"],
+    ["c:111", "Japanese"],
+    ["slug:teen", "Teen"],
+    ["slug:hentai", "Hentai"],
+  ];
+  const [items, setItems] = useState([]);
+  const [query, setQuery] = useState("");
+  const [submitted, setSubmitted] = useState("");
+  const [category, setCategory] = useState("");
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null);
+  const abortRef = useRef();
+  useEffect(() => {
+    abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
+    const params = new URLSearchParams({ pg: String(page), limit: "24" });
+    if (submitted) params.set("wd", submitted);
+    else if (category) params.set("preset", category);
+    setLoading(true); setError("");
+    fetch(`/provider-api/ph?${params}`, { signal: controller.signal }).then((r) => {
+      if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
+    }).then((data) => {
+      setItems(Array.isArray(data.list) ? data.list : []);
+      setHealth("ok");
+    }).catch((e) => {
+      if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
+    }).finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [page, submitted, category, setHealth]);
+  const submit = (e) => { e.preventDefault(); setPage(1); setSubmitted(query.trim()); };
+  useEffect(() => { setPage(1); }, [category, submitted]);
+  const openDetail = async (item) => {
+    setSelected({ ...item, detail_loading: true });
+    try {
+      const response = await fetch(`/provider-api/ph?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const detail = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
+      setSelected({ ...detail, vod_pic: detail.vod_pic || item.vod_pic, vod_remarks: detail.vod_remarks !== "VIDEO" ? detail.vod_remarks : item.vod_remarks });
+    } catch (detailError) {
+      setSelected({ ...item, detail_error: detailError.message });
+    }
+  };
+  return <div className="site-page accent-orange mode-video">
+    <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>Pornhub 公开目录</strong><small>实验来源（非参考入口）· www.pornhub.com</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
+    <section className="sub-hero"><small>EXPERIMENT / ph.local</small><h1>Pornhub 公开目录</h1><p>实验性来源 · 全站公开免费 HLS · 媒体经同源代理（Pornhub 媒体 CDN 无 CORS）</p><div className="source-note">独立适配器 · ph（不写入 ROUTE_CONFIGS，不参与门户保真）</div></section>
+    <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 Pornhub 的内容" /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
+    <div className="qiying-tabs">{PH_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => setCategory(key)}>{label}</button>)}</div>
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? "CATEGORY" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (PH_TABS.find(([k]) => k === category)?.[1] || "分类") : "最新内容"}</h2></div><span>PAGE {page}</span></div>
+      {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
+      {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
+      {!loading && !error && <ContentGrid items={items} mode="video" onOpen={openDetail} />}
+      {!loading && !error && <div className="pager"><button disabled={page === 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>上一页</button><span>{page}</span><button onClick={() => setPage((x) => x + 1)}>下一页</button></div>}
+    </section>
+    {selected && <DetailModal item={selected} mode="video" provider={{ id: "ph", name: "Pornhub 公开目录" }} onClose={() => setSelected(null)} />}
+  </div>;
+}
+
 export function App() {
   const [route, go] = useRoute();
   const [health, setHealth] = useState("checking");
@@ -798,18 +864,18 @@ export function App() {
   const [welcome, setWelcome] = useState(false);
   const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
-    Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(provider === "eporner" ? epListUrl({ pg: 1 }) : `/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
+    Promise.allSettled(Object.keys(PROVIDERS).filter((provider) => provider !== "ph").map((provider) => fetch(provider === "eporner" ? epListUrl({ pg: 1 }) : `/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
       const ready = results.filter((result) => result.status === "fulfilled");
       setHealth(ready.length === results.length ? "ok" : ready.length ? "checking" : "error");
     });
   }, []);
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
-  const isHome = !site;
+  const phDemo = route.page === "site" && route.slug === "ph";
+  const isHome = !site && !phDemo;
   useEffect(() => {
     if (!unlocked) return;
     document.title = "不许涩涩机场塔台-允许起飞 · 成人内容聚合";
-  }, [unlocked]);
-  const unlock = () => {
+  }, [unlocked]);  const unlock = () => {
     localStorage.setItem("cf-decoy", "1");
     setUnlocked(true);
     setWelcome(true);
@@ -819,7 +885,7 @@ export function App() {
     if (route.page !== "home") history.replaceState(null, "", "/");
     return <DecoyPage onUnlock={unlock} />;
   }
-  return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
+  return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{phDemo ? <PhDemoPage go={go} setHealth={setHealth} /> : site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
     {welcome && <div className="welcome-toast" role="status"><b>欢迎来到不许涩涩机场塔台</b></div>}
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
   </div>;
