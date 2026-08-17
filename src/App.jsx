@@ -176,7 +176,7 @@ function SiteCard({ site, go, favorites, toggleFavorite, position }) {
   return <article className={`site-card accent-${site.accent} ${connected ? "is-connected" : "is-pending"}`} data-site-id={site.slug} data-category={site.navCategory} data-delivery={site.delivery} onPointerMove={moveLight} style={{ "--category": site.color, "--glow-rgb": site.rgb, animationDelay: `${Math.min((site.id - 1) * 35, 280)}ms` }}>
     <a className="site-link" href={href} target={site.externalUrl ? "_blank" : undefined} rel={site.externalUrl ? "noopener noreferrer" : undefined} onClick={(event) => { if (!site.externalUrl && !event.metaKey && !event.ctrlKey && !event.shiftKey) { event.preventDefault(); go(href); } }} aria-label={`打开 ${site.name}`}>
       <span className={`preview-frame ${previewState}`}>
-        <img className="site-preview" src={`/previews/${site.slug}.jpg?v=20260817-portal`} alt={`${site.name} 网站首屏预览`} loading={position < 6 ? "eager" : "lazy"} fetchPriority={position < 6 ? "high" : undefined} decoding="async" onLoad={() => setPreviewState("is-loaded")} onError={() => setPreviewState("is-loaded is-broken")} />
+        <img className="site-preview" src={`/previews/${site.slug}.jpg?v=20260817-portal-dark`} alt={`${site.name} 网站首屏预览`} loading={position < 6 ? "eager" : "lazy"} fetchPriority={position < 6 ? "high" : undefined} decoding="async" onLoad={() => setPreviewState("is-loaded")} onError={() => setPreviewState("is-loaded is-broken")} />
         <span className="preview-shade" aria-hidden="true"></span>
         <span className="preview-grid" aria-hidden="true"></span>
       </span>
@@ -226,6 +226,35 @@ function NumberRankingPanel({ hidden }) {
     <div className="number-ranking-notice" hidden={mode !== "history"}><Icon name="info" /><span>最近观看只展示本机真实产生的记录。</span></div>
     <div className="number-ranking-empty"><Icon name="film" /><strong>{mode === "history" ? "暂无真实观看记录" : "暂无真实打开数据"}</strong><span>优选界面与切换逻辑已还原；没有独立数据源时保持空态，不生成虚构条目。</span></div>
   </section>;
+}
+
+function DecoyPage({ onUnlock }) {
+  const hitsRef = useRef(0);
+  const hitTimer = useRef(null);
+  useEffect(() => {
+    document.title = "Welcome to nginx!";
+    return () => clearTimeout(hitTimer.current);
+  }, []);
+  const handleHit = () => {
+    hitsRef.current += 1;
+    clearTimeout(hitTimer.current);
+    hitTimer.current = setTimeout(() => { hitsRef.current = 0; }, 3000);
+    if (hitsRef.current >= 5) onUnlock();
+  };
+  return <div className="decoy-shell" onClick={handleHit}>
+    <div className="decoy-page">
+      <h1>Welcome to nginx!</h1>
+      <p>If you see this page, the nginx web server is successfully installed and
+      working. Further configuration is required.</p>
+
+      <p>For online documentation and support please refer to
+      <a href="http://nginx.org/" onClick={(event) => event.stopPropagation()}>nginx.org</a>.<br />
+      Commercial support is available at
+      <a href="http://nginx.com/" onClick={(event) => event.stopPropagation()}>nginx.com</a>.</p>
+
+      <p><em>Thank you for using nginx.</em></p>
+    </div>
+  </div>;
 }
 
 function Home({ go }) {
@@ -707,6 +736,7 @@ function JmModal({ comic, onClose, onChapter }) {
 export function App() {
   const [route, go] = useRoute();
   const [health, setHealth] = useState("checking");
+  const [unlocked, setUnlocked] = useState(() => localStorage.getItem("cf-decoy") === "1" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
     Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
@@ -716,6 +746,8 @@ export function App() {
   }, []);
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
   const isHome = !site;
+  const unlock = () => { localStorage.setItem("cf-decoy", "1"); setUnlocked(true); };
+  if (isHome && !unlocked) return <DecoyPage onUnlock={unlock} />;
   return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
   </div>;
