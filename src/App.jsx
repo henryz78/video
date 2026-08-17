@@ -415,7 +415,13 @@ function SitePage({ site, go, health, setHealth }) {
       const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
-      setSelected(provider.id === "eporner" ? epNormalize(detail) : detail);
+      if (provider.id === "eporner") setSelected(epNormalize(detail));
+      else setSelected({
+        ...detail,
+        vod_pic: detail.vod_pic || item.vod_pic,
+        vod_remarks: detail.vod_remarks && detail.vod_remarks !== "VIDEO" ? detail.vod_remarks : (item.vod_remarks || detail.vod_remarks),
+        vod_blurb: detail.vod_blurb || item.vod_blurb,
+      });
     } catch (detailError) {
       setSelected({ ...item, detail_error: detailError.message });
     }
