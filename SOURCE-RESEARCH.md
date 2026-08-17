@@ -558,3 +558,62 @@
 - `providers/runtime.js` 的 `kan98` adapter 已在 Pages 边缘验证有效，并已注册到 `PROVIDERS`/`ROUTE_CONFIGS`；门户 98 卡现在显示 ONLINE。真实本地 Node 仍可能被源站 CF challenge 拦截，因此本地开发若出现来源 502 属出口差异，Pages 部署端是当前可用出口。
 - 部署端完整用户链路验收：`/site/98` 列表 24 卡，封面经 `/provider-api/kan98?action=image&url=` 受限代理后 24/24 加载；分页第 2 页 24 卡；搜索「西野」返回 24 卡；同源条目 3691532 详情可打开，动态 HLS 播放 `readyState=4`、时间推进，详情海报回填正常。参考站的 210 条静态快照与 dmn12 实时 1017 页目录数量/排序不相同，这是独立实时源的预期差异；参考子站专用热门/最新/分类壳与本地通用详情弹窗仍有 UI 差异，但浏览→搜索→详情→播放链路可用。
 - **状态：专用已验收（Pages 边缘）。** 实现实时抓 dmn12 HTML（分类/搜索/详情）→ 从 `data-tid/pid/vid` 调 `play.php` → 直连 `tyjs.ypxjft.cn` HLS；没有复制参考 `/data/*.json` 快照。
+
+## Pornhub 公开目录与播放（`ph`，2026-08-17 调查，尚未实现 adapter）
+
+> **定位说明**：Pornhub 不在参考站 38 个入口范围内，本调查是用户单独要求的实验性来源，不影响任何参考入口的保真声明。用户明确要求「先调查、不改代码」，以下结论供后续单独实现时使用。用户提供的油猴脚本 `docs/Richy (13).txt`（Pornhub 去广告 v1.1.0）在本架构中**不需要也不能直接复用**（见下文「与 Richy(13) 的关系」）。
+
+### 目录 / 列表 / 搜索（全为服务端 HTML，Node 直抓 200，无 CF challenge）
+
+- 首页最新：`https://www.pornhub.com/video`，分页 `?page=N`（如 `?page=10`）。
+- 搜索：`https://www.pornhub.com/video/search?search={kw}`，分页 `&page=N`。实测「asian」200、1.2MB HTML、38 个 `data-video-vkey`。
+- 分类：`https://www.pornhub.com/video?c={id}`（如 `c=732` Audio Impaired），分页 `&page=N`，排序 `&o=mv|tr|lg|cm`（Most Viewed / Top Rated / Longest / Newest）。分类目录入口：首页顶部菜单 `Top Categories` 的 `js-topCategories` 子菜单含固定链接（如 Lesbian `?c=27`、MILF `?c=29`、Anal `?c=35`、Threesome `?c=65`、Mature `?c=28`、Ebony `?c=17`、Japanese `?c=111`…，以及 `/categories/teen`、`/categories/hentai` 等 slug 页）；完整分类页 `/categories` 被 Premium 网关覆盖，不能从那里抓分类树。
+- **卡片解析要点**：每个视频是 `<li class="pcVideoListItem ...">`，关键字段：
+  - 视频 key：`data-video-vkey="69b42af149bd7"`（38 个/页）。
+  - 详情链接：`<a href="/view_video.php?viewkey={vkey}" title="{标题}">`。
+  - 封面：`<img src="https://ei.phncdn.com/.../{编号}/original/(m=...)(mh=...){seq}.jpg" alt="标题" loading="lazy">`（部分卡是 `pix-fl.phncdn.com` 的 `?hdnea=` 签名封面，需单独处理或改用 `ei.phncdn.com` 原图）。
+  - 时长：`<var class="duration">16:40</var>`。
+- 搜索框提交形式为 `?search=`，URL 编码中文可用（实测首页菜单含 `/video/search?search=%E8%84%B1%E8%A1%A3%E8%88%9E` 等）。
+
+### 详情（`/view_video.php?viewkey={vkey}`，Node 直抓 200）
+
+- 标题：`<h1>` 或 `<title>`。
+- 时长：`"video_duration":659`（秒）。
+- 封面：`<meta property="og:image" content="https://ei.phncdn.com/...original/(m=...)(mh=...)14.jpg">`（200、真实 JPEG `ff d8 ff e0`、约 41KB）。
+- **播放列表（关键）**：页内联脚本有 `mediaPriority:"hls","mediaDefinitions":[{...}]`。解析方法：定位 `mediaDefinitions` 后取第一个 `[` 做方括号配对到配平的 `]`，整体 `JSON.parse`（数组内 URL 是 `\/` 转义形式，JSON.parse 可正常还原）。每个条目字段：
+  - `format: "hls"`：`quality`（1080/240/480/720，注意是数字字符串）、`height/width`、`videoUrl` = `https://iv-h.phncdn.com/{token},{exp}/hls/videos/{date}/{id}/{quality}P_{bitrate}K_{id}.mp4/master.m3u8?validfrom=...&validto=...&ipa=1&hdl=-1&hash=...`。
+  - `format: "mp4"`：`videoUrl` 是 `https://www.pornhub.com/video/get_media?s={jwt}`，实测直接 GET 返回 `[]`（空数组），完整 MP4 参数未复现——**实现时优先 HLS，不要依赖 mp4**。
+- 可选：`og:video` 指向 240p 示例 MP4（`ev.phncdn.com` 签名，仅在 640×360 下可用，不作为主源）。
+
+### 媒体链路（全部 200 可拉，但**无 CORS → 必须同源代理**）
+
+- `master.m3u8`：200、标准 `#EXT-X-STREAM-INF`（1920×1080 等），子清单相对路径 `index-v1-a1.m3u8`。
+- `index-v1-a1.m3u8`：200、VOD playlist、分片相对路径 `seg-{n}-v1-a1.ts`、无 `#EXT-X-KEY`（**未加密**）。
+- TS 分片：200、真实 MPEG-TS（首字节 `47 40 00 10`、约 159KB/3-6s）。
+- 封面：`ei.phncdn.com` 200 真实 JPEG。
+- **关键约束**：`iv-h.phncdn.com` / `ei.phncdn.com` / `ev-h.phncdn.com` / `ev.phncdn.com` / `pix-fl.phncdn.com` 全部**不返回 `Access-Control-Allow-Origin`**（实测 null）→ 浏览器 hls.js / `<video>` 直连会被 CORS 拒绝。实现必须照搬 `tx`/`rou` 的同源代理方案：media 走 `/provider-api/ph?action=media&url={全URL}`（host 白名单限上述 phncdn 域），代理转发时补 `ACAO: *`，把 master/index 里的分片行重写为代理绝对 URL。
+- **签名时效与 IP 绑定**：mediaDefinitions 的 URL 带 `validfrom/validto`（约 2 小时窗口）且 URL 路径含 `{token},{exp}`；MP4 签名参数含 `ip=`（抓取时出口 IP）。每次打开详情必须实时现抓、不能缓存。本地（同一出口 IP）抓取与播放一致，可播；**部署到 CF Pages 后媒体必须全程走代理（用 CF 出口 IP 抓签名并代理转发）**，且视频流量大，违背「媒体尽量直连」原则——本地玩合适，部署端不建议作为主要媒体通道。
+
+### 免费边界
+
+- 普通视频（非 Premium）匿名详情直接给出 240~1080 完整 HLS，**无试看、无需登录、无 VIP 门槛**；这是与 missav/rou 同级的公开免费源。
+- 含 Premium 内容的页面会插网关弹层，但 mediaDefinitions 仍会给出完整 HLS；实现时若发现目标条目 mediaDefinitions 缺失或为空，标记为不可播即可，不实现绕过付费逻辑。
+
+### 与 Richy(13) 的关系（为什么不需要它）
+
+- `docs/Richy (13).txt` 是匹配 `*://pornhub.com/*` 的页面去广告油猴脚本：拦截 TrafficJunky 等广告域名、MutationObserver 隐藏广告元素、patch `window.MGP.createPlayer` 清空 `mainRoll/flashSettings` 的 pre-roll/pause/post-roll、拦截广告导航。
+- 本项目播放器不加载 pornhub.com 页面，而是**用自己的 HLS.js 直接播 mediaDefinitions 的 HLS**——原站广告是页面内注入的，我们根本没有原站页面，所以「免广告」天然成立，脚本机制在本架构中无从生效。若未来想内嵌官方 `/embed/{viewkey}` iframe，才需要考虑广告清理，但本项目首选自建播放器，不走 embed。
+
+### 反爬风险（实现前必须读）
+
+- Pornhub 对高频抓取敏感（参考 `hqw` / haoqi7 的封 IP 教训）。本地手动点播/低频率测试可以，**不要做高并发目录抓取**；adapter 应带最小超时与失败退避，避免被上游封出口。
+- 当前本机（Node UA + accept header）实测首页/搜索/分类/详情全部 200，无 CF challenge、无年龄墙；后续是否变化需复测。
+- 搜索「asian」实测命中；搜索中文需注意 URL 编码与 Pornhub 的搜索词规范化（搜索页无 `showing` 计数 div，总条数不易拿，可只提供 `pagecount` 兜底值）。
+
+### 实现要点（供后续实现者）
+
+1. `providers/catalog.js`：新增 `ph` provider（name「Pornhub 公开目录」、upstream `www.pornhub.com` + `*.phncdn.com` 媒体 CDN、capabilities「列表/搜索/分类/详情/HLS 播放」）。**不写入 `ROUTE_CONFIGS`**（Pornhub 不是参考入口；若要本地访问，用未映射的直接路由或临时演示页，不污染 40-node 门户保真）。
+2. `providers/runtime.js`：`phList`（抓 `/video` / `/video/search` / `/video?c=` 三选一 + 分页，解析 `li.pcVideoListItem`）、`phDetail`（抓 `/view_video.php?viewkey=`，解析标题/时长/封面/mediaDefinitions）、`phMedia`（同源代理，host 白名单 `(?:iv-h|ei|ev-h|ev|pix-fl)\.phncdn\.com`，转发时补 `ACAO:*`，重写清单分片行为代理绝对 URL）、卡片字段映射（`vod_id`=vkey、`vod_play_url`=`/provider-api/ph?action=media&url={master}`、`media_kind="video"`、`type_name="PORNHUB"`）。
+3. 前端：可复用现有 QiyingModal/DetailModal 的 hls.js 播放路径；参考 `tx` 的媒体代理交互方式。
+4. 验证：列表 24 卡 + 封面加载 → 详情 → hls.js 播放推进（readyState=4）→ 分页/搜索/分类，零 console 错误。
+5. 文档：实现后更新 `PROJECT-HANDBOOK.md` 对应记录与 `SOURCE-RESEARCH.md` 本节状态；`npm run build` + `npm run test:sites` 必须通过。
