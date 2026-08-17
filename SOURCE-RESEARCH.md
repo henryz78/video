@@ -548,6 +548,6 @@
 - 源站详情页 `/thread-3691532-1-1.html` 的首帖容器公开带 `data-tid="3691532" data-pid="69011960" data-vid="G260815038"`；标题/ID/时长与参考站完全一致。第二条 3691530 也逐项匹配（`pid=69011935`、`vid=G260815037`）。
 - 源站播放器脚本为 `forum_viewthread.js` + `hls.min.js` + `DPlayer.min.js` + `player-2.1.js?t=20260622`。播放请求为 `GET /play.php?callback=...&tid={tid}&pid={pid}&vid={vid}&rand={random}&_={timestamp}`，浏览器直接得到 JSONP：`callback({"k":true,"msg":"获取成功","data":{"flvurl":"https://tyjs.ypxjft.cn/.../index.m3u8?auth_key=..."}})`。实测每次响应的 `auth_key` 会变化，必须实时请求。
 - 同一媒体 CDN 的 manifest、16 字节 `key.key`、首个 TS 均可无 Cookie HTTP 200，CORS 为 `*`；HLS 使用 AES-128，manifest 的 `#EXT-X-KEY` URI 为 `key.key`、IV 为全 0。
-- 匿名性：无 Cookie curl 访问 dmn12 的分类/详情/搜索/`play.php` 会被 Cloudflare managed challenge（403），不是账号 401；内置浏览器可以通过年龄页并正常拿到 HTML 和 JSONP。当前还没有在 Pages 的 provider 路由中做边缘出口复测，因此部署可用性仍待验证。
-- 本轮只在 `providers/runtime.js` 放入了**未注册、未暴露到门户**的 `kan98` 研究性解析骨架，用 mock HTML/JSONP 验证列表→详情→播放字段映射；真实本地 server fetch dmn12 仍返回 502（源站 CF challenge），因此没有把它标成已接入，也没有改 `ROUTE_CONFIGS` 或门户卡片状态。
-- **状态：研究已确认、尚未接入；这是目前最值得继续的入口。** 合格实现方向是实时抓 dmn12 HTML（分类/搜索/详情）→ 从 `data-tid/pid/vid` 调 `play.php` → 直连 `tyjs.ypxjft.cn` HLS；禁止复制参考 `/data/*.json` 快照。下一步是先用实际 Pages/Worker 出口验证 CF challenge，再决定服务器端抓取还是浏览器端解析。
+- 匿名 curl 直接访问 dmn12 分类/详情/搜索/`play.php` 会遇到 Cloudflare managed challenge（403），不是账号 401；内置浏览器可通过年龄页。已按用户授权的年龄流程在研究 adapter 中动态读取公开 `safeid` 并重试 `_safe` cookie。**Pages 边缘实测已通过**：列表 200（1017 页/30 卡）、搜索「西野」200（58 页/30 条，包含 3691532）、详情 3691532 200（tid/pid/vid 正确）、动态 HLS manifest/key/TS 全部 200+CORS。
+- `providers/runtime.js` 的 `kan98` adapter 已在 Pages 边缘验证有效，并已注册到 `PROVIDERS`/`ROUTE_CONFIGS`；门户 98 卡现在显示 ONLINE。真实本地 Node 仍可能被源站 CF challenge 拦截，因此本地开发若出现来源 502 属出口差异，Pages 部署端是当前可用出口。
+- **状态：专用已验收（Pages 边缘）。** 实现实时抓 dmn12 HTML（分类/搜索/详情）→ 从 `data-tid/pid/vid` 调 `play.php` → 直连 `tyjs.ypxjft.cn` HLS；没有复制参考 `/data/*.json` 快照。

@@ -132,6 +132,13 @@ export const PROVIDERS = {
     discoveredFrom: "看海角 参考站 decode.js（严格参考 Richy(2).txt 的三层 atob 契约）与官方 web 端 /js/jquery.js wasm 逆向核对",
     capabilities: "热门/分区树/分区帖子/搜索 / 详情图文 / 加密图解码 / 预览视频（wasm 变换 AES-128 HLS）",
   },
+  kan98: {
+    id: "kan98",
+    name: "98堂 dmn12 实时论坛",
+    upstream: "dmn12.vip / sehuatang.net / sehuatang.org + tyjs.ypxjft.cn",
+    discoveredFrom: "98.cfnav.me 页脚、源站分类/详情 HTML 与 play.php JSONP 逐项同源核对（2026-08-17）",
+    capabilities: "论坛分类 / 搜索 / 详情 / data-tid-pid-vid 播放参数 / 实时 AES-128 HLS",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -152,6 +159,7 @@ const ROUTE_CONFIGS = {
   rou: { provider: "rou", preset: "home" },
   jm: { provider: "jm" },
   hj: { provider: "hj" },
+  98: { provider: "kan98", preset: "41" },
 };
 
 export function getProviderForSite(slug) {

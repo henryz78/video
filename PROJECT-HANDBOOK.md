@@ -20,15 +20,15 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 本地入口 | 40 个：原 39 个参考入口中看板娘游戏已移除，另加入参考站新增的 `sf` / 私房 TV 与 `98` / 98堂；两者暂无独立 provider，诚实显示 PENDING |
-| 独立 provider | 16 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频 |
-| 真实匹配完成 | 15 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频、看每日大赛、看禁漫天堂；看TV 进入部分可用 |
+| 本地入口 | 40 个：原 39 个参考入口中看板娘游戏已移除，另加入参考站新增的 `sf` / 私房 TV 与 `98` / 98堂；`98` 已接入实时 adapter，`sf` 继续诚实显示 PENDING |
+| 独立 provider | 17 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频、98堂 dmn12 |
+| 真实匹配完成 | 16 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频、看每日大赛、看禁漫天堂、98堂；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
 | 下一项 | **2026-08-16 第二轮浏览器对比验收已完成**：双端同内容且播放推进通过 9 站（hj/mr/tx/rou/lg/pmv/fj/ep/tna/movie）；本地可用待参考 5 站（qiying/madou/ai/jm/91）；`tv` 阻塞已复现并修复（CDN 根路径分片重写 + HLS 判断无后缀代理 URL，MyCamTV MILF readyState=4 播放推进，见文末记录）；`miss` 为上游 CF 全站挑战阻塞（本地 Node 无解，参考站 FastAPI 服务器代抓路线已查明，轮换域名全部实测 403，待海外出口）。第一轮 `pmv` 空列表已查明为验收误判（health check 并发抢占连接，已加 1.5s 超时优化）。已接入并本地 headless 验收过的站点：`qiying`、`madou`、`tx`、`rou`、`mr`、`jm`、`91`、`ai`、`lg`、`pmv`、`fj`、`movie`、`ep`、`tna`、`tv`(adulttv 39 路主题流已验，41 路 oxax 品牌流 2026-08-17 定案部署端不可用：数据中心 IP 404 + 签名绑定解析者 IP，仅本地/开发可播)；`qms`、`hqw`、`mt`、`best`、`xf`、`sjs`、`book`、`one` 用户决定跳过（风控/登录墙/私有票据/CF 全站保护/磁力下载站/上游不明/目录锁在登录墙后）；`miss` 2026-08-16 起因上游 CF 挑战阻塞（调查中）；`hxc`、`dj`、`swag`、`kankan`、`9s`、`dsd`、`xo`、`jav`、`bj` 待接入；ASMR 按用户决定暂时跳过；`mm` / 墨影集 内容已由用户独立图库站「栖光集」完成（同批数据），聚合入口待接入、未来做外链跳转（链接未就绪）。`hj` 完整正片已实现（2026-08-16，Richy 线索验证有效并落地：preview ts 分片名 LCP 反推完整 m3u8，匿名可拉、无需金币） |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
-| Cloudflare Pages | 适配完成、未部署；根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
+| Cloudflare Pages | 已有部署 `video-4nn.pages.dev`；98 研究 adapter 已在 Pages 边缘通过，根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
 | 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
 | 主导航视觉 | 2026-08-17 已按当前在线 `cfnav.me` 的 40-node 版本再次逐模块对齐：新增 `sf` / `98` 卡片与当前顺序/颜色/点击文案，ACTIVE NODES 40 / GAME 0，完整筛选、线路徽标、账户区、排行榜、佬友优选、绿色通道、双主题与卡片 hover。排行榜/优选没有独立真实数据时只显示明确空态，不写假用户、假标题或假热度；未接入卡继续显示 PENDING。 |
 
@@ -45,7 +45,7 @@
 | slug | 参考入口 | 分类 / 模式 | 当前 provider | 当前状态 | 实现与下一步 |
 |---|---|---|---|---|---|
 | `sf` | 私房 TV | 影视 / cinema | — | 新增待接入 | 2026-08-17 内置浏览器抓到 `/api/meta`、`/api/videos?category={New|1|2|3|6|wmov|free}&page=N&sort={start_date|hot_count}`、详情 `/api/videos/{id}?category=`、播放 `/api/play/{id}?method=0&category=`；首页 964 页、分类/排序参数真实，搜索提交不发新请求。无会话四类接口均 401；浏览器播放为 `14.29.46.204/aboxVOD/mp4:{opaque-token}/manifest.mpd` + DASH 分片。`sifangs.com`/`sifang.online`/`sifangtv.one` 均与 SF 的 SFA* ID/标题不匹配，暂未找到独立上游。保持 PENDING。 |
-| `98` | 98堂 | 影视 / cinema | — | 研究已确认 | 2026-08-17 已确认真实上游为 `dmn12.vip` Discuz 论坛：分类 `/forum-{fid}-{page}.html`（fid 41/109/42/43/44/45/46）、搜索 `/search.php`（结果 GET 带 `searchid/searchmd5/kw/page`）、详情 `/thread-{tid}-1-1.html`。首帖公开 `data-tid/pid/vid`，播放 `/play.php?callback=&tid=&pid=&vid=&rand=&_=` 返回 JSONP `data.flvurl`，实时生成 `tyjs.ypxjft.cn` AES-128 HLS；参考站 3691532/3691530 与源站标题、ID、时长逐项一致。无 Cookie curl 受 dmn12 Cloudflare challenge 403，内置浏览器可过；待 Pages/Worker 出口复测后接入，不复制参考 `/data/*.json`。 |
+| `98` | 98堂 | 影视 / cinema | `kan98` | 专用已验收（Pages 边缘） | 2026-08-17 已确认真实上游为 `dmn12.vip` Discuz 论坛：分类 `/forum-{fid}-{page}.html`（fid 41/109/42/43/44/45/46）、搜索 `/search.php`（结果 GET 带 `searchid/searchmd5/kw/page`）、详情 `/thread-{tid}-1-1.html`。首帖公开 `data-tid/pid/vid`，播放 `/play.php?callback=&tid=&pid=&vid=&rand=&_=` 返回 JSONP `data.flvurl`，实时生成 `tyjs.ypxjft.cn` AES-128 HLS；参考站 3691532/3691530 与源站标题、ID、时长逐项一致。Pages 边缘已实测通过年龄页流程：列表 200（1017 页/30 卡）、搜索「西野」200（58 页/30 条、含 3691532）、详情 200、动态 manifest/key/TS 全部 200+CORS。`98` 已注册到 `PROVIDERS`/`ROUTE_CONFIGS`，门户卡片显示 ONLINE；本地 Node 直抓仍可能遇到源站 CF challenge。 |
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
@@ -259,6 +259,7 @@ npm.cmd run test:cloudflare
 - **新入口上游深挖（2026-08-17，内置浏览器 + 无 Cookie curl；未改代码）**：98 真实源站已从页脚线索推进到可复用契约——`dmn12.vip` 是 Discuz 论坛，7 个在线视频分类对应 fid 41/109/42/43/44/45/46；分类 HTML `/forum-{fid}-{page}.html`、搜索 `/search.php`（「西野」实测 1716 条/58 页）、详情 `/thread-{tid}-1-1.html`。参考条目 3691532 与 3691530 的源站帖子标题/ID/时长一致，首帖公开 `data-tid/pid/vid`。详情加载 `forum_viewthread.js`、`hls.min.js`、`DPlayer.min.js`、`player-2.1.js`，再调 `/play.php?callback=&tid=&pid=&vid=&rand=&_=`，浏览器得到 JSONP `data.flvurl` → `tyjs.ypxjft.cn` AES-128 HLS；manifest/key/TS 无 Cookie 直连 200+CORS。无 Cookie curl 对 dmn12 页面/play.php 为 CF managed challenge 403（不是登录 401），Pages/Worker 出口尚未复测，下一步优先测试后再接入。SF 同轮已确认参数化分页/分类/排序与 SFA* DASH，但搜索不发请求，候选 `sifangtv.one` 与参考条目不匹配，继续保持 PENDING。
 
 - **98 研究性解析骨架（2026-08-17；未注册、未暴露门户）**：在 `providers/runtime.js` 临时加入 `kan98` parser/probe 路由，用 mock 分类 HTML + 详情 `data-tid/pid/vid` + JSONP 播放响应验证统一字段映射；真实本地 fetch 仍因 dmn12 CF challenge 返回 502，未加入 `PROVIDERS`/`ROUTE_CONFIGS`，不影响现有入口健康检查。待 Pages/Worker 出口实测后再决定保留、完善或移除。
+- **98 Pages 边缘验证完成（2026-08-17，研究路由未注册门户）**：自动部署后的 `video-4nn.pages.dev/provider-api/kan98` 已完整通过：分类列表 200（1017 页，30 条/页）、搜索「西野」200（58 页，30 条结果，包含 3691532）、详情 3691532 200（`tid=3691532,pid=69011960,vid=G260815038`）、`play.php` 动态 `auth_key` HLS 以及 manifest/key/TS 200+CORS。结论：98 适配器技术可行；仅因用户要求暂不增加门户注册，98 卡继续 PENDING。此次验证后不再追加提交。
 
 ### 2026-08-14
 

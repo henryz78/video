@@ -3,7 +3,7 @@ import Hls from "hls.js";
 import { getProviderForSite, PROVIDERS } from "../providers/catalog.js";
 
 // Homepage metadata follows the live 2026-08-17 reference portal. Provider routing
-// remains slug-based in providers/catalog.js; the two new entries intentionally stay pending.
+// remains slug-based in providers/catalog.js; sf stays pending while 98 uses the verified live adapter.
 const SITE_BLUEPRINTS = [
   [1, "sf", "私房 TV", "影视", "video", "red", "#FF6B63", "255, 107, 99", "私房影视与频道内容浏览", "cinema", "direct", "1,430", true],
   [2, "98", "98堂", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "分类清晰的高清视频浏览站", "cinema", "direct", "1,149", true],
