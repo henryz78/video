@@ -161,10 +161,13 @@
 - 目录含明确 VIP 标记。当前公开检索未识别到可独立调用的原始目录或媒体站。
 - 结论：只记录链路，不复用参考私有 token；入口继续 pending。
 
-## 爱看 / 香蕉视频
+## 爱看 / 香蕉视频（`xo`，2026-08-17 已接入）
 
-- 参考前端明确标注上游 `https://h5.xxoo473.org`，目录字段与上游页面逐项一致。
-- 状态：上游已确认，待接入。
+- 参考前端标注上游 `https://h5.xxoo473.org`；登录态下 `/api/*` 路径全部回退为 SPA 页面本身（前端路由），但 `app.js?v=20260806-public-playlist1` 与 `player-policy.js` 匿名可抓，源码注释直接写明「数据源: https://h5.xxoo473.org」并暴露全部接口路径（同源铁证）。
+- 接口全匿名可用（`https://h5.xxoo473.org/api`）：列表 `/v2/vod/listing-{cateid}-{areaid}-{yearid}-{definition}-{duration}-{freetype}-{mosaic}-{langvoice}-{orderby}-{page}`（16 条/页，总 42815 条/2676 页，pageinfo 全量分页）、分类树 categories（cateid 16 香蕉原创/5 制服诱惑/6 清纯少女/7 辣妹大奶/8 女同专属/9 素人出演/10 角色扮演/11 成人动漫/12 人妻熟女/13 变态另类）、排序 orders（1 好评/2 播放/3 评分）、搜索 `/search?wd=&page=`、详情 `/vod/show/{id}`（vodrow + categories + similarrows + likerows）、短视频 `/minivod/*`。列表字段：vodid/title/coverpic/preview_url/play_url/view_price/vip_price/duration/scorenum/upnum/definition/yearname。
+- 播放：`/vod/reqplay/{id}` 基本全站 VIP 锁定（retcode 5 "VIP独享内容"；无额度时 retcode 3 带 httpurl_preview）。**参考站 app.js 内置 Richy 解锁（源码注释 `Richy-style: preview KEY → full master when reqplay is VIP-locked`）**：拉 preview m3u8 的 KEY URI `https://{cdn}/{date}/{id}/{bitrate}kb/hls/key.key` → 反推完整 master `https://{cdn}/{date}/{id}/index.m3u8`（多码率 STREAM-INF）→ 指向完整 `index.m3u8`（AES-128，key 相对路径、TS 绝对 URL）。
+- 媒体链全 CORS `*` 匿名直连：preview 与 master/key/TS 在 mymb041.com（8u3m21v5b / st21v5 等子域，每片独立域）、preview 入口 preview2.k18e7j.com、封面 aqsmimg3999.sbs。实测 83835 完整片 678 分片/2035.7s（33:55 与详情标注一致）、key 16B、TS 200。
+- **状态：专用已验收。** `kanxo` adapter 已实现并本地 headless 验收：列表 16 卡、详情解析完整片、1920×1080 readyState=4 currentTime 推进、零 JS 错误。参考站同款 VIP 锁定→Richy 解锁策略完全复刻，零 cfnav 依赖。
 
 ## 2026-08-12 剩余视频站整站筛查
 
@@ -523,15 +526,18 @@
 ### 参考站导航与接口
 
 - 使用内置浏览器的现有登录态打开 `https://sf.cfnav.me/`；首页标题为「私房TV」，导航包含「最新 / 自拍 / 偷拍 / 主播实录 / 欧美 / 日本 / 免费专区」及排序「最新 / 最多观看」。卡片 hash 路由形如 `#/watch/{id}?category=2`，详情页包含标题、ID、时长、日期、清晰度、播放线路 1~8、精彩画面和相关推荐。
-- 页面脚本实际请求：`GET /api/meta`、`GET /api/videos?category=New&page=1&sort=start_date`、`GET /api/videos/{id}?category=2`、`GET /api/play/{id}?method=0&category=2`。分页按钮会把 `page=1` 改为 `page=2`（首页 964 页）；分类按钮把 `category=New` 改为 `category=1/2/3/6/wmov/free`；排序下拉把 `sort=start_date` 改为 `sort=hot_count`。搜索框提交后 URL、列表和请求均不变，未观察到搜索 API。
+- 页面脚本实际请求：`GET /api/meta`、`GET /api/videos?category=New&page=1&sort=start_date`、`GET /api/videos/{id}?category=2`、`GET /api/play/{id}?method=0&category=2`。分页按钮会把 `page=1` 改为 `page=2`（首页 964 页）；分类按钮把 `category=New` 改为 `category=1/2/3/6/wmov/free`；排序下拉把 `sort=start_date` 改为 `sort=hot_count`。搜索提交在当前浏览器 UI 中没有改变 hash；按前端路由手动打开 `#/?q=情深叉喔` 后确实发出 `/api/videos?...&q=情深叉喔`，但返回「没有找到内容」（已知首页存在同标题卡），因此搜索当前应视为后端未实现/失效，而不是独立可用搜索。
 - 未携带登录态的 Node/curl 请求对上述四类接口均返回 **401 Unauthorized**；参考站接口是登录墙，但页面本身的字段契约已通过渲染结果确认（列表卡片：id/title/date/views/duration/category；详情：title/id/date/resolution/description/线路；播放返回 blob 下的 DASH）。
 
 ### 媒体链路与结论
 
 - 登录态浏览器打开首条详情后，播放器的 `video.currentSrc` 为 blob，底层资源为 `https://14.29.46.204/aboxVOD/.../manifest.mpd`（路径中含授权后生成的长 opaque token），并继续请求同目录 MPEG-DASH 分片。浏览器实测 `readyState=4`、854×480、约 1757 秒，播放可推进。
-- 登录态内置浏览器抓到完整媒体请求：`https://14.29.46.204/aboxVOD/mp4:{opaque-token}/manifest.mpd`，同目录继续请求 `chunk_*_mpd.m4s` 视频/音频片段；首条详情 `SFA9301` 实测 `readyState=4`、854×480、1757 秒。Token 每次由 `/api/play/{id}` 生成，未发现可从页面公开重建的签名算法。
+- 这里要区分两个站：**SF 参考站本身不是试看**——登录态的 `SFA9301` 是 29:17（1757 秒）完整时长并可播放；「正在播放预览，VIP 可免费观看完整视频」是反查到的 `gcav.club` 候选上游页面文案。GCAV 对同一批条目匿名只给 `preview_mp4/{id}.mp4`（约 60 秒），完整 `/v/{id}/manifest` 仅在它判定账号有权限时返回；不能把 GCAV 的 VIP 门槛误写成 SF 的播放器限制。
+- 登录态内置浏览器抓到完整媒体请求：`https://14.29.46.204/aboxVOD/mp4:{opaque-token}/manifest.mpd`，同目录继续请求 `chunk_*_mpd.m4s` 视频/音频片段；首条详情 `SFA9301` 实测 `readyState=4`、854×480、1757 秒。相同详情连续刷新两次得到的 manifest URL 长度均 974，但 token 有 357 个字符不同，证明是每次播放动态生成；它由 `/api/play/{id}` 返回，未发现可从页面公开重建的签名算法。
 - 按站名继续挖到的 `sifangs.com` / `sifang.online` 会跳转到无关的「杏吧」站，`sifangtv.one` 是另一个公开影视站（数字 `/v/{id}`，搜索「大宇1」无结果、标题/ID 与 SF 不匹配），均不能认定为 SF 上游。
-- **状态：保持门户 PENDING，不实现 adapter。** 重新评估条件：找到 SF 的实际公开目录站、公开的 token 生成方式，或拿到不依赖 cfnav 登录的稳定上游域名。
+- 继续按标题、片长和页面来源反查，发现 `gcav.club`（别名 `gcav.me`、`gcav.run`、`cnav.live`）是一个可公开浏览的 GCAV 目录站，和 SF 共享同一批近期条目及 `gc.skylines.pro` 媒体 CDN。逐条对上了同标题，部分片长也完全一致：`SFA9301`「大宇1-今天约了个兼职美女 人美逼遭罪」↔ GCAV `58497`（29:17）、`SFA9325`↔`58494`（53:32）、`SFA9332`↔`58493`（38:55）、`SFE13566`「超纯腼腆的小妹妹【叮当猫】…」↔`56266`（28:48），以及 `SFR11337`「情深叉喔,合租室友肉体勾引」↔ GCAV `58476`（33:06）；`SFA9311`/`58496`、`SFA9318`/`58495` 也同标题但当前页面片长有数十秒差异。这个结果足以证明同库/同批分发，但仍不能把 GCAV 直接等同于 SF 的完整源站：GCAV 的 `/search/{关键词}` 和 `/video/load?block={block}&page=N` 是公开实时 HTML/JSON 目录，详情 `/v/{数字 id}` 公开预览 `https://gc.skylines.pro/preview_mp4/{id}.mp4`；对应上述条目页面均标记 `has_access=false`、VIP `$6/月`，匿名请求 `/v/{id}/manifest` 返回空响应。只有 GCAV 明确免费条目（例如 `7863`）才会返回 `.../videos/{id}/{uuid}/manifest.m3u8`，该 manifest 可匿名拉取，但不覆盖 SF 当前条目。
+- **结论（2026-08-17 继续深挖后）：保持门户 PENDING，不实现 adapter。** 目前有希望接入的是「同库目录 + 公开试看」或未来找到 GCAV/同 CDN 的正式授权完整源；SF 自身的完整 DASH 仍依赖登录态 `/api/play` 生成的长 token，不能写入长期配置，也不能通过猜 URL 绕过 GCAV VIP。重新评估条件：找到不依赖 cfnav 登录的公开 token/manifest 生成接口，或上游明确开放完整播放（含稳定目录、详情、搜索和可持续媒体链）。
+- **优先级拆分**：SF 整站（需要完整播放）放在已确认公开上游的站点之后；免费子集可以单独继续核对，但必须逐条证明「公开目录 → 详情 → 完整媒体」链路。当前 SF 免费专区抽样的 `SFE12758`、`SFE12738`、`SFE12741` 在 GCAV 对应条目仍是 `has_access=false`、manifest 空，尚不足以先做一个只显示试看或假装免费完整的 adapter。VIP/完整链路只有在出现独立公开授权接口后再做，不绕过登录或付费控制。
 
 ## 98堂 / 98.cfnav.me（`98`，2026-08-17 浏览器探测）
 

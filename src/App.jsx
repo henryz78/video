@@ -340,6 +340,8 @@ function epDetailUrl(id) {
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);  if (provider?.id === "qiying" || provider?.id === "mr" || provider?.id === "hj") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
   if (provider?.id === "jm") return <JmPage site={site} go={go} setHealth={setHealth} />;
+  const KANXO_TABS = [["", "全部"], ["16", "香蕉原创"], ["5", "制服诱惑"], ["6", "清纯少女"], ["7", "辣妹大奶"], ["8", "女同专属"], ["9", "素人出演"], ["10", "角色扮演"], ["11", "成人动漫"], ["12", "人妻熟女"], ["13", "变态另类"]];
+  const KANXO_ORDERS = [["0", "默认排序"], ["1", "最多好评"], ["2", "最多播放"], ["3", "最高评分"]];
   const MISS_TABS = [
     ["", "最近更新"], ["release", "新作上市"], ["today-hot", "今日热门"], ["weekly-hot", "本周热门"],
     ["monthly-hot", "本月热门"], ["chinese-subtitle", "中文字幕"], ["uncensored-leak", "无码流出"],
@@ -366,6 +368,7 @@ function SitePage({ site, go, health, setHealth }) {
   const [submitted, setSubmitted] = useState("");
   const [page, setPage] = useState(1);
   const [category, setCategory] = useState(provider?.id === "madou" ? "" : provider?.preset || "");
+  const [order, setOrder] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
@@ -386,6 +389,7 @@ function SitePage({ site, go, health, setHealth }) {
     if (submitted) params.set("wd", submitted);
     else if (category) params.set("preset", category);
     else if (provider.preset && provider.id !== "madou") params.set("preset", provider.preset);
+    if (order) params.set("order", order);
     setLoading(true); setError("");
     const epDirect = provider.id === "eporner";
     const fetchUrl = epDirect
@@ -405,9 +409,9 @@ function SitePage({ site, go, health, setHealth }) {
       if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
     }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [page, submitted, category, setHealth, provider?.id, provider?.preset]);
+  }, [page, submitted, category, order, setHealth, provider?.id, provider?.preset]);
   const submit = (e) => { e.preventDefault(); setPage(1); setSubmitted(query.trim()); };
-  useEffect(() => { setPage(1); }, [category, submitted]);
+  useEffect(() => { setPage(1); }, [category, submitted, order]);
   const openDetail = async (item) => {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
@@ -435,11 +439,12 @@ function SitePage({ site, go, health, setHealth }) {
   return <div className={`site-page accent-${site.accent} mode-${site.mode}`}>
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>{site.name}</strong><small>{site.description}</small></div><span className={`status-chip ${health}`}>{health === "ok" ? "SOURCE ONLINE" : "SOURCE CHECK"}</span></nav>
     <section className="sub-hero"><small>{site.category.toUpperCase()} / {site.slug}.local</small><h1>{site.name}</h1><p>{site.description}</p><div className="source-note">独立适配器 · {provider.name}{provider.preset ? ` · ${provider.preset}` : ""}</div></section>
-    {provider?.id !== "tx" && <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>}
+    {provider?.id !== "tx" && <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索 ${site.name} 的内容`} /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); setOrder(""); }}>清除</button>}</form>}
     {provider?.id === "madou" && <div className="qiying-tabs">{MADOU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "miss" && <div className="qiying-tabs">{MISS_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "tx" && <div className="qiying-tabs">{TX_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "rou" && <div className="qiying-tabs">{ROU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    {provider?.id === "kanxo" && <div className="qiying-tabs">{KANXO_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}<span className="qiying-tabs-spacer"></span>{KANXO_ORDERS.map(([key, label]) => <button key={key} className={order === key ? "is-active" : ""} onClick={() => { setOrder(key); }}>{label}</button>)}</div>}
     <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}

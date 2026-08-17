@@ -2915,6 +2915,131 @@ async function kan98Detail(id) {
   }, { headers: { "cache-control": "no-store" } });
 }
 
+/* ---------------- 爱看 / 香蕉视频 (kanxo, h5.xxoo473.org 公开 API + Richy VIP 解锁) ---------------- */
+const KANXO_API = "https://h5.xxoo473.org/api";
+const KANXO_REFERER = "https://h5.xxoo473.org/";
+const KANXO_HEADERS = { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" };
+
+async function kanxoFetch(path, init = {}) {
+  const response = await fetch(KANXO_API + path, {
+    ...init,
+    headers: { ...KANXO_HEADERS, referer: KANXO_REFERER, ...(init.headers || {}) },
+  });
+  const text = await response.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!response.ok) throw new Error(json.errmsg || json.message || `kanxo upstream ${response.status}`);
+  return json;
+}
+
+function kanxoCard(v = {}) {
+  const price = Number(v.view_price || 0);
+  const vip = Number(v.vip_price || 0);
+  const isVip = price >= 1000000 || vip >= 1000000;
+  const single = !isVip && (price > 0 || vip > 0);
+  return {
+    vod_id: String(v.vodid || ""),
+    vod_name: v.title || "未命名",
+    vod_pic: v.coverpic || "",
+    vod_remarks: isVip ? "VIP" : single ? "付费" : "可播放",
+    vod_play_url: v.preview_url || "",
+    vod_blurb: v.intro || "",
+    vod_year: v.yearname || "",
+    type_name: v.catename || "",
+    duration: v.duration || "",
+    score: v.scorenum || "",
+    views: v.upnum || "",
+    definition: v.definition || "",
+    view_price: price,
+    vip_price: vip,
+    preview_url: v.preview_url || "",
+    needs_detail: true,
+    provider: "kanxo",
+  };
+}
+
+function kanxoEscalateFromPreview(previewText, previewUrl) {
+  if (!/^\s*#EXTM3U/i.test(previewText)) return "";
+  const match = previewText.match(/URI="([^"]+)"/);
+  if (!match) return "";
+  let keyAbs;
+  try { keyAbs = new URL(match[1], previewUrl).href; } catch { return ""; }
+  const parsed = new URL(keyAbs);
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  return `${parsed.protocol}//${parsed.host}/${parts[0]}/${parts[1]}/index.m3u8`;
+}
+
+async function kanxoResolvePlay(id) {
+  const show = await kanxoFetch(`/vod/show/${encodeURIComponent(id)}`);
+  const vod = show.data?.vodrow || {};
+  const previewUrl = vod.preview_url || "";
+  const previewFallback = vod.httpurl_preview || "";
+  let reqplay = null;
+  try {
+    const rp = await kanxoFetch(`/vod/reqplay/${encodeURIComponent(id)}`);
+    if (rp.retcode === 0 && (rp.data?.play_url || rp.data?.url || rp.data?.httpurl_play)) {
+      reqplay = rp.data.play_url || rp.data.url || rp.data.httpurl_play || "";
+    }
+  } catch { /* fall through to preview escalation */ }
+  if (reqplay) return { video: reqplay, mode: "reqplay" };
+  for (const candidate of [previewUrl, previewFallback]) {
+    if (!candidate) continue;
+    try {
+      const r = await fetch(candidate, { headers: KANXO_HEADERS });
+      if (!r.ok) continue;
+      const text = await r.text();
+      const master = kanxoEscalateFromPreview(text, candidate);
+      if (master) {
+        const mr = await fetch(master, { headers: KANXO_HEADERS });
+        if (mr.ok && /EXTM3U/i.test(await mr.text())) return { video: master, mode: "escalated" };
+      }
+    } catch { /* try next */ }
+  }
+  return { video: previewUrl || previewFallback || "", mode: "preview" };
+}
+
+async function kanxoDetail(id) {
+  const j = await kanxoFetch(`/vod/show/${encodeURIComponent(id)}`);
+  const d = j.data || {};
+  const card = kanxoCard(d.vodrow || {});
+  card.vod_blurb = d.vodrow?.content || d.vodrow?.description || d.vodrow?.intro || "";
+  card.vod_area = (d.categories || []).map((c) => c.catename).filter(Boolean).join(" / ") || "";
+  card.tags = (d.categories || []).map((c) => c.catename).filter(Boolean);
+  card.similar = (d.similarrows || []).map(kanxoCard).map((x) => ({ vod_id: x.vod_id, vod_name: x.vod_name, vod_pic: x.vod_pic, vod_remarks: x.vod_remarks, vod_play_url: x.vod_play_url }));
+  const play = await kanxoResolvePlay(id);
+  card.vod_play_url = play.video || card.vod_play_url;
+  card.play_mode = play.mode;
+  card.play_notice = play.mode === "escalated" ? "已解锁完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "";
+  return json({ ...card, provider: "kanxo" });
+}
+
+async function kanxoList(requestUrl) {
+  const params = requestUrl.searchParams;
+  const page = Number(params.get("pg") || params.get("page") || 1);
+  const category = params.get("preset") || params.get("category") || "";
+  const keyword = params.get("wd") || params.get("q") || "";
+  const order = params.get("order") || "0";
+  let j;
+  if (keyword) {
+    j = await kanxoFetch(`/search?wd=${encodeURIComponent(keyword)}&page=${page}`);
+  } else {
+    const cateid = category || "0";
+    j = await kanxoFetch(`/v2/vod/listing-${cateid}-0-0-0-0-0-0-0-${order}-${page}`);
+  }
+  const d = j.data || {};
+  const rows = d.vodrows || [];
+  const cats = (d.categories || []).map((c) => ({ slug: String(c.cateid), name: c.catename }));
+  const orders = (d.orders || []).map((o) => ({ slug: String(o.keyid), name: o.value }));
+  return json({
+    list: rows.map(kanxoCard),
+    totalPages: (d.pageinfo && d.pageinfo.totalpage) || 1,
+    cats,
+    orders,
+    provider: "kanxo",
+  });
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -2961,7 +3086,8 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     }
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
-    if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
+if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
+    if (provider === "kanxo") return await (action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });
