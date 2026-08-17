@@ -2722,14 +2722,15 @@ function kan98Attr(tag, name) {
 }
 
 function kan98ThreadId(href = "") {
-  return href.match(/thread-(\d+)(?:-|\.html)/i)?.[1]
-    || href.match(/[?&]tid=(\d+)/i)?.[1]
+  const normalized = String(href).replace(/&amp;/gi, "&");
+  return normalized.match(/thread-(\d+)(?:-|\.html)/i)?.[1]
+    || normalized.match(/[?&]tid=(\d+)/i)?.[1]
     || "";
 }
 
 function kan98CardFromBlock(block, categoryId) {
   const threadTag = block.match(/<a\b[^>]+href=["'][^"']*(?:thread-\d+|tid=\d+)[^"']*["'][^>]*>/i)?.[0] || "";
-  const threadHref = kan98Attr(threadTag, "href");
+  const threadHref = kan98Attr(threadTag, "href").replace(/&amp;/gi, "&");
   const id = kan98ThreadId(threadHref);
   if (!id) return null;
   const title = kan98Attr(threadTag, "title")
@@ -2768,7 +2769,8 @@ function kan98SearchCards(html) {
   const list = [];
   const seen = new Set();
   for (const match of html.matchAll(/<a\b[^>]+href=["']([^"']*(?:thread-\d+|mod=viewthread[^"']*tid=\d+)[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-    const id = kan98ThreadId(match[1]);
+    const href = match[1].replace(/&amp;/gi, "&");
+    const id = kan98ThreadId(href);
     if (!id || seen.has(id)) continue;
     const tag = match[0];
     const title = kan98Attr(tag, "title") || decodeHtml(match[2]);
@@ -2782,7 +2784,7 @@ function kan98SearchCards(html) {
       type_name: "98堂搜索",
       vod_area: "dmn12.vip",
       needs_detail: true,
-      metadata: { thread_url: new URL(match[1], KAN98_ORIGIN).href },
+      metadata: { thread_url: new URL(href, KAN98_ORIGIN).href },
       provider: "kan98",
     });
   }
