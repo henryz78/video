@@ -387,7 +387,7 @@ function SitePage({ site, go, health, setHealth }) {
     else if (category) params.set("preset", category);
     else if (provider.preset && provider.id !== "madou") params.set("preset", provider.preset);
     setLoading(true); setError("");
-    const epDirect = provider.id === "ep";
+    const epDirect = provider.id === "eporner";
     const fetchUrl = epDirect
       ? epListUrl({ pg: page, wd: submitted, preset: category || provider.preset })
       : `/provider-api/${provider.id}?${params}`;
@@ -412,10 +412,10 @@ function SitePage({ site, go, health, setHealth }) {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(provider.id === "ep" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
-      setSelected(provider.id === "ep" ? epNormalize(detail) : detail);
+      setSelected(provider.id === "eporner" ? epNormalize(detail) : detail);
     } catch (detailError) {
       setSelected({ ...item, detail_error: detailError.message });
     }
@@ -787,7 +787,7 @@ export function App() {
   const [welcome, setWelcome] = useState(false);
   const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
-    Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
+    Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(provider === "eporner" ? epListUrl({ pg: 1 }) : `/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
       const ready = results.filter((result) => result.status === "fulfilled");
       setHealth(ready.length === results.length ? "ok" : ready.length ? "checking" : "error");
     });
