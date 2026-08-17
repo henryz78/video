@@ -317,10 +317,56 @@ async function madouAiList(requestUrl) {
   }, { headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=180" } });
 }
 
-async function madouAiDetail(id) {
+async function madouAiDetail(id, requestUrl) {
   if (!/^\d+$/.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
   const item = normalizeMadouAi(await madouAiFetch(`/api/v1/videos/${id}`));
-  return json({ ...item, needs_detail: false }, { headers: { "cache-control": "public, max-age=180" } });
+  // madouai's /api/v1/m3u8/proxy and key endpoints reflect a DUPLICATED
+  // Access-Control-Allow-Origin header (e.g. "http://localhost:5173, http://localhost:5173")
+  // which browsers reject; route manifest + key through the same-origin proxy
+  // (clean CORS headers), keep ts segments direct (dcsfik.com sends a single "*").
+  const proxy = new URL("/provider-api/madouai", requestUrl.origin);
+  proxy.searchParams.set("action", "media");
+  proxy.searchParams.set("url", item.vod_play_url);
+  return json({ ...item, vod_play_url: proxy.href, needs_detail: false }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+const MADOUAI_MEDIA_HOSTS = new Set(["www.madouai.xyz"]);
+
+async function madouAiMedia(requestUrl) {
+  const raw = requestUrl.searchParams.get("url") || "";
+  let source;
+  try {
+    source = new URL(raw);
+  } catch {
+    return json({ message: "invalid media url" }, { status: 400 });
+  }
+  if (source.protocol !== "https:" || !MADOUAI_MEDIA_HOSTS.has(source.hostname)) return json({ message: "invalid media host" }, { status: 400 });
+  const upstream = await fetch(source, { signal: AbortSignal.timeout(15_000) });
+  if (!upstream.ok) return json({ message: `madouai media ${upstream.status}` }, { status: 502 });
+  if (/\.m3u8(?:$|\?)/i.test(source.pathname) || source.pathname.endsWith("/m3u8/proxy")) {
+    const text = (await upstream.text()).replace(/URI="([^"]+)"/g, (_, uri) => {
+      const absolute = new URL(uri, source).href;
+      const proxy = new URL("/provider-api/madouai", requestUrl.origin);
+      proxy.searchParams.set("action", "media");
+      proxy.searchParams.set("url", absolute);
+      return `URI="${proxy.href}"`;
+    });
+    return new Response(text, {
+      headers: {
+        "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/octet-stream",
+      "cache-control": "public, max-age=60",
+      "access-control-allow-origin": "*",
+    },
+  });
 }
 
 const PMVHAVEN_ORIGIN = "https://pmvhaven.com";
@@ -2642,7 +2688,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
     if (provider === "hstream") return await (action === "detail" ? hstreamDetail(requestUrl.searchParams.get("id")) : hstreamList(requestUrl));
     if (provider === "leakgallery") return await (action === "detail" ? leakGalleryDetail(requestUrl.searchParams.get("id")) : leakGalleryList(requestUrl));
     if (provider === "eporner") return await (action === "detail" ? epornerDetail(requestUrl.searchParams.get("id")) : epornerList(requestUrl));
-    if (provider === "madouai") return await (action === "detail" ? madouAiDetail(requestUrl.searchParams.get("id")) : madouAiList(requestUrl));
+    if (provider === "madouai") return await (action === "media" ? madouAiMedia(requestUrl) : action === "detail" ? madouAiDetail(requestUrl.searchParams.get("id"), requestUrl) : madouAiList(requestUrl));
     if (provider === "pmvhaven") return await (action === "detail" ? pmvHavenDetail(requestUrl.searchParams.get("id")) : pmvHavenList(requestUrl));
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));
     if (provider === "tnaflix") return await (action === "detail" ? tnaflixDetail(requestUrl.searchParams.get("id")) : tnaflixList(requestUrl));
