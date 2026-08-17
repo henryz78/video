@@ -3050,7 +3050,7 @@ const PH_MEDIA_HEADERS = {
   ...PH_HEADERS,
   referer: "https://www.pornhub.com/view_video.php",
 };
-const PH_MEDIA_HOST = /^(iv-h|hv-h|ei|ev-h|ev|pix-fl)\.phncdn\.com$/i;
+const PH_MEDIA_HOST = /^(iv-h|hv-h|ei|ev-h|ev|pix-fl|pix-cdn77)\.phncdn\.com$/i;
 
 async function phPage(pathname) {
   const response = await fetch(new URL(pathname, PH_ORIGIN), { headers: PH_HEADERS, signal: AbortSignal.timeout(20_000) });
@@ -3061,7 +3061,7 @@ async function phPage(pathname) {
 function phCard(html) {
   const vkey = html.match(/data-video-vkey="([^"]+)"/)?.[1] || "";
   const title = decodeHtml(html.match(/<a[^>]+href="\/view_video\.php\?viewkey=[^"]*"[^>]*title="([^"]*)"/)?.[1] || vkey);
-  const cover = html.match(/<img[^>]+src="(https:\/\/(?:[a-z0-9-]+\.)?phncdn\.com\/[^"]+)"/)?.[1] || "";
+  const cover = phCoverUrl(html.match(/<img[^>]+src="(https:\/\/(?:[a-z0-9-]+\.)?phncdn\.com\/[^"]+)"/)?.[1] || "");
   const duration = html.match(/<var class="duration">([^<]+)<\/var>/)?.[1] || "";
   return {
     vod_id: vkey,
@@ -3097,6 +3097,11 @@ function phMediaUrl(url) {
   return `/provider-api/ph?action=media&url=${encodeURIComponent(url)}`;
 }
 
+function phCoverUrl(url) {
+  if (!url) return "";
+  return /^https:\/\/pix-cdn77\.phncdn\.com\//i.test(url) ? phMediaUrl(url) : url;
+}
+
 function phResolveRef(reference, base) {
   const resolved = new URL(reference, base);
   if (!resolved.search && base.search) resolved.search = base.search;
@@ -3128,7 +3133,7 @@ async function phDetail(id) {
   const html = await phPage(`/view_video.php?viewkey=${encodeURIComponent(id)}`);
   const title = decodeHtml(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] || html.match(/<title>([\s\S]*?)<\/title>/)?.[1] || id);
   const duration = Number(html.match(/"video_duration":(\d+)/)?.[1] || 0);
-  const cover = html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "";
+  const cover = phCoverUrl(html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "");
   const hls = phExtractMediaDefinitions(html)
     .filter((d) => d.format === "hls" && d.videoUrl)
     .sort((a, b) => (Number(b.quality) || 0) - (Number(a.quality) || 0));
