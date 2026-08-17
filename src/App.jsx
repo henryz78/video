@@ -737,6 +737,7 @@ export function App() {
   const [route, go] = useRoute();
   const [health, setHealth] = useState("checking");
   const [unlocked, setUnlocked] = useState(() => localStorage.getItem("cf-decoy") === "1" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
+  const [welcome, setWelcome] = useState(false);
   const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
     Promise.allSettled(Object.keys(PROVIDERS).map((provider) => fetch(`/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
@@ -746,9 +747,22 @@ export function App() {
   }, []);
   const site = route.page === "site" ? SITE_BLUEPRINTS.find((s) => s.slug === route.slug) : null;
   const isHome = !site;
-  const unlock = () => { localStorage.setItem("cf-decoy", "1"); setUnlocked(true); };
-  if (!unlocked) return <DecoyPage onUnlock={unlock} />;
+  useEffect(() => {
+    if (!unlocked) return;
+    document.title = "不许涩涩机场塔台-允许起飞 · 成人内容聚合";
+  }, [unlocked]);
+  const unlock = () => {
+    localStorage.setItem("cf-decoy", "1");
+    setUnlocked(true);
+    setWelcome(true);
+    setTimeout(() => setWelcome(false), 2600);
+  };
+  if (!unlocked) {
+    if (route.page !== "home") history.replaceState(null, "", "/");
+    return <DecoyPage onUnlock={unlock} />;
+  }
   return <div className={`app ${isHome ? "portal-app" : ""}`}><Header go={go} health={health} isHome={isHome} /><main>{site ? <SitePage site={site} go={go} health={health} setHealth={setHealth} /> : <Home go={go} />}</main><footer><span>不许涩涩机场塔台-允许起飞 / ADULT DIRECTORY</span><span>NO ADS · MINIMAL UI · 2026</span></footer>
+    {welcome && <div className="welcome-toast" role="status"><b>欢迎来到不许涩涩机场塔台</b></div>}
     {!ageAccepted && <div className="age-gate"><div><small>ADULT CONTENT / 18+</small><h2>年满 18 岁方可进入</h2><p>这是一个个人、非商业的学习项目。请确认你已达到所在地区的法定年龄。</p><button onClick={() => { localStorage.setItem("cf-age", "yes"); setAgeAccepted(true); }}>我已年满 18 岁</button></div></div>}
   </div>;
 }
