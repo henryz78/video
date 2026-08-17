@@ -2682,11 +2682,24 @@ async function kan98Page(pathname, init = {}) {
       // 用户已明确允许进入年龄页；这里仅复现该公开流程，不读取用户浏览器 Cookie。
       const safeId = text.match(/var\s+safeid\s*=\s*["']([^"']+)["']/i)?.[1] || "";
       if (safeId) {
-        const retry = await fetch(url, {
+        let retry = await fetch(url, {
           ...init,
           headers: { ...KAN98_HEADERS, ...(init.headers || {}), cookie: `_safe=${safeId}` },
+          redirect: "manual",
           signal: init.signal || AbortSignal.timeout(20_000),
         });
+        if ([301, 302, 303, 307, 308].includes(retry.status)) {
+          const location = retry.headers.get("location");
+          if (location) {
+            retry = await fetch(new URL(location, url), {
+              ...init,
+              method: "GET",
+              body: undefined,
+              headers: { ...KAN98_HEADERS, cookie: `_safe=${safeId}` },
+              signal: init.signal || AbortSignal.timeout(20_000),
+            });
+          }
+        }
         text = await retry.text();
         if (retry.ok && !/(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
           return { text, url: retry.url || url.href };
