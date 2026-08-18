@@ -174,6 +174,13 @@ kan98: {
     discoveredFrom: "爱微社区参考站 kankan.cfnav.me 与 avjb.com 同源核对（卡片/视频 id 逐字一致，2026-08-18；docs/Richy (6).txt 即 AVJB 完整播放脚本）",
     capabilities: "首页 / 最新 / 分类 / 搜索 / 相册 / 详情 / 裸 CDN 分片自建 playlist 完整播放（VIP 同源匿名）",
   },
+  dsd: {
+    id: "dsd",
+    name: "懂色帝 实时上游",
+    upstream: "dsd900.com（MacCMS 10）+ /addons/vplayer/ jsfuck 签名中转 + video1 目录 CDN（AES-128 HLS，同源代理）",
+    discoveredFrom: "看懂色帝 参考站站名破译「懂色帝」→ GitHub 发布页 → 地址页 dsd87.lol scrambled 反转字符串解码出主域（2026-08-18；MacCMS 路由 + player_aaaa + jsfuck sign 播放链全匿名实测）",
+    capabilities: "分类目录 / 分页 / 搜索 / 详情 / jsfuck 签名 AES-128 HLS 播放（代理）",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -199,6 +206,7 @@ hj: { provider: "hj" },
   "9s": { provider: "js9", preset: "home" },
   jav: { provider: "jav" },
   kankan: { provider: "avjb" },
+  dsd: { provider: "dsd" },
 };
 
 export function getProviderForSite(slug) {

@@ -3708,6 +3708,286 @@ function btoa(value) {
   return out;
 }
 
+/* ---------------- dsd / 看懂色帝 (dsd900.com, MacCMS 10) ---------------- */
+const DSD_ORIGIN = "https://www.dsd900.com";
+const DSD_HEADERS = {
+  referer: "https://www.dsd900.com/",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+};
+
+async function dsdPage(pathname, retries = 3) {
+  let last;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(new URL(pathname, DSD_ORIGIN), { headers: DSD_HEADERS, signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new Error(`dsd page ${response.status}`);
+      return response.text();
+    } catch (error) {
+      last = error;
+      await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
+function dsdMediaUrl(path, kind = "image") {
+  return `/provider-api/dsd?action=media&kind=${kind}&path=${encodeURIComponent(path.replace(/^https?:\/\/[^/]+/i, ""))}`;
+}
+
+function dsdParseCards(html) {
+  const cards = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<a href="(\/index\.php\/vod\/play\/id\/(\d+)[^"]*)" class="video-item">([\s\S]*?)<\/a>/g)) {
+    const id = match[2];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const block = match[3];
+    const pic = block.match(/data-src="([^"]+)"/)?.[1] || "";
+    const title = decodeHtml(block.match(/class="video-desc[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1]?.trim() || "") || id;
+    const duration = block.match(/video-item-tag-duration[^>]*>([^<]*)</)?.[1]?.trim() || "";
+    const hits = block.match(/video-item-tag-hits[^>]*>([^<]*)</)?.[1]?.trim() || "";
+    const isVip = /video-item-tag-is-vip/.test(block);
+    cards.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: pic ? dsdMediaUrl(pic) : "",
+      vod_remarks: duration || (isVip ? "VIP" : "VIDEO"),
+      vod_blurb: [isVip ? "会员" : "免费", hits, duration].filter(Boolean).join(" · "),
+      vod_content: hits,
+      vod_area: "dsd900.com",
+      type_name: isVip ? "会员" : "免费",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "dsd",
+    });
+  }
+  return cards;
+}
+
+function dsdParseRelated(html) {
+  const cards = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<li class="madou1">([\s\S]*?)<\/li>/g)) {
+    const block = match[1];
+    const href = block.match(/href="(\/index\.php\/vod\/play\/id\/(\d+)[^"]*)"/)?.[1] || "";
+    const id = href.match(/id\/(\d+)\//)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const pic = block.match(/data-src="([^"]+)"/)?.[1] || "";
+    const title = decodeHtml(block.match(/<h2>([\s\S]*?)<\/h2>/)?.[1]?.trim() || "") || id;
+    const duration = block.match(/class="duration">([^<]*)</)?.[1]?.trim() || "";
+    const counts = block.match(/class="counts"[^>]*>([^<]*)</)?.[1]?.trim() || "";
+    const isVip = /class="tag vip"/.test(block);
+    cards.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: pic ? dsdMediaUrl(pic) : "",
+      vod_remarks: duration || (isVip ? "VIP" : "VIDEO"),
+      vod_blurb: [isVip ? "会员" : "免费", counts].filter(Boolean).join(" · "),
+      vod_area: "dsd900.com",
+      type_name: isVip ? "会员" : "免费",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "dsd",
+    });
+  }
+  return cards;
+}
+
+async function dsdList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  const wd = requestUrl.searchParams.get("wd")?.trim() || "";
+  let html;
+  let pages = page;
+  if (preset === "cat") {
+    const cats = await dsdCats();
+    return json({ code: 1, page: 1, pagecount: 1, limit: cats.length, total: cats.length, list: cats.map((cat) => ({ vod_id: `cat:${cat.id}`, vod_name: cat.name, vod_remarks: "分类", vod_url: `/index.php/vod/type/id/${cat.id}.html`, vod_area: "dsd900.com", type_name: "分类", media_kind: "gallery", needs_detail: false, provider: "dsd" })), provider: "dsd" }, { headers: { "cache-control": "public, max-age=600" } });
+  }
+  if (wd) {
+    html = await dsdPage(`/index.php/vod/search/wd/${encodeURIComponent(wd)}.html`);
+    pages = 1;
+  } else if (preset.startsWith("cat:")) {
+    const cid = preset.slice(4);
+    html = await dsdPage(`/index.php/vod/type/id/${cid}${page > 1 ? `/page/${page}` : ""}.html`);
+    pages = Math.max(page, ...[...html.matchAll(/type\/id\/\d+\/page\/(\d+)\.html/g)].map((m) => Number(m[1])));
+  } else {
+    html = await dsdPage("/index.php/vod/type/id/1.html");
+    pages = Math.max(page, ...[...html.matchAll(/type\/id\/1\/page\/(\d+)\.html/g)].map((m) => Number(m[1])));
+  }
+  const list = dsdParseCards(html);
+  return json({ code: 1, page, pagecount: pages, limit: list.length || 24, total: pages * 24, list, provider: "dsd" }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+async function dsdCats() {
+  const html = await dsdPage("/");
+  const cats = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/href="(\/index\.php\/vod\/type\/id\/(\d+)\.html)"[^>]*>\s*([^<]+)</g)) {
+    const cid = match[2];
+    const name = decodeHtml(match[3].trim());
+    if (seen.has(cid)) continue;
+    seen.add(cid);
+    cats.push({ id: cid, name, type_name: "分类" });
+  }
+  if (cats.length === 0) {
+    cats.push({ id: "1", name: "独家精选", type_name: "分类" }, { id: "2", name: "中文字幕", type_name: "分类" }, { id: "4", name: "无码破解", type_name: "分类" });
+  }
+  return cats;
+}
+
+async function dsdDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!/^\d+$/.test(id)) return json({ message: "invalid id" }, { status: 400 });
+  const html = await dsdPage(`/index.php/vod/play/id/${id}/sid/1/nid/1.html`);
+  const title = decodeHtml(html.match(/<h2 class="ellipsis">([\s\S]*?)<\/h2>/)?.[1]?.trim() || html.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/\s*-\s*.*$/, "") || id);
+  const desc = decodeHtml(html.match(/<div class="desc">([\s\S]*?)<\/div>/)?.[1]?.trim() || "");
+  const tags = [...html.matchAll(/href="\/index\.php\/vod\/search\/tag\/[^"]*"[^>]*>([^<]*)<\/a>/g)].map((m) => decodeHtml(m[1].trim())).filter(Boolean);
+  const hits = decodeHtml((html.match(/class="view-times"[^>]*>[\s\S]{0,400}?([^<]*次)/) || [])[1]?.trim() || (html.match(/<span class="view-times[^"]*">([^<]*)</) || [])[1]?.trim() || "");
+  const player = html.match(/player_aaaa=(\{[\s\S]*?\})\s*<\/script>/)?.[1] || html.match(/player_aaaa=(\{[\s\S]*?\});/)?.[1] || "";
+  let rawUrl = "", poster = "";
+  if (player) {
+    try {
+      const data = JSON.parse(player);
+      rawUrl = data.url || "";
+      poster = data.poster || "";
+    } catch (error) {
+      const m = html.match(/"url":"([^"]+)"/) || html.match(/"url":"((?:\\u002f|\/)[^"]*m3u8)/);
+      if (m) rawUrl = m[1].replace(/\\u002f/g, "/");
+      poster = html.match(/"poster":"([^"]+)"/)?.[1]?.replace(/\\u002f/g, "/") || "";
+    }
+  }
+  // VIP-gated videos hide player_aaaa, but the m3u8 is derivable from the poster
+  // path (dir + 1000k/index.m3u8) and the vplayer signature endpoint serves all.
+  if (!rawUrl && !poster) poster = html.match(/class="video-before-ad[^"]*"[^>]*style="background-image:\s*url\(([^)]+)\)/)?.[1]?.trim() || "";
+  if (!rawUrl && poster && /\.jpg$/i.test(poster)) {
+    const dir = poster.slice(0, poster.lastIndexOf("/") + 1);
+    rawUrl = `${dir}1000k/index.m3u8`;
+  }
+  const card = {
+    vod_id: id,
+    vod_name: title,
+    vod_pic: poster ? dsdMediaUrl(poster) : "",
+    vod_remarks: "VIDEO",
+    vod_blurb: [desc, hits].filter(Boolean).join("  "),
+    vod_content: [desc, tags.join(" · ")].filter(Boolean).join("\n"),
+    vod_area: "dsd900.com",
+    type_name: tags[0] || "懂色帝",
+    media_kind: "video",
+    needs_detail: false,
+    provider: "dsd",
+    metadata: { tags, desc, related: dsdParseRelated(html).slice(0, 12) },
+  };
+  if (rawUrl && /\.m3u8/i.test(rawUrl)) {
+    card.vod_play_url = dsdMediaUrl(rawUrl, "hls");
+    card.play_notice = "完整片 · AES-128 HLS（jsfuck 签名 + 同源代理）";
+  } else {
+    card.play_notice = "此条目无公开播放地址";
+  }
+  return json(card, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+function dsdDecodeJsfuck(html) {
+  const i = html.indexOf("\uFF9F\u03C9\uFF9F\uFF89");
+  if (i === -1) return null;
+  const j = html.indexOf("</script>", i);
+  const jsfuck = html.slice(i, j);
+  let captured = "";
+  const mockVideo = { on: () => {}, addClass: () => {}, currentTime: () => 0, play: () => {}, duration: () => 0 };
+  const fakeWin = {};
+  fakeWin.location = { host: "www.dsd900.com", hostname: "www.dsd900.com", href: "https://www.dsd900.com/", protocol: "https:", search: "" };
+  fakeWin.document = {
+    getElementById: () => null,
+    cookie: "",
+    createElement: () => ({ style: {}, getContext: () => null }),
+    querySelector: () => null,
+    body: { appendChild: () => {} },
+  };
+  fakeWin.navigator = { userAgent: "Mozilla/5.0 Chrome" };
+  fakeWin.setTimeout = setTimeout;
+  fakeWin.setInterval = setInterval;
+  fakeWin.console = { log: () => {} };
+  fakeWin.atob = (s) => (typeof atob === "function" ? atob(s) : Buffer.from(s, "base64").toString("binary"));
+  fakeWin.btoa = (s) => (typeof btoa === "function" ? btoa(s) : Buffer.from(s, "binary").toString("base64"));
+  const globals = globalThis;
+  const saved = {};
+  for (const key of ["window", "document", "navigator", "location", "top", "self", "parent", "initVideo", "videojs"]) {
+    try {
+      saved[key] = globals[key];
+      globals[key] = key === "initVideo" ? (param) => { captured = param ? param.url || "" : ""; return mockVideo; } : key === "videojs" ? () => mockVideo : key === "document" ? fakeWin.document : key === "navigator" ? fakeWin.navigator : key === "location" ? fakeWin.location : key === "top" || key === "self" || key === "parent" ? fakeWin : fakeWin;
+    } catch (error) {
+      // read-only global (e.g. navigator in newer Node); wrap with defineProperty
+      try {
+        Object.defineProperty(globals, key, { value: key === "navigator" ? fakeWin.navigator : fakeWin, configurable: true, writable: true });
+        saved[key] = undefined;
+      } catch (e2) {
+        saved[key] = undefined;
+      }
+    }
+  }
+  try {
+    // indirect eval: runs in global (non-strict) scope — required because the
+    // jsfuck payload uses implicit-global assignments that throw in strict mode
+    // eslint-disable-next-line no-eval
+    (0, eval)(jsfuck);
+  } catch (error) {
+    // script may touch top.location etc; captured may still be filled
+  }
+  for (const key of Object.keys(saved)) {
+    try {
+      if (saved[key] !== undefined) globals[key] = saved[key];
+    } catch (error) {
+      // ignore restore failures for read-only globals
+    }
+  }
+  if (captured) return captured;
+  const m = jsfuck.match(/sign=[0-9a-f]{64,}/);
+  if (m) return m[0];
+  return null;
+}
+
+async function dsdMedia(requestUrl) {
+  const path = requestUrl.searchParams.get("path") || "";
+  const kind = requestUrl.searchParams.get("kind") || "image";
+  if (!path) return json({ message: "invalid media path" }, { status: 400 });
+  const target = new URL(path, DSD_ORIGIN).toString();
+  const isPlaylist = /\.m3u8/i.test(path);
+  if (isPlaylist) {
+    const vpUrl = `/addons/vplayer/?url=${encodeURIComponent(path)}&jump=`;
+    const vpHtml = await dsdPage(vpUrl);
+    const signed = dsdDecodeJsfuck(vpHtml);
+    if (!signed) return json({ message: "dsd sign decode failed", debug: requestUrl.searchParams.get("debug") ? { vpLen: vpHtml.length, hasMarker: vpHtml.indexOf("\uFF9F\u03C9\uFF9F\uFF89") > -1, vpStart: vpHtml.slice(0, 120) } : undefined }, { status: 502 });
+    const absolute = /^https?:/i.test(signed) ? signed : new URL(signed, DSD_ORIGIN).toString();
+    const upstream = await fetch(absolute, { headers: DSD_HEADERS, signal: AbortSignal.timeout(20_000) });
+    if (!upstream.ok) return json({ message: `dsd m3u8 ${upstream.status}` }, { status: 502 });
+    const text = await upstream.text();
+    const dir = absolute.slice(0, absolute.lastIndexOf("/") + 1);
+    const rewritten = text.split(/\r?\n/).map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      if (trimmed.startsWith("#EXT-X-KEY:")) return trimmed.replace(/URI="[^"]*"/, `URI="${dsdMediaUrl(dir + "logo.jpeg", "media")}"`);
+      if (trimmed.startsWith("#")) return line;
+      return dsdMediaUrl(dir + trimmed, "media");
+    }).join("\n");
+    return new Response(rewritten, {
+      headers: {
+        "content-type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "cache-control": "public, max-age=120",
+        "access-control-allow-origin": "*",
+      },
+    });
+  }
+  const upstream = await fetch(target, { headers: DSD_HEADERS, signal: AbortSignal.timeout(30_000) });
+  if (!upstream.ok) return json({ message: `dsd media ${upstream.status}` }, { status: 502 });
+  return new Response(upstream.body, {
+    headers: {
+      "content-type": upstream.headers.get("content-type") || "application/octet-stream",
+      "cache-control": kind === "image" ? "public, max-age=86400" : "public, max-age=300",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 export async function handleProviderRequest(request) {
   const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
@@ -3761,6 +4041,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
     if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
     if (provider === "avjb") return await (action === "detail" ? avjbDetail(requestUrl) : avjbList(requestUrl));
+    if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

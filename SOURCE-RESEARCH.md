@@ -210,7 +210,7 @@
 
 ### 尚无独立上游
 
-- `hxc` / 看含羞草：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`，完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。
+- `hxc` / 看含羞草：**2026-08-18 已查明独立上游 = Fi11 含羞草研究所（www.8c4mo.com / API a64d.vd9h4.com），全链路匿名可用可接入（见文末「看含羞草 / hxc 侦查记录」）**。旧记录：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`，完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。
 - `zb` / 看主播：参考站是 48 个录播条目而非实时直播；目录 `/api/home`，搜索实测调用 `/api/search?wd={keyword}&page=1`，播放调用 `/api/player?id={id}&sid={sid}&nid={nid}`。2026-08-12 再次在已授权页面以“扬州”检索，确实返回 1 条而不是客户端过滤，但资源清单证明目录和搜索都仍来自 `zb.cfnav.me/api/*`；48 张封面继续全部来自 `media.cfnav.com/m/kan-zb/image/*`。首条实际播放直接落到公开 MP4 域 `guoji-02-mp4-cdnguoji.guojitaolu.sbs`，支持 Range 且完整时长可加载；同条第二线路 `yazhou-02-mp4-cdn.yazhoutaolu.cyou` 当前证书域名错误。公开媒体域根路径跳转到 Backblaze B2 产品页，没有对象目录或元数据 API；按精确标题、条目 ID、文件 ID与域名检索均未找到独立索引。媒体文件可独立读取不等于目录可独立更新，故继续 pending，不写死 48 条快照。
 
 ### 当前无法核对
@@ -753,3 +753,70 @@
 3. 前端：复用 QiyingModal/DetailModal hls.js 播放路径；参考 `9s` 的 SitePage 接线与 ROUTE_CONFIGS 注册。**已实现：KANKAN_TABS（精选/最新/相册/VIP）+ 分类索引网格 + `cat:` 前缀分类视频 + detail 传 `link`**。
 4. 验证：列表 20+ 卡 + 封面加载 → 详情 → hls.js 播放推进（readyState=4）→ 分页/搜索/分类，零 console 错误。**已通过 headless 验收：24 卡/滚动后 0 破图/播放 currentTime 3.97s 推进/79 分类/搜索 fc2 36 卡/零 JS 错误；构建 + test:sites 全绿**。
 5. 文档：实现后更新 `PROJECT-HANDBOOK.md` 对应记录与本节状态；`npm run build` + `npm run test:sites` 必须通过。**已更新（PROJECT-HANDBOOK.md 74 行 + 文末记录）**。
+
+### 韩国主播 / bj 侦查记录（2026-08-18）
+
+**结论：跳过（播放链锁，无法匿名独立播放；用户决定放弃）**。目录/详情/搜索全部匿名可用（仅需 Referer: https://skbj.tv/ 头），但播放 URL 只对登录态返回；参考站播放还依赖 cfnav 私有中转。
+
+**真实上游 = skbj.tv（SKBJ - Korean BJ Videos | Best Korean BJ Streams & Clips）**。同源铁证：
+- 参考站 bj.cfnav.me 首页 404 响应体泄露的 SSR 内容与 skbj.tv 首页逐字一致（最新视频 2026-08-16_06-02-12 - yunhee1222、热门创作者 golaniyule0 等，与 skbj.tv /api/videos、/api/actors 返回的第一条完全相同）；
+- 参考站卡片封面直接引用 https://skbj.b-cdn.net/videos/{slug}_1.webp（用户 console 抓到的 <img> 标签，无 cfnav 包装）；
+- 参考站视频详情页 GET /videos/{slug} 返回 SPA 壳（2373 字节，无媒体 URL），数据 API 为 /api/videos/{slug}。
+
+**目录/详情 API 契约（全部匿名 200，需 Referer 头）**：
+- 列表：GET /api/videos?page={n}&limit={n} → {videos:[{_id,name,slug,thumbnail,duration,views,likes,isVideoVIP,cost,actorId,categoryId,createdAt,commentCount}], pagination:{page,limit,total,totalPages}}；总目录 **85648 条 / 17130 页**。支持 q=（搜索）、sort=newest|views|likes、ccess=all|free|vip|credits、duration=any|under-10|10-30|30-plus（参数从 ideos-*.js chunk 的路由 search 校验器确认）。
+- 详情：GET /api/videos/{slug} → {video, actor, relatedVideos[8], access:{canWatch,reason,hasPurchased,isVIP,userCredits}}；video 含 snapshots[]（1~40+ 张 webp 截图）、	ags[]、hasStorageUrl。
+- 排行：GET /api/videos/trending、GET /api/videos/weekly-likes（分页参数同列表）。
+- 演员：GET /api/actors（{actors, pagination}，golaniyule0 等）；标签 GET /api/tags；搜索 GET /api/search?q=（{videos, actors, query, type, pagination}）。
+- 注意：/api/categories、/api/videos/{_id}（按 id）、/api/videos/actor/{id}、/api/videos/category/{id}、/api/videos/{slug}/watch 均 404；/api/home 不存在（参考站自建路由也无此端点，bj 站与 kankan 同属「上游完整站反向代理」模式）。
+
+**播放链（硬阻塞）**：
+- 免费视频（isVideoVIP:false，如 2026-08-16_01-59-51-yunyeson3015，ccess.canWatch:true）**详情 JSON 仍不含 storageUrl**（hasStorageUrl:false），?preview=1、?token=preview 等变体不改变响应；暴力探测 play/stream/watch/url/media/source/file/preview/download 子路径全 404；无游客/临时 token 端点（/api/auth/visitor|temporary|anonymous 等全 404）。JS 中 OG/schema.org 渲染用 ideo.storageUrl 字段（720p MP4, 1280×720），但该字段仅登录态（Bearer token）返回。播放器组件 ideoPlayer:X1 定义于主 bundle 的懒加载模块，未发现匿名入口。
+- VIP 视频（isVideoVIP:true，参考站「会员」徽章）ccess:{canWatch:false, reason:"vip_required"}，参考站用户实测「VIP 视频全部显示不开」。
+- 参考站实际播放走 https://psfxhhox.top/api/drama/hls/{id}/3/play.m3u8?line=free（用户 console 捕获）——但 psfxhhox.top 实为**「黄豆短剧」**（独立成人魔改短剧站，中文页，keywords「黄豆短剧,ai,魔改短剧,成人短剧,日更千部」），其 /api/drama/hls/{id} 的 id 与 skbj 的 _id 不匹配（skbj 免费 id 在该端点 404；用户给的 id 6a7dd2a1817f7dacc5971b8e 在 skbj /api/videos/{id} 404 但 psfxhhox 返回 200 m3u8，CloudFront AES-128，key 200 16B、TS 403）——即该 URL 属黄豆短剧自身内容，非 skbj 播放链，不能复用。
+
+**结论（同 mt/best/qms/swag 类型）**：目录/详情/搜索可匿名独立接入，但**播放 URL 只对 skbj.tv 登录态（Bearer）返回**，匿名拿不到 storageUrl；参考站对 VIP 也无解锁；本地无 skbj 账号且项目不持用户会话。按用户决定（2026-08-18「付费无法实现就放弃」）标记**跳过/不接入**。重新评估条件：skbj.tv 开放匿名 storageUrl（如游客 token）、或参考站播放端点变为可匿名独立访问、或用户提供可长期使用的 skbj 会话（与项目原则冲突，不建议）。
+
+### 看懂色帝 / dsd 侦查记录（2026-08-18）
+
+**结论：真实上游 = 懂色帝 dsd900.com（MacCMS 系统），目录/详情/搜索/播放全链路匿名可用，可接入。**
+
+**站名破译**：参考站「看懂色帝」= 「懂色帝」站（dsd = 拼音缩写）。Bing 搜到 GitHub 发布页 dongsedidizhi（懂色帝最新地址发布页）→ 地址页 dsd87.lol（Cloudflare，class="scrambled" 内反转字符串 moc.009dsd.www//:sptth 解码 = https://www.dsd900.com）。主站 www.dsd900.com nginx 无 CF，匿名 200，title「懂色帝.com | www.dsd.lol - 看懂AV」。
+
+**系统识别**：MacCMS 10 标准路由（与 gdlsp 同程序家族）：列表 /index.php/vod/type/id/{cid}.html（默认最新-推荐）与 /index.php/vod/type/id/{cid}/page/{n}.html 分页、搜索 /index.php/vod/search/wd/{kw}.html、详情/播放 /index.php/vod/play/id/{id}/sid/1/nid/1.html（/vod/detail/id/{id}.html 302 重定向到 play）、排行榜 /index.php/label/rank/by/time.html、专题 /index.php/topic/index.html、分类首页含 5 个推荐标签（love/vip 等）。pi.php/provide/vod 资源接口返回 closed（已关闭）。
+
+**详情/播放页契约**：内联 ar player_aaaa={...} JSON：lag/encrypt/url/link/vod_data{vod_name,vod_actor,vod_director,vod_class}/poster/user_id/group_id/ads_*/pre_ads_*/url_next/from/server/note/id/sid/nid。**url 为原始 m3u8 相对路径**（如 /video1/AIwmzw/AIwmzw20260601-20260606A/HSODA-120/1000k/index.m3u8），poster 如 /video1/.../HSODA-120/1.jpg。from=dsdplayer（iframe 壳 → /addons/vplayer/?url={encoded}&jump=）。
+
+**播放链（核心）**：m3u8 直访 403「Access Denied: 参数错误或缺失」→ 必须经 /addons/vplayer/?url={m3u8路径} 中转页：页面含 34KB **jsfuck 混淆脚本**（ﾟωﾟﾉ=/｀ｍ´）ﾉ~┻━┻），解码后为 `var vPath="{带 sign 的完整 m3u8 URL}";...initVideo({id:"myVideo",url:vPath,...})` — **签名 URL 是服务端每次渲染页面时生成并混淆进 jsfuck 的**。解码 = **indirect eval `(0,eval)` + globalThis mock**（window/document/navigator/location/top/self/parent/initVideo/videojs，mock 捕获 initVideo 的 url 参数；**ESM 严格模式下直接 eval 会因 jsfuck 的隐式全局赋值抛 ReferenceError，indirect eval 在全局非严格作用域执行即可**；globalThis.navigator 新版 Node 只读需 try/catch + defineProperty；结束后恢复原全局）。签名短时效：同视频连续两次抓取 sign 相同（同窗口复用）、40s 内有效；8 分钟后 403（需重新抓 vplayer 页拿新 sign）。**签名只作用于 m3u8 清单，key 与 ts 分片免签名直接 200**（logo.jpeg 16B AES key + indexNNN.jpeg 伪装 TS，3s/段，实测 247KB/323KB，播放 2 小时视频 108KB 清单 3000+ 段）。CORS：全站媒体响应 ACAO=null → 浏览器跨域需同源代理（代理加 Referer/UA + 回填 ACAO *，同 tx 模式）。**VIP 视频同源可播（2026-08-18 用户确认 + 实测 16/16）**：VIP 专享详情页隐藏 player_aaaa 并显示「本视频为VIP会员专享」拦截层，但 **m3u8 可从封面路径推导**（`{封面目录}1000k/index.m3u8`，如 poster `/video1/AIwmzw/AIwmzw20260705-20260709/JUR-740/1.jpg` → `/video1/AIwmzw/AIwmzw20260705-20260709/JUR-740/1000k/index.m3u8`），vplayer 签名通道对 VIP 视频同样签发完整清单；「VIP 拦截」只是详情页 UI 层，播放端点不校验登录态。
+
+**实现要点（已落地）**：provider `dsd`：列表 `vod/type/id/{cid}` 解析卡片（`a.video-item`：data-src 封面/标题/时长/hits/is-vip）、分页 `/page/{n}`、搜索 `vod/search/wd/{kw}`；详情 `vod/play/id/{id}/sid/1/nid/1` 解析 `player_aaaa`（标题/演员/导演/分类/时长/封面 poster），**无 player_aaaa 时从 poster（或 `video-before-ad` 背景图）推导 `{dir}1000k/index.m3u8`**；播放 = 抓 vplayer 页 → indirect eval 解码 jsfuck 取 vPath（带 sign）→ 用签名 URL 拉 m3u8 → 重写 key/ts 为代理绝对 URL → 媒体经同源代理（加 Referer + ACAO `*`）。签名过期时重新抓 vplayer 页即可。参考站 `__cfnav_media/m/kan-dsd/*` 私有代理不依赖。**已接入（2026-08-18，headless 验收通过：24 卡/滚动后 0 破图/详情 VIP 视频 readyState=4 currentTime 11.7s 推进/3 分类/分类视频 24 卡/搜索 24 卡/零 JS 错误）**。
+
+### 看含羞草 / hxc 侦查记录（2026-08-18）
+
+**结论：真实上游 = Fi11 含羞草研究所官方站（www.8c4mo.com 及域名族），目录/详情/搜索/播放全链路匿名可用，付费视频可通过签名窗口技巧完整播放，可接入。**
+
+**站名破译与域名族**：含羞草 = **Fi11 含羞草研究所**（SleazyFork 456275「含羞草研究所免费看」脚本验证）；fi11.com/fi11.cn/fi11.tv/fi11.live/fi11av.com + hxcbbXXX/fi11avXX 镜像族。fi11.com JS 跳转 → z1z.v9t4f.com（中转页）→ www.8c4mo.com（H5/PC 正式站，title「含羞草」，Vue+Vant+ElementUI，资源在 j02n.nasuiyile.com/h5/ 与 /pc/）。参考站 hxc.cfnav.me 后端直连上游 API（响应格式逐字同款：`{code,msg,data,traceId}`，5001=缺少参数）。
+
+**API 契约（核心，h5-app.js app.0296c18f.js 542KB 反编译 + 真实浏览器抓包）**：
+- API 双域轮换：`https://a64d.vd9h4.com` / `https://a59e.f3de7.com`（均匿名可用，实测 200）
+- 请求体：`{endata: AES256CBC(JSON), ents: AES256CBC(时间戳)}`；key/iv = `B77A9FF7F323B5404902102257503C2F`（utf8 32B = AES-256；iv 取前 16B）；ents 明文 = `parseInt(now/1000) + 60*getTimezoneOffset()`（中国 = epoch-28800）
+- 请求头：`Did: "1"`、`source: "1"`、`isShortChain: ""`（缺 source 返回 607 非法请求）
+- 响应：`endata` 同样 AES-256-CBC 解密
+- 接口表：`/videos/getList`（列表+搜索）、`/videos/getInfo`（详情）、`/videos/getPreUrl`（试看签名）、`/videos/v2/getUrl`（正式播放，匿名 2002 无权限=付费墙）、`/videos/buy|preBuy|downBuy|preDownBuy`（付费）、`/gather/getList|getDetail|buy|preBuy`（合集/专题）、`/home/getDefaultGraph|getAds`、`/base/hotWord|globalSearch`、`/base/getConfigPub`（sitename=Fi11）、`/user/*`、`/userMessage/*`
+
+**列表**：`POST /videos/getList {page, length, offset:0, typeIds:[], orderType, payType:[], tagIds:[], subTagIds:[], subTypeIds:[]}`。
+- 首页（推荐）：`typeIds:[4,11,17,23]` `orderType:3` `payType:[3,4]`，length 24/页；另有热门 `typeIds:[] orderType:2 payType:[4]`
+- 分类：`typeIds:[4|11|17|23|29]` `orderType:7` `payType:[3,4]`（动漫 `[1,3,4]`）；子类 subTypeIds：国产 [5..10]、日韩 [21,32,19,22,20,18]、欧美 [24..28]、动漫 [30]
+- count 上限 10000（全站），分页 page 递增
+- 列表项：`{id, name, length(秒), coverImgUrl, coverImgUrlVertical, addTime, videoSort, seeCount, likeCount, collectionCount, isAngle}`——与参考站 `/api/videos` 逐字一致（同源铁证）
+- **搜索 = 同一接口加 `videoName: "关键词"`**（实测「台湾」count 1204）
+
+**详情**：`POST /videos/getInfo {videoId}` → `{canDownload, canPlay, canPrePlay, discount, downloadPoint, info:{id, name, coverImgUrl(.aes), coverImgUrlVertical, length, isVip, typeName, typeParentId, tags, seeCount, likeCount, collectionCount, no, shareId, addTime...}}`。付费=canPlay:false + canPrePlay:true（40/40 抽样全付费）；边缘情况 transcodingStatus=0 的老视频 getPreUrl 返回空 url（如实提示）。
+
+**播放（核心突破，付费视频可完整播放）**：`POST /videos/getPreUrl {videoId}` → `{url: "https://t02h.beikept.com/play/m3u8/vc/{mediaId}/v_{mediaId}_{x}.m3u8?start=240&end=270&sign={s}&rSign={rs}"}`（30 秒试看窗口，或 `/read/{date}/{hash}/index.m3u8` 模式，如 371）。**sign/rSign 不绑定 start/end 窗口**——把参数改成 `start=0&end={length}` 即返回**完整时长全量播放列表**（实测 371→738 段/2214s、76784→282 段/846s、66712→719 段/2154s）。master→`1000kb/hls/*.m3u8`（720p，含 #EXT-X-KEY AES-128 `URI="key.key"`，IV=0 默认）；key.key 16B、ts 分片（`.ts` 直命名，非伪装）全部**匿名直连 200、CORS `*`**，AES-128-CBC IV=0 解密出合法 TS（magic 47401110）。参考站完整播放走私有 `__cfnav_media/m/kan-hxc/playlist/*`——本方案更独立。
+
+**图片**：封面 `https://i02p.nasuiyile.com/aes/video|vc/cover/video/{md5}.aes`（或 avatar/ads）——文件为 **base64 文本**；base64 解码 → **AES-128-ECB**（key=utf8 `46cc793c53dc451b`，PKCS7，CryptoJS 源码确认）→ 明文 = `data:image/jpg;base64,...` data URI（实测 35824B JPEG）。CORS `*`。
+
+**浏览器行为（真实抓包）**：首页即发 getDefaultGraph/genre、getConfigPub（sitename/key 表）、panel、visitor/add（随机昵称+uuid）、getMessageCount、getList×5 路（各分类 tab 预载）；登录弹窗「登录Fi11，尊享品质观影体验」。
+
+**实现要点**：provider hxc：列表（默认参数组首页）+ 分页 + 分类 tab（5 类）+ 搜索（videoName）+ 详情 getInfo + 播放 = getPreUrl → 改 start/end 为全长 → m3u8 全量 → key/ts 绝对化直连；封面 AES-ECB 解密转 data URI 或 base64 JPEG（浏览器端可免代理：API/媒体/图 CORS 全 `*`）。AES 加解密在浏览器端用 Web Crypto 或 jsencrypt 实现（endata/ents 每次请求实时生成）。参考站 __cfnav_media/m/kan-hxc/* 私有代理不依赖。

@@ -4,6 +4,8 @@ Before any work, read `PROJECT-HANDBOOK.md`. It is the canonical project handoff
 
 Before starting research on any new site, first read the **Richy 脚本索引** at the top of `SOURCE-RESEARCH.md` (`docs/Richy*.txt`, 15 scripts). If the target site has a matching Richy script, it already contains the upstream domain, API contract, and playback logic — the fastest possible source of information. Update the index whenever a new script-to-site mapping is discovered.
 
+**研究任何新站点前，还必须在 SleazyFork/GreasyFork 搜索该站点的油猴脚本**（用户 2026-08-18 决定，任务清单固定项）：目标站的去广告/免费看 VIP/保播/下载脚本往往直接暴露上游域名、API 契约与播放逻辑（已验证案例：`kankan`/AVJB 的 `docs/Richy (6).txt`、`hxc`/Fi11 的 SleazyFork 456275「含羞草研究所免费看」脚本）。搜索关键词：站点名（含别名，如含羞草→Fi11）+ 油猴脚本站（sleazyfork.org 优先，含成人向）；发现的脚本要么直接保存到 `docs/Richy*.txt` 并更新索引，要么把关键线索（域名清单/API 路径/播放逻辑）写入 SOURCE-RESEARCH.md。
+
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 
 Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
