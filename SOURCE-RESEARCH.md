@@ -623,3 +623,52 @@
 
 - `ph` adapter 已落地：`phList`（/video、/video/search、/video?c= 三选一 + 分页 + 排序）、`phDetail`（mediaDefinitions 方括号配对解析 → 多清晰度 HLS streams）、`phMedia`（同源代理，host 白名单 `(?:iv-h|hv-h|ei|ev-h|ev|pix-fl)\.phncdn\.com`，转发补 ACAO `*`，重写清单分片行，分片 URL 拼回父清单签名 query + 强制 Referer）。前端 `/site/ph` 演示页（PH_TABS 最新/Lesbian/MILF/Anal/Threesome/Mature/Ebony/Japanese/Teen/Hentai + 搜索 + 分页 + DetailModal 多清晰度切换）。**不写入 ROUTE_CONFIGS、不进 40-node 门户。**
 - headless 验收：列表 35 卡 + 封面 + 时长、详情 688.95s master、1920×1080 readyState=4 currentTime 推进、零 JS 错误。部署端未验证（媒体必须全程走 CF 代理、流量大，建议仅本地使用；上游对高频抓取敏感，勿做高并发目录抓取）。
+
+---
+
+## SWAG（`swag` / SWAG 成人社交，2026-08-18 调查，判定 SKIP 不接入）
+
+调查为只读（未改任何代码）；用户在其登录态参考站 console 配合取证。结论：真实上游为 `swag.live` 官方站，浏览层匿名全通，但**播放层被 AES key 登录墙锁死**，参考站播放走 cfnav 私有票据 → 按零 cfnav 依赖铁律不可复刻。与 `mt`/`best`/`qms` 同型（目录独立、播放私有），用户决定跳过。
+
+### 参考站契约（swag.cfnav.me，登录态 console 抓取）
+
+- 首页 `/api/home` → 返回 **HTML 页面壳**（非 JSON），SSR 后由前端 JS 渲染。三个 feed tab：短影音 `shorts_free_trending`、動態 `stories_latest_a`、熱門 `flix_top_unlocked-global`。搜索框为「搜尋目前頁面」= 纯前端过滤，**无真实搜索 API**。
+- 数据接口：
+  - `/api/categories`
+  - `/api/feed?feed={name}&page={n}&limit=24[&category={slug}]`（feed 名与上游同名；`category=teen` 等走上游分类 feed）
+  - `/api/messages/{id}`（详情）
+- 详情响应样例（用户实测 `6a70c3945d02b4eff32a097d`）：
+  ```json
+  {"ok":true,"data":{"item":{"id":"6a70c3945d02b4eff32a097d","caption":"想愛愛被{username}塞滿滿…","price":0,"duration":30,"views":52750,"likes":333,"rating":98,"postedAt":1785775107,"categories":["clean_shaven"],"hashtags":[],"poster":"https://public.swag.live/messages_v3/6a70c39…/poster.jpg"},"playback":{"status":"full","label":"完整影片","blurred":false,"directUrl":"/media?ticket=kjyyB1wbFZ5…","fallbackUrl":"/media?ticket=dDNnfxhUqU2…"}}}
+  ```
+- 播放链路：`directUrl` = `/media?ticket={JWT}`（cfnav 私有媒体票据，`__cfnav_media` 同类）→ 前端 fetch 后生成 `blob:https://swag.cfnav.me/...` 播放（用户实测 `VIDEO SRC: blob:…`）。ArtPlayer 5.4.0。**私有票据按项目规则不可用**。
+
+### 上游判定（swag.live 官方站，同源铁证）
+
+- 上游 `GET https://api.swag.live/feeds/shorts_free_trending` 首条 id `6a81f9d1dca2eba7c35056d7` 与参考站首页 MEDIA 日志第一条封面路径 `messages_v3/6a81f9d1dca2eba7c35056d7/...` **逐字一致**。
+- feed key 与参考站 tab 完全同名（`shorts_free_trending`/`stories_latest_a`/`flix_top_unlocked-global`）。
+- 上游 API 存在 X-Encrypted-* 响应头加密机制，但 feeds/messages 接口匿名 200 无需加密头、无需 X-Track；带 `X-Client-Id: {uuid}` 头更稳定。
+- 资源域常量：`api.swag.live`（API）、`api-ws.swag.live`（内部）、`watch.swag.live`（视频）、`watch-bp.swag.live`（BytePlus）、`public.swag.live`（公开资源）、`public-encrypted.swag.live`（加密媒体）。
+
+### 媒体链验证结果（全部匿名 Node 实测）
+
+| 环节 | URL | 结果 |
+|---|---|---|
+| 列表 | `GET /feeds/shorts_free_trending`（`?page=N` 分页） | 200，100 条/页，全免费 `unlock_price=0` |
+| 分类 | `GET /feeds/short_by_category_{slug}?ui=shorts-metadata-card&filters=content_type:video` | 200，100 条/页（分类短剧约 83% 付费，unlock_price 60–300） |
+| 标签 | `GET /feeds/post_by_hashtag_{kw}?filters=content_type:video` | 200 |
+| 热门/動態 | `hashtag_trending_24h` / `posts_top_viewed` / `stories_latest_a` / `flix_top_unlocked-global` | 200（动態/熱門条目 free=0，即付费展示） |
+| 详情 | `GET /messages/{id}` | 200；`assets[0].url=/assets/{aid}/manifest.m3u8`、`aes:true`（旧 2023 消息 url=null） |
+| 封面 | `https://public.swag.live/messages_v3/{mid}/{aid}/poster.jpg` | 200 JPEG + **ACAO `*`** 直连 |
+| master | `https://public.swag.live/assets/{aid}/manifest.m3u8` | 200 + ACAO `*`；`#EXT-X-STREAM-INF RESOLUTION=1280x720` → `sd-aes.m3u8` |
+| 子清单 | `…/sd-aes.m3u8` | 200，VOD，17 片≈49s（=duration），`#EXT-X-KEY:METHOD=AES-128,URI="https://mock.url/messages/{mid}/assets/{aid}/key",IV=0x2000000b540fce89ed8364d12a96d628`（URI 为 mock 占位，IV 显式） |
+| 分片 | `…/sd-aes0000000000.ts` | 200，1.47MB，头部 `FD 67 DA 53` = **AES 加密字节**（非 TS magic `47 40`） |
+| **解密 key** | `GET https://api.swag.live/messages/{mid}/assets/{aid}/key` | **匿名一律 403**（5 条 free 内容全测） |
+| 解锁/资产 | `POST /messages/{id}/unlock` / `GET /assets/{id}` | 401（登录） |
+| 播放门控 | 前端 canViewMedia + AES-CBC 解密 + DRM（Widevine/PlayReady/FairPlay，`/drm/authorize`、`/drm/certs`） | — |
+
+### 结论与重开条件
+
+- **浏览层**（列表/分类/标签/详情/封面）可匿名独立实现，且 feed key 与参考站一致 → 理论上能复刻参考站目录体验。
+- **播放层硬锁死**：manifest 与加密分片匿名可拉，唯独 AES 解密 key 端点 403（登录墙）；参考站能播是因为其后端持有 SWAG 会话拿 key、解密后经 cfnav 私有 `/media?ticket=` 重发。无法在「零 cfnav + 无登录 + 实时抓取」约束下实现播放。
+- 重开条件（需新证据）：① key 端点开放匿名（feed/详情直接带 key）；② 上游出现匿名 preview 通道（`trailer_url` 填充可匿名 m3u8）；③ 出现无 AES/DRM 的 CF-free SWAG 镜像（商业品牌站，可能性低）。

@@ -422,7 +422,7 @@ function SitePage({ site, go, health, setHealth }) {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}${provider.id === "js9" ? `&kind=${encodeURIComponent(item.vod_kind || "video")}&slug=${encodeURIComponent(item.vod_slug || "")}` : ""}`);
+      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}${provider.id === "js9" ? `&kind=${encodeURIComponent(item.vod_kind || "video")}&slug=${encodeURIComponent(item.vod_slug || "")}` : ""}${provider.id === "jav" ? `&link=${encodeURIComponent(item.vod_url || "")}` : ""}`);
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
       if (provider.id === "eporner") setSelected(epNormalize(detail));
@@ -473,6 +473,7 @@ function ContentGrid({ items, mode, onOpen }) {
 }
 
 function parseStreams(item) {
+  if (Array.isArray(item.streams) && item.streams.length > 0) return item.streams;
   const raw = item.vod_play_url || "";
   if ((/^https?:\/\//.test(raw) || raw.startsWith("/")) && !raw.includes("$")) return [{ label: "默认线路", url: raw, group: 0 }];
   const groups = raw.split("$$$");

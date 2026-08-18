@@ -3317,7 +3317,175 @@ async function js9Detail(requestUrl) {
   return json(card);
 }
 
-export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
+const JAV_ORIGIN = "https://javhd.com";
+const JAV_HEADERS = {
+  accept: "application/json, text/plain, */*",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  "x-requested-with": "XMLHttpRequest",
+};
+const JAV_DETAIL_HEADERS = {
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+};
+
+function javAsset(value = "") {
+  if (!value) return "";
+  const cleaned = value.replace(/&amp;/g, "&");
+  if (/^https?:/i.test(cleaned)) return cleaned;
+  if (cleaned.startsWith("//")) return `https:${cleaned}`;
+  return `${JAV_ORIGIN}${cleaned.startsWith("/") ? "" : "/"}${cleaned}`;
+}
+
+function javParseCards(jsonText) {
+  const cards = [];
+  let payload;
+  try {
+    payload = JSON.parse(jsonText);
+  } catch {
+    return cards;
+  }
+  if (payload.status !== 1 || typeof payload.template !== "string") return cards;
+  const count = payload.results_count;
+  const seen = new Set();
+  for (const block of payload.template.split("<thumb-component").slice(1)) {
+    const link = block.match(/link-content="([^"]+)"/)?.[1] || "";
+    const id = block.match(/video-id="(\d+)"/)?.[1] || link.match(/\/zh\/id\/(\d+)/)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const title = decodeHtml(block.match(/title="([^"]*)"/)?.[1] || `JAV ${id}`);
+    const cover = javAsset(block.match(/url-thumb="([^"]+)"/)?.[1] || "");
+    const preview = javAsset(block.match(/video-preview="([^"]+)"/)?.[1] || "");
+    const label = block.match(/has-label="([^"]*)"/)?.[1] || "";
+    const time = block.match(/time="([^"]*)"/)?.[1] || "";
+    const views = decodeHtml(block.match(/views="([^"]*)"/)?.[1] || "");
+    const likes = block.match(/likes="([^"]*)"/)?.[1] || "";
+    cards.push({
+      vod_id: id,
+      vod_player_id: id,
+      vod_name: title,
+      vod_pic: cover,
+      vod_remarks: time || (label ? label : "VIDEO"),
+      vod_blurb: [views && `${views.trim()} 次观看`, likes && `${likes} 喜欢`].filter(Boolean).join(" · "),
+      vod_label: label,
+      vod_preview: preview,
+      vod_url: link,
+      vod_area: "javhd.com",
+      type_name: label === "premiumFree" ? "免费" : label || "JAV",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "jav",
+    });
+  }
+  return cards;
+}
+
+function javPageCount(jsonText, page) {
+  let payload;
+  try {
+    payload = JSON.parse(jsonText);
+  } catch {
+    return page;
+  }
+  const total = Number(payload.results_count || 0);
+  const per = Number(payload.per_page || 36);
+  if (total > 0 && per > 0) return Math.max(page, Math.ceil(total / per));
+  return page;
+}
+
+async function javFetch(path, detail = false) {
+  const upstream = new URL(path, JAV_ORIGIN);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(upstream, { headers: detail ? JAV_DETAIL_HEADERS : JAV_HEADERS, signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new Error(`javhd ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  throw lastError;
+}
+
+async function javList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = (requestUrl.searchParams.get("wd") || "").trim();
+  const path = keyword
+    ? `/zh/search?q=${encodeURIComponent(keyword)}${page > 1 ? `&page=${page}` : ""}`
+    : page > 1 ? `/zh/japanese-porn-videos/justadded/all/${page}` : "/zh/japanese-porn-videos";
+  const text = await javFetch(path);
+  const list = javParseCards(text);
+  const pages = javPageCount(text, page);
+  return json({ list, page, pages, total: list.length, provider: "jav" }, {
+    headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=180" },
+  });
+}
+
+function javPlayerId(html) {
+  const match = html.match(/content-path="([^"]*player_api[^"]*)"/);
+  if (!match) return "";
+  return match[1].match(/videoId=(\d+)/)?.[1] || "";
+}
+
+async function javDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  const link = requestUrl.searchParams.get("link") || "";
+  if (!id) return json({ message: "missing id" }, { status: 400 });
+  const path = link ? link.replace(/^https?:\/\/javhd\.com/i, "").split("?")[0] : "";
+  const html = await javFetch(path || `/zh/studio/room/1pondo-big-tits/video/${id}`, true);
+  const title = decodeHtml(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] || id);
+  const cover = javAsset(html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "");
+  const pid = javPlayerId(html) || id;
+  const play = await javPlay(new URL(`/provider-api/jav?action=play&pid=${pid}`, "https://local.invalid"));
+  const playBody = JSON.parse(await play.text());
+  return json({
+    vod_id: id,
+    vod_player_id: pid,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: "VIDEO",
+    vod_area: "javhd.com",
+    type_name: "JAV",
+    media_kind: "video",
+    needs_detail: false,
+    vod_play_url: playBody.vod_play_url,
+    streams: playBody.streams,
+    poster: playBody.poster,
+    play_notice: playBody.play_notice,
+    provider: "jav",
+  }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
+async function javPlay(requestUrl) {
+  const pid = requestUrl.searchParams.get("pid") || requestUrl.searchParams.get("id") || "";
+  if (!pid || !/^\d+$/.test(pid)) return json({ message: "invalid player id" }, { status: 400 });
+  const response = await fetch(`${JAV_ORIGIN}/zh/player_api?videoId=${pid}&is_trailer=0`, {
+    headers: { ...JAV_HEADERS, accept: "application/json" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) return json({ message: `javhd player_api ${response.status}` }, { status: 502 });
+  const data = await response.json();
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  if (!sources.length) return json({ message: "javhd no public stream" }, { status: 502 });
+  const label = (source) => `${source.label || `${source.res || ""}p`}p`;
+  return json({
+    vod_id: pid,
+    vod_play_url: sources[0].src,
+    streams: sources.map((source, index) => ({
+      label: `${source.label || source.res || "高清"}${index === 0 ? " · 直连" : ""}`,
+      url: source.src,
+      quality: Number(source.res) || 0,
+    })),
+    poster: javAsset(data.poster || ""),
+    play_notice: "javhd 匿名签名直链 · 完整版 4 码率",
+    provider: "jav",
+  }, { headers: { "cache-control": "no-store" } });
+}
+
+export async function handleProviderRequest(request) {
+  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
   const action = requestUrl.searchParams.get("action") || "list";
@@ -3367,6 +3535,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "kanxo") return await (action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
     if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
     if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
+    if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

@@ -160,6 +160,13 @@ kan98: {
     discoveredFrom: "看九色 参考站 /api/home 与 /api/video/video 契约同源核对 jiuse.tv（首页第一项 id b2cbcc3a… 与参考逐项一致，2026-08-18）",
     capabilities: "首页三路合并 / 14 分类 / 搜索 / 三类型详情（91自拍·精选·视频）/ 多线路 HLS 与 MP4 直连播放",
   },
+  jav: {
+    id: "jav",
+    name: "看JAV javhd 实时上游",
+    upstream: "javhd.com + /zh/player_api（匿名签发完整 4 码率签名 MP4）+ c3/c4.cdnjhd.com 媒体 CDN",
+    discoveredFrom: "看JAV 参考站 /api/home sourceLink 与 /api/play 契约同源核对 javhd.com（标题逐字一致，2026-08-18；static2.javhd.com 拿到 jplayer.min.js → content-path → /zh/player_api 匿名完整源）",
+    capabilities: "最新列表 / 搜索 / 详情 / 匿名签名完整 1080p MP4 直连播放（4 码率）",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -183,6 +190,7 @@ hj: { provider: "hj" },
   98: { provider: "kan98", preset: "41" },
   xo: { provider: "kanxo" },
   "9s": { provider: "js9", preset: "home" },
+  jav: { provider: "jav" },
 };
 
 export function getProviderForSite(slug) {
