@@ -791,6 +791,37 @@ function JmModal({ comic, onClose, onChapter }) {
   </article></div>;
 }
 
+const PH_RELAY_BASES = ["https://ph-vercel-probe.vercel.app/api"];
+function phRelayBases() {
+  const custom = (localStorage.getItem("phRelayBases") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  return custom.length ? custom : PH_RELAY_BASES;
+}
+async function phRelayFetch(params, { signal } = {}) {
+  const bases = phRelayBases();
+  const index = Number(localStorage.getItem("phRelayIndex") || 0);
+  const qs = new URLSearchParams(params);
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort);
+  try {
+    for (let attempt = 0; attempt < bases.length; attempt++) {
+      const base = bases[(index + attempt) % bases.length];
+      try {
+        const response = await fetch(`${base}?${qs}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`上游返回 ${response.status}`);
+        localStorage.setItem("phRelayIndex", String((index + attempt) % bases.length));
+        return response;
+      } catch (error) {
+        if (error.name === "AbortError") throw error;
+        if (attempt === bases.length - 1) throw error;
+      }
+    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+  throw new Error("中继不可用");
+}
+
 function PhDemoPage({ go, setHealth }) {
   const PH_TABS = [
     ["", "最新"],
@@ -815,13 +846,11 @@ function PhDemoPage({ go, setHealth }) {
   const abortRef = useRef();
   useEffect(() => {
     abortRef.current?.abort(); const controller = new AbortController(); abortRef.current = controller;
-    const params = new URLSearchParams({ pg: String(page), limit: "24" });
-    if (submitted) params.set("wd", submitted);
-    else if (category) params.set("preset", category);
+    const params = { pg: String(page), limit: "24" };
+    if (submitted) params.wd = submitted;
+    else if (category) params.preset = category;
     setLoading(true); setError("");
-    fetch(`/provider-api/ph?${params}`, { signal: controller.signal }).then((r) => {
-      if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
-    }).then((data) => {
+    phRelayFetch(params, { signal: controller.signal }).then((r) => r.json()).then((data) => {
       setItems(Array.isArray(data.list) ? data.list : []);
       setHealth("ok");
     }).catch((e) => {
@@ -834,7 +863,7 @@ function PhDemoPage({ go, setHealth }) {
   const openDetail = async (item) => {
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(`/provider-api/ph?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const response = await phRelayFetch({ action: "detail", id: item.vod_id });
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
       setSelected({ ...detail, vod_pic: detail.vod_pic || item.vod_pic, vod_remarks: detail.vod_remarks !== "VIDEO" ? detail.vod_remarks : item.vod_remarks });
@@ -844,7 +873,7 @@ function PhDemoPage({ go, setHealth }) {
   };
   return <div className="site-page accent-orange mode-video">
     <nav className="subnav"><button onClick={() => go("/")}><Logo compact /></button><div className="sub-brand"><strong>Pornhub 公开目录</strong><small>实验来源（非参考入口）· www.pornhub.com</small></div><span className="status-chip ok">SOURCE ONLINE</span></nav>
-    <section className="sub-hero"><small>EXPERIMENT / ph.local</small><h1>Pornhub 公开目录</h1><p>实验性来源 · 全站公开免费 HLS · 媒体经同源代理（Pornhub 媒体 CDN 无 CORS）</p><div className="source-note">独立适配器 · ph（不写入 ROUTE_CONFIGS，不参与门户保真）</div></section>
+    <section className="sub-hero"><small>EXPERIMENT / ph.local</small><h1>Pornhub 公开目录</h1><p>实验性来源 · 全站公开免费 HLS · 媒体经 Vercel 中继（phncdn 无 CORS + 签名绑定出口 IP）</p><div className="source-note">独立适配器 · ph（不写入 ROUTE_CONFIGS，不参与门户保真）</div></section>
     <form className="content-search" onSubmit={submit}><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 Pornhub 的内容" /><button>搜索</button>{submitted && <button type="button" className="clear" onClick={() => { setQuery(""); setSubmitted(""); }}>清除</button>}</form>
     <div className="qiying-tabs">{PH_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => setCategory(key)}>{label}</button>)}</div>
     <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : category ? "CATEGORY" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : category ? (PH_TABS.find(([k]) => k === category)?.[1] || "分类") : "最新内容"}</h2></div><span>PAGE {page}</span></div>
