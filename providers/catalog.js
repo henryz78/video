@@ -181,6 +181,13 @@ kan98: {
     discoveredFrom: "看懂色帝 参考站站名破译「懂色帝」→ GitHub 发布页 → 地址页 dsd87.lol scrambled 反转字符串解码出主域（2026-08-18；MacCMS 路由 + player_aaaa + jsfuck sign 播放链全匿名实测）",
     capabilities: "分类目录 / 分页 / 搜索 / 详情 / jsfuck 签名 AES-128 HLS 播放（代理）",
   },
+  hxc: {
+    id: "hxc",
+    name: "含羞草研究所 Fi11 官方 API",
+    upstream: "a64d.vd9h4.com / a59e.f3de7.com（AES-256-CBC 加密匿名接口）+ 加密封面 .aes（AES-128-ECB，代理解码）",
+    discoveredFrom: "看含羞草 参考站 /api/videos 条目与 Fi11 官方站（SleazyFork 456275 脚本）同源核对（2026-08-18；sign 窗口技巧实现全量播放）",
+    capabilities: "推荐/5 分类 / 分页 / 搜索 / 详情 / 试看 sign 改全量 AES-128 HLS 播放（直连）",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -207,6 +214,7 @@ hj: { provider: "hj" },
   jav: { provider: "jav" },
   kankan: { provider: "avjb" },
   dsd: { provider: "dsd" },
+  hxc: { provider: "hxc" },
 };
 
 export function getProviderForSite(slug) {

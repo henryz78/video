@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { access } from "node:fs/promises";
 import test from "node:test";
 import worker from "../worker/index.js";
-import { handleProviderRequest, parseOxaxStreamPage } from "../providers/runtime.js";
+import { handleProviderRequest, parseOxaxStreamPage, hxcImageDecodeECB, hxcAes128DecryptBlock, hxcAes128Expand, hxcEncrypt, hxcDecrypt } from "../providers/runtime.js";
 
 test("reconstructs the signed oxax stream from its public Playerjs page", () => {
   const html = `<script>
@@ -124,6 +124,73 @@ test("does not turn missing API or write requests into the app shell", async () 
 
     assert.equal(response.status, 404);
     assert.equal(calls, 1);
+  }
+});
+
+test("hxc AES-128-ECB decrypts a zero-padded image blob (matches FIPS-197 block vector)", async () => {
+  const key = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+  const plain = Buffer.concat([Buffer.from("00112233445566778899aabbccddeeff", "hex"), Buffer.from("74657374" + "00".repeat(12), "hex")]);
+  const { createCipheriv } = await import("node:crypto");
+  const cipher = createCipheriv("aes-128-ecb", key, null);
+  cipher.setAutoPadding(false);
+  const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
+  const w = hxcAes128Expand(key);
+  const decrypted = Buffer.from(hxcAes128DecryptBlock(encrypted.subarray(0, 16), w));
+  assert.equal(decrypted.toString("hex"), "00112233445566778899aabbccddeeff");
+  const whole = await hxcImageDecodeECB(encrypted, key.toString("utf8"));
+  assert.ok(whole.equals(plain));
+});
+
+test("hxc endata round-trips through the AES-256-CBC envelope", async () => {
+  const payload = JSON.stringify({ page: 1, length: 2, offset: 0, typeIds: [4], orderType: 7, payType: [3, 4], tagIds: [], subTagIds: [], subTypeIds: [] });
+  assert.equal(await hxcDecrypt(await hxcEncrypt(payload)), payload);
+});
+
+test("hxc list request reaches the upstream API with the signed envelope", async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (input, init) => {
+    captured = { url: String(input), body: JSON.parse(init.body), headers: init.headers };
+    return new Response(JSON.stringify({
+      code: 0,
+      data: {
+        count: 9984,
+        list: [{
+          id: 60507,
+          name: "娃娃般粉嫩女神 发骚式特写自慰",
+          length: 3452,
+          coverImgUrl: "https://i02p.nasuiyile.com/aes/vc/cover/video/0a74f73c43704f26b9c3fea7cb2116c1.aes",
+          addTime: "2025-03-14 18:50:02",
+          typeName: "裸舞诱惑",
+        }],
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const requestUrl = new URL("https://app.example/provider-api/hxc?pg=2&preset=17&wd=%E5%90%8D%E5%AD%97");
+    const response = await handleProviderRequest(requestUrl);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.list.length, 1);
+    assert.equal(body.list[0].vod_id, 60507);
+    assert.equal(body.list[0].vod_name, "娃娃般粉嫩女神 发骚式特写自慰");
+    assert.equal(body.list[0].vod_remarks, "57:32");
+    assert.equal(body.list[0].vod_year, 2025);
+    assert.match(body.list[0].vod_pic, /^\/provider-api\/hxc\?action=img&u=/);
+    assert.equal(body.total, 9984);
+    assert.equal(captured.headers.source, "1");
+    assert.equal(captured.headers.Did, "1");
+    const payload = JSON.parse(await hxcDecrypt(captured.body.endata));
+    assert.equal(payload.page, 2);
+    assert.equal(payload.orderType, 7);
+    assert.deepEqual(payload.typeIds, [17]);
+    assert.deepEqual(payload.payType, [3, 4]);
+    assert.deepEqual(payload.subTypeIds, [24, 25, 26, 27, 28]);
+    assert.equal(payload.videoName, "名字");
+    const ents = Number(await hxcDecrypt(captured.body.ents));
+    assert.ok(Math.abs(ents - (Math.floor(Date.now() / 1000) - 28800)) < 30);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

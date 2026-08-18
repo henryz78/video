@@ -3988,6 +3988,281 @@ async function dsdMedia(requestUrl) {
   });
 }
 
+const HXC_API_BASES = ["https://a64d.vd9h4.com", "https://a59e.f3de7.com"];
+const HXC_AES_KEY_TEXT = "B77A9FF7F323B5404902102257503C2F";
+const HXC_IMG_KEY_TEXT = "46cc793c53dc451b";
+const HXC_SUB_TYPE_IDS = { "4": [5, 6, 7, 8, 9, 10], "11": [21, 32, 19, 22, 20, 18], "17": [24, 25, 26, 27, 28], "23": [30] };
+
+async function hxcKey(text, algorithm) {
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(text), algorithm, false, ["encrypt", "decrypt"]);
+}
+
+export async function hxcEncrypt(text) {
+  const key = await hxcKey(HXC_AES_KEY_TEXT, { name: "AES-CBC" });
+  const data = await crypto.subtle.encrypt({ name: "AES-CBC", iv: new TextEncoder().encode(HXC_AES_KEY_TEXT).slice(0, 16) }, key, new TextEncoder().encode(text));
+  return Buffer.from(data).toString("base64");
+}
+
+export async function hxcDecrypt(base64) {
+  const key = await hxcKey(HXC_AES_KEY_TEXT, { name: "AES-CBC" });
+  const data = await crypto.subtle.decrypt({ name: "AES-CBC", iv: new TextEncoder().encode(HXC_AES_KEY_TEXT).slice(0, 16) }, key, Buffer.from(base64, "base64"));
+  return Buffer.from(data).toString("utf8");
+}
+
+function hxcGfMul(a, b) {
+  let p = 0;
+  for (let i = 0; i < 8; i += 1) {
+    if (b & 1) p ^= a;
+    const hi = a & 0x80;
+    a = (a << 1) & 0xff;
+    if (hi) a ^= 0x1b;
+    b >>= 1;
+  }
+  return p;
+}
+
+function hxcGfPow(x, e) {
+  let r = 1;
+  let base = x;
+  while (e) {
+    if (e & 1) r = hxcGfMul(r, base);
+    base = hxcGfMul(base, base);
+    e >>= 1;
+  }
+  return r;
+}
+
+function hxcRotl8(v, n) {
+  return ((v << n) | (v >> (8 - n))) & 0xff;
+}
+
+export const HXC_SBOX_INV = (() => {
+  const sbox = new Uint8Array(256);
+  for (let x = 0; x < 256; x += 1) {
+    const inv = x === 0 ? 0 : hxcGfPow(x, 254);
+    sbox[x] = inv ^ hxcRotl8(inv, 1) ^ hxcRotl8(inv, 2) ^ hxcRotl8(inv, 3) ^ hxcRotl8(inv, 4) ^ 0x63;
+  }
+  const sboxInv = new Uint8Array(256);
+  for (let i = 0; i < 256; i += 1) sboxInv[sbox[i]] = i;
+  return sboxInv;
+})();
+
+export function hxcAes128Expand(key) {
+  const fwd = new Uint8Array(256);
+  for (let j = 0; j < 256; j += 1) fwd[HXC_SBOX_INV[j]] = j;
+  const w = new Uint8Array(176);
+  w.set(key);
+  for (let i = 4; i < 44; i += 1) {
+    let t = [w[(i - 1) * 4], w[(i - 1) * 4 + 1], w[(i - 1) * 4 + 2], w[(i - 1) * 4 + 3]];
+    if (i % 4 === 0) {
+      t = [t[1], t[2], t[3], t[0]];
+      for (let j = 0; j < 4; j += 1) t[j] = fwd[t[j]];
+      t[0] ^= hxcRcon(i / 4);
+    }
+    for (let j = 0; j < 4; j += 1) w[i * 4 + j] = w[(i - 4) * 4 + j] ^ t[j];
+  }
+  return w;
+}
+
+function hxcRcon(i) {
+  let v = 1;
+  for (let k = 1; k < i; k += 1) v = (v << 1) ^ ((v & 0x80) ? 0x11b : 0);
+  return v & 0xff;
+}
+
+export function hxcAes128DecryptBlock(cipher, w) {
+  const sboxInv = HXC_SBOX_INV;
+  const state = Uint8Array.from(cipher);
+  const addKey = (r) => { for (let i = 0; i < 16; i += 1) state[i] ^= w[r * 16 + i]; };
+  const invShift = () => {
+    const s = Uint8Array.from(state);
+    for (let r = 0; r < 4; r += 1) {
+      const shift = (4 - r) % 4;
+      for (let c = 0; c < 4; c += 1) state[c * 4 + r] = s[((c + shift) % 4) * 4 + r];
+    }
+  };
+  const invMix = () => {
+    for (let c = 0; c < 4; c += 1) {
+      const a0 = state[c * 4 + 0], a1 = state[c * 4 + 1], a2 = state[c * 4 + 2], a3 = state[c * 4 + 3];
+      state[c * 4 + 0] = hxcGfMul(0x0e, a0) ^ hxcGfMul(0x0b, a1) ^ hxcGfMul(0x0d, a2) ^ hxcGfMul(0x09, a3);
+      state[c * 4 + 1] = hxcGfMul(0x09, a0) ^ hxcGfMul(0x0e, a1) ^ hxcGfMul(0x0b, a2) ^ hxcGfMul(0x0d, a3);
+      state[c * 4 + 2] = hxcGfMul(0x0d, a0) ^ hxcGfMul(0x09, a1) ^ hxcGfMul(0x0e, a2) ^ hxcGfMul(0x0b, a3);
+      state[c * 4 + 3] = hxcGfMul(0x0b, a0) ^ hxcGfMul(0x0d, a1) ^ hxcGfMul(0x09, a2) ^ hxcGfMul(0x0e, a3);
+    }
+  };
+  addKey(10);
+  for (let r = 9; r >= 1; r -= 1) {
+    invShift();
+    for (let i = 0; i < 16; i += 1) state[i] = sboxInv[state[i]];
+    addKey(r);
+    invMix();
+  }
+  invShift();
+  for (let i = 0; i < 16; i += 1) state[i] = sboxInv[state[i]];
+  addKey(0);
+  return state;
+}
+
+export async function hxcImageDecodeECB(bytes, keyText = HXC_IMG_KEY_TEXT) {
+  const w = hxcAes128Expand(Buffer.from(keyText, "utf8"));
+  const out = Buffer.alloc(bytes.length);
+  for (let i = 0; i < bytes.length; i += 16) {
+    out.set(hxcAes128DecryptBlock(bytes.subarray(i, i + 16), w), i);
+  }
+  return out;
+}
+
+export async function hxcApi(path, payload) {  let lastError;
+  for (const base of HXC_API_BASES) {
+    try {
+      const ents = String(Math.floor(Date.now() / 1000) - 28800);
+      const response = await fetch(base + path, {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36", Did: "1", source: "1", isShortChain: "" },
+        body: JSON.stringify({ endata: await hxcEncrypt(JSON.stringify(payload)), ents: await hxcEncrypt(ents) }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const body = await response.json();
+      if (body.endata) {
+        try { return JSON.parse(await hxcDecrypt(body.endata)); } catch { return body; }
+      }
+      return body;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("hxc api unreachable");
+}
+
+function hxcImgUrl(path) {
+  return `/provider-api/hxc?action=img&u=${encodeURIComponent(path)}`;
+}
+
+function hxcParseSeconds(value) {
+  if (!value && value !== 0) return null;
+  if (typeof value === "number") return value;
+  const match = String(value).match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (match) return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+  match = String(value).match(/^(\d{1,2}):(\d{2})$/);
+  if (match) return Number(match[1]) * 60 + Number(match[2]);
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function hxcDetailFields(info) {
+  const seconds = hxcParseSeconds(info.length);
+  const tags = Array.isArray(info.tags) ? info.tags.join(" / ") : info.tagName || "";
+  const year = info.addTime ? Number(String(info.addTime).slice(0, 4)) : null;
+  return {
+    vod_id: info.id,
+    vod_name: info.name,
+    vod_pic: hxcImgUrl(info.coverImgUrl),
+    vod_remarks: seconds ? formatDuration(seconds) : "",
+    vod_year: year || "",
+    type_name: info.typeName || "",
+    vod_area: info.typeName || "",
+    vod_blurb: (info.description || tags).slice(0, 400),
+    vod_content: info.description || "",
+  };
+}
+
+async function hxcGetUrl(info) {
+  let url = "";
+  try {
+    const pre = await hxcApi("/videos/getPreUrl", { videoId: info.id });
+    if (pre.code === 0 && pre.data?.url) {
+      const length = hxcParseSeconds(info.length);
+      const parsed = new URL(pre.data.url);
+      parsed.searchParams.delete("start");
+      parsed.searchParams.delete("end");
+      if (length && length > 0) {
+        parsed.searchParams.set("start", "0");
+        parsed.searchParams.set("end", String(length));
+      }
+      url = parsed.toString();
+    }
+  } catch {}
+  return url;
+}
+
+async function hxcList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg")) || 1);
+  const wd = (requestUrl.searchParams.get("wd") || "").trim();
+  const preset = (requestUrl.searchParams.get("preset") || "").trim();
+  const length = Math.min(48, Math.max(12, Number(requestUrl.searchParams.get("limit")) || 24));
+  const typeIds = preset ? [Number(preset)] : [4, 11, 17, 23];
+  const payload = {
+    page,
+    length,
+    offset: 0,
+    typeIds,
+    orderType: preset ? 7 : 1,
+    payType: preset === "29" ? [1, 3, 4] : [3, 4],
+    tagIds: [],
+    subTagIds: [],
+    subTypeIds: HXC_SUB_TYPE_IDS[preset] || [],
+  };
+  if (wd) payload.videoName = wd;
+  const result = await hxcApi("/videos/getList", payload);
+  if (result.code !== 0 || !Array.isArray(result.data?.list)) {
+    throw new Error(result.msg || "hxc list failed");
+  }
+  return json({
+    list: result.data.list.map((item) => {
+      const seconds = hxcParseSeconds(item.length);
+      const year = item.addTime ? Number(String(item.addTime).slice(0, 4)) : null;
+      return {
+        vod_id: item.id,
+        vod_name: item.name,
+        vod_pic: hxcImgUrl(item.coverImgUrl),
+        vod_remarks: seconds ? formatDuration(seconds) : "",
+        vod_year: year || null,
+        type_name: item.typeName || "",
+        needs_detail: true,
+      };
+    }),
+    page,
+    total: result.data.count,
+  }, { headers: { "cache-control": wd ? "public, max-age=60" : "public, max-age=180" } });
+}
+
+async function hxcDetail(requestUrl) {
+  const id = Number(requestUrl.searchParams.get("id"));
+  if (!Number.isFinite(id)) return json({ message: "missing id" }, { status: 400 });
+  const result = await hxcApi("/videos/getInfo", { videoId: id });
+  if (result.code !== 0 || !result.data?.info) {
+    throw new Error(result.msg || "hxc detail failed");
+  }
+  const info = result.data.info;
+  const detail = hxcDetailFields(info);
+  const url = await hxcGetUrl(info);
+  if (!url) {
+    return json({ ...detail, vod_play_url: "", vod_blurb: (detail.vod_blurb + " 该视频暂未提供可播放线路（可能尚未完成转码）").trim() });
+  }
+  return json({ ...detail, vod_play_url: url, streams: [{ label: "全量线路", url }] });
+}
+
+async function hxcImage(requestUrl) {
+  const path = requestUrl.searchParams.get("u");
+  if (!path) return json({ message: "missing u" }, { status: 400 });
+  const response = await fetch(path, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) return json({ message: `hxc image ${response.status}` }, { status: 502 });
+  const text = await response.text();
+  const plain = await hxcImageDecodeECB(Buffer.from(text.trim(), "base64"));
+  const prefix = plain.slice(0, 12).toString("latin1");
+  const dataUrlMatch = prefix.startsWith("data:image/") ? plain.toString("utf8").match(/^data:(image\/[a-z0-9.+-]+);base64,(.*)$/s) : null;
+  const [contentType, bytes] = dataUrlMatch
+    ? [dataUrlMatch[1], Buffer.from(dataUrlMatch[2], "base64")]
+    : ["image/jpeg", plain];
+  return new Response(bytes, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=86400",
+      "access-control-allow-origin": "*",
+    },
+  });
+}
+
 export async function handleProviderRequest(request) {
   const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
@@ -4042,6 +4317,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
     if (provider === "avjb") return await (action === "detail" ? avjbDetail(requestUrl) : avjbList(requestUrl));
     if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
+    if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

@@ -210,7 +210,7 @@
 
 ### 尚无独立上游
 
-- `hxc` / 看含羞草：**2026-08-18 已查明独立上游 = Fi11 含羞草研究所（www.8c4mo.com / API a64d.vd9h4.com），全链路匿名可用可接入（见文末「看含羞草 / hxc 侦查记录」）**。旧记录：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`，完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。
+- `hxc` / 看含羞草：**2026-08-18 已接入（上游 = Fi11 含羞草研究所 API a64d.vd9h4.com，见文末「看含羞草 / hxc 侦查记录」）**。参考站 console 对照完成：首页 `/api/videos` = 上游 `orderType:1` 最新（ids 逐字一致）、详情 `?videoId=` 同款、真实播放接口 `/media/playlist/{id}?sort=1`（上游同款 m3u8 经私有 `/media/hls/asset` 代理）；**无片源条目（getPreUrl 空）参考站同样 404 `playlist unavailable`，牌型一致**。旧记录：登录后确认 9984 部、416 页及 6 个分类；目录 `/api/videos`，详情 `/api/video/info`，播放 `/api/video/play`（**已废弃，任意 id 502**），完整 HLS 经参考站私有 `__cfnav_media/m/kan-hxc/playlist/*` 与分片路由。
 - `zb` / 看主播：参考站是 48 个录播条目而非实时直播；目录 `/api/home`，搜索实测调用 `/api/search?wd={keyword}&page=1`，播放调用 `/api/player?id={id}&sid={sid}&nid={nid}`。2026-08-12 再次在已授权页面以“扬州”检索，确实返回 1 条而不是客户端过滤，但资源清单证明目录和搜索都仍来自 `zb.cfnav.me/api/*`；48 张封面继续全部来自 `media.cfnav.com/m/kan-zb/image/*`。首条实际播放直接落到公开 MP4 域 `guoji-02-mp4-cdnguoji.guojitaolu.sbs`，支持 Range 且完整时长可加载；同条第二线路 `yazhou-02-mp4-cdn.yazhoutaolu.cyou` 当前证书域名错误。公开媒体域根路径跳转到 Backblaze B2 产品页，没有对象目录或元数据 API；按精确标题、条目 ID、文件 ID与域名检索均未找到独立索引。媒体文件可独立读取不等于目录可独立更新，故继续 pending，不写死 48 条快照。
 
 ### 当前无法核对
@@ -805,11 +805,13 @@
 - 接口表：`/videos/getList`（列表+搜索）、`/videos/getInfo`（详情）、`/videos/getPreUrl`（试看签名）、`/videos/v2/getUrl`（正式播放，匿名 2002 无权限=付费墙）、`/videos/buy|preBuy|downBuy|preDownBuy`（付费）、`/gather/getList|getDetail|buy|preBuy`（合集/专题）、`/home/getDefaultGraph|getAds`、`/base/hotWord|globalSearch`、`/base/getConfigPub`（sitename=Fi11）、`/user/*`、`/userMessage/*`
 
 **列表**：`POST /videos/getList {page, length, offset:0, typeIds:[], orderType, payType:[], tagIds:[], subTagIds:[], subTypeIds:[]}`。
-- 首页（推荐）：`typeIds:[4,11,17,23]` `orderType:3` `payType:[3,4]`，length 24/页；另有热门 `typeIds:[] orderType:2 payType:[4]`
+- 首页：`typeIds:[4,11,17,23]` **`orderType:1`（最新发布）** `payType:[3,4]`，length 24/页——**2026-08-18 参考站 console 对照修正**：参考站 `/api/videos`（后端直连上游同款）首页 ids 76784→76754 连续最新，与 `orderType:1` 返回逐字一致；`orderType:3` 是「推荐」混排（实测首页 6999/52726/53151… 老视频混排），**必须用 1**；另有热门 `typeIds:[] orderType:2 payType:[4]`
 - 分类：`typeIds:[4|11|17|23|29]` `orderType:7` `payType:[3,4]`（动漫 `[1,3,4]`）；子类 subTypeIds：国产 [5..10]、日韩 [21,32,19,22,20,18]、欧美 [24..28]、动漫 [30]
 - count 上限 10000（全站），分页 page 递增
 - 列表项：`{id, name, length(秒), coverImgUrl, coverImgUrlVertical, addTime, videoSort, seeCount, likeCount, collectionCount, isAngle}`——与参考站 `/api/videos` 逐字一致（同源铁证）
 - **搜索 = 同一接口加 `videoName: "关键词"`**（实测「台湾」count 1204）
+
+**参考站播放接口真实形态（2026-08-18 用户 console 抓包）**：参考站前端调 **`GET /media/playlist/{id}?sort=1`**（不是 `/api/video/play`——该路由已废弃，任意 id 全 502；`/api/video/play/{id}` 404）。返回**已展开的单层媒体清单**（TARGETDURATION 5/6s），`#EXT-X-KEY URI="/media/hls/asset/{base64(上游keyURL)}.{sig}"`（base64 解码 = 上游 `t02h.beikept.com/play/m3u8/vc/{mediaId}/1000kb/hls/key.key` 或 `/read/{date}/{hash}/1000kb/hls/key.key`，与上游 getPreUrl 同源同款），ts 同样经 `/media/hls/asset/{b64}` 代理；sort=0/1 均返回完整清单（sort 无影响）。**对照结论（牌型一致铁证）**：对无片源条目（getPreUrl 空 url，如 6856/35344）参考站返回 **404 `playlist unavailable`**——参考站同样无法播放；对可播条目（51097/76767）返回 200 完整清单。**参考站能播的 = 我们能播的**。实现直连上游（master→variant 交给 hls.js）与参考站效果一致，无需复刻其 /media/hls/asset 代理。
 
 **详情**：`POST /videos/getInfo {videoId}` → `{canDownload, canPlay, canPrePlay, discount, downloadPoint, info:{id, name, coverImgUrl(.aes), coverImgUrlVertical, length, isVip, typeName, typeParentId, tags, seeCount, likeCount, collectionCount, no, shareId, addTime...}}`。付费=canPlay:false + canPrePlay:true（40/40 抽样全付费）；边缘情况 transcodingStatus=0 的老视频 getPreUrl 返回空 url（如实提示）。
 
@@ -819,4 +821,4 @@
 
 **浏览器行为（真实抓包）**：首页即发 getDefaultGraph/genre、getConfigPub（sitename/key 表）、panel、visitor/add（随机昵称+uuid）、getMessageCount、getList×5 路（各分类 tab 预载）；登录弹窗「登录Fi11，尊享品质观影体验」。
 
-**实现要点**：provider hxc：列表（默认参数组首页）+ 分页 + 分类 tab（5 类）+ 搜索（videoName）+ 详情 getInfo + 播放 = getPreUrl → 改 start/end 为全长 → m3u8 全量 → key/ts 绝对化直连；封面 AES-ECB 解密转 data URI 或 base64 JPEG（浏览器端可免代理：API/媒体/图 CORS 全 `*`）。AES 加解密在浏览器端用 Web Crypto 或 jsencrypt 实现（endata/ents 每次请求实时生成）。参考站 __cfnav_media/m/kan-hxc/* 私有代理不依赖。
+**实现要点（2026-08-18 已落地）**：provider hxc：列表（默认 orderType:1 最新、5 分类 tab orderType:7 + subTypeIds）+ 分页 + 搜索（videoName）+ 详情 getInfo + 播放 = getPreUrl → 改 start/end 为全长 → m3u8 全量 → key/ts 绝对化直连；封面 `.aes` 加密图经 `/provider-api/hxc?action=img` 代理（**worker 端手写 AES-128-ECB 解密，零填充非 PKCS7；必须返回图片 bytes + ACAO `*`，JSON 包裹会让 img 破图**）；卡片必须 `needs_detail: true`（否则前端不请求详情直接无片源）。AES 信封（endata/ents）在 worker 端用 crypto.subtle（workerd 无 Node crypto 模块），ents 固定 `epoch-28800`。API/媒体/图 CORS 全 `*` 匿名直连。参考站 __cfnav_media/m/kan-hxc/* 私有代理不依赖。**参考站对照结论**：首页 = orderType:1 最新（ids 逐字一致）；播放接口 `/media/playlist/{id}?sort=1`（上游同款 m3u8）；无片源条目参考站同样 404 `playlist unavailable`——牌型一致。

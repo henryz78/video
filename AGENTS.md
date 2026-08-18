@@ -6,6 +6,8 @@ Before starting research on any new site, first read the **Richy 脚本索引** 
 
 **研究任何新站点前，还必须在 SleazyFork/GreasyFork 搜索该站点的油猴脚本**（用户 2026-08-18 决定，任务清单固定项）：目标站的去广告/免费看 VIP/保播/下载脚本往往直接暴露上游域名、API 契约与播放逻辑（已验证案例：`kankan`/AVJB 的 `docs/Richy (6).txt`、`hxc`/Fi11 的 SleazyFork 456275「含羞草研究所免费看」脚本）。搜索关键词：站点名（含别名，如含羞草→Fi11）+ 油猴脚本站（sleazyfork.org 优先，含成人向）；发现的脚本要么直接保存到 `docs/Richy*.txt` 并更新索引，要么把关键线索（域名清单/API 路径/播放逻辑）写入 SOURCE-RESEARCH.md。
 
+**站点验收铁律（用户 2026-08-18 定，后续所有站点适用）**：每完成一个站点，必须与参考站（cfnav.me 子站）核对，确保呈现的"牌型"（目录/分类/搜索/详情/播放效果）与参考站一致。**能播放 ≠ 已通过**。目标是把用户可见效果做到与参考站一致（如 VIP 视频全部能播）；**若参考站能播的比我们多，就是我们这边有问题**，必须继续：要么自己找线索（上游探针/逆向），要么反复尝试，要么请用户在参考站 console 执行命令取证（其环境无 `copy()`，用 `console.log` 输出）——取证命令要具体可粘贴，输出贴回后据此修复。做完再核对，核对过才算完成。**实现前教训（hxc 案例）**：动手前先充分核对参考站的列表/排序/分类/搜索/详情/播放接口契约（hxc 首页默认排序就曾用错 `orderType:3` 推荐混排，而参考站是 `orderType:1` 最新，导致首页 24 卡 id 与参考站不一致；参考站真实播放接口是 `/media/playlist/{id}?sort=1` 而非 `/api/video/play`，凭旧文档会误判）——参考站前端 bundle/Network 抓包/console 取证是最快路径。
+
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 
 Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
