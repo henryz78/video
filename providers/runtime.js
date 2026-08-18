@@ -3484,6 +3484,204 @@ async function javPlay(requestUrl) {
   }, { headers: { "cache-control": "no-store" } });
 }
 
+const AVJB_ORIGIN = "https://avjb.com";
+const AVJB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+
+async function avjbPage(path) {
+  const upstream = new URL(path, AVJB_ORIGIN);
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(upstream, {
+        headers: { "user-agent": AVJB_UA, accept: "text/html,application/xhtml+xml,*/*;q=0.8" },
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!response.ok) throw new Error(`avjb ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  }
+  throw lastError;
+}
+
+function avjbCover(url = "") {
+  if (!url) return "";
+  if (/^https?:/i.test(url)) return url;
+  if (url.startsWith("//")) return `https:${url}`;
+  return `${AVJB_ORIGIN}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
+function avjbCards(html) {
+  const cards = [];
+  for (const block of html.split('class="item').slice(1)) {
+    const href = block.match(/href="(https:\/\/avjb\.com\/video\/\d+[^"]*)"/)?.[1];
+    if (!href) continue;
+    const id = href.match(/\/video\/(\d+)\//)?.[1];
+    if (!id) continue;
+    const title = decodeHtml(block.match(/title="([^"]*)"/)?.[1] || "");
+    const cover = avjbCover(block.match(/data-original="([^"]+)"/)?.[1] || block.match(/data-webp="([^"]+)"/)?.[1] || "");
+    const preview = block.match(/data-preview="([^"]+)"/)?.[1] || "";
+    const duration = block.match(/<div class="duration">([^<]*)<\/div>/)?.[1] || "";
+    const hd = /is-hd/.test(block.split('<div class="img">')[0] || block);
+    const vip = /is-vip/.test(block);
+    const rating = block.match(/<div class="rating[^"]*">([\s\S]*?)(\d+%)\s*<\/div>/)?.[2] || "";
+    if (!title) continue;
+    cards.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: cover,
+      vod_preview: preview ? avjbCover(preview) : "",
+      vod_remarks: duration || (vip ? "VIP" : "VIDEO"),
+      vod_url: href,
+      vod_area: "avjb.com",
+      type_name: vip ? "VIP" : "AVJB",
+      vod_label: [hd && "HD", vip && "VIP"].filter(Boolean).join(" ") || "",
+      vod_blurb: [rating && `好评 ${rating}`, hd && "HD"].filter(Boolean).join(" · "),
+      media_kind: "video",
+      needs_detail: true,
+      provider: "avjb",
+    });
+  }
+  return cards;
+}
+
+async function avjbCategories() {
+  const html = await avjbPage("/categories/");
+  const cats = [];
+  const seen = new Set();
+  for (const block of html.split('href="https://avjb.com/categories/').slice(1)) {
+    const slug = block.slice(0, block.indexOf('"')).replace(/\/+$/, "");
+    if (!/^[a-z0-9-]+$/i.test(slug) || seen.has(slug)) continue;
+    const title = block.match(/title="([^"]*)"/)?.[1];
+    if (!title) continue;
+    seen.add(slug);
+    cats.push({ id: slug, name: decodeHtml(title).replace(/-\s*爱微社区\s*$/, "").trim() });
+  }
+  return cats;
+}
+
+async function avjbList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = (requestUrl.searchParams.get("wd") || "").trim();
+  const preset = requestUrl.searchParams.get("preset") || requestUrl.searchParams.get("category") || "";
+  if (keyword) {
+    const html = await avjbPage(`/search/?q=${encodeURIComponent(keyword)}`);
+    return json({ list: avjbCards(html), page: 1, pages: 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=60" } });
+  }
+  let html;
+  const catSlug = preset.startsWith("cat:") ? preset.slice(4) : "";
+  if (preset === "cat") {
+    const cats = await avjbCategories();
+    return json({ list: cats.map((cat) => ({ vod_id: `c${cat.id}`, vod_name: cat.name, vod_remarks: "分类", vod_url: `/categories/${cat.id}/`, vod_area: "avjb.com", type_name: "分类", media_kind: "gallery", needs_detail: false, provider: "avjb" })), page: 1, pages: 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=600" } });
+  } else if (catSlug) {
+    html = page > 1
+      ? await avjbPage(`/categories/${catSlug}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=post_date&from=${page}`)
+      : await avjbPage(`/categories/${catSlug}/`);
+    const items = avjbCards(html);
+    const maxFrom = Math.max(1, ...[...html.matchAll(/from:(\d+)/g)].map((m) => Number(m[1])));
+    return json({ list: items, page, pages: maxFrom + 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=180" } });
+  } else if (preset === "new" || preset === "latest") {
+    html = await avjbPage(page > 1 ? `/new/${page}/` : "/new/");
+  } else if (preset === "vip" || preset === "premium") {
+    html = await avjbPage(page > 1 ? `/premium/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=post_date&from=${page}` : "/premium/");
+  } else if (preset === "albums") {
+    html = await avjbPage("/albums/");
+    const list = [];
+    for (const block of html.split('class="item').slice(1)) {
+      const href = block.match(/href="(https:\/\/avjb\.com\/albums\/\d+[^"]*)"/)?.[1];
+      if (!href) continue;
+      const id = href.match(/\/albums\/(\d+)\//)?.[1];
+      const title = decodeHtml(block.match(/title="([^"]*)"/)?.[1] || "");
+      const cover = avjbCover(block.match(/data-original="([^"]+)"/)?.[1] || "");
+      const count = block.match(/<div class="duration">([^<]*)<\/div>/)?.[1] || "";
+      if (!title) continue;
+      list.push({ vod_id: `a${id}`, vod_name: title, vod_pic: cover, vod_remarks: count || "相册", vod_url: href, vod_area: "avjb.com", type_name: "相册", media_kind: "image", media_url: cover, needs_detail: false, provider: "avjb" });
+    }
+    return json({ list, page: 1, pages: 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=300" } });
+  } else {
+    html = await avjbPage("/");
+  }
+  const list = avjbCards(html);
+  const unique = [];
+  const seen = new Set();
+  for (const card of list) {
+    if (seen.has(card.vod_id)) continue;
+    seen.add(card.vod_id);
+    unique.push(card);
+  }
+  if (!preset || preset === "home") return json({ list: unique.slice(0, 24), page: 1, pages: 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=180" } });
+  if (preset === "new" || preset === "latest") {
+    const pages = Math.max(1, ...[...html.matchAll(/\/new\/(\d+)\//g)].map((m) => Number(m[1])));
+    return json({ list: unique, page, pages, provider: "avjb" }, { headers: { "cache-control": "public, max-age=180" } });
+  }
+  return json({ list, page: 1, pages: 1, provider: "avjb" }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+async function avjbDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  const link = requestUrl.searchParams.get("link") || "";
+  if (!id) return json({ message: "missing id" }, { status: 400 });
+  const path = link ? link.replace(/^https?:\/\/avjb\.com/i, "").split("?")[0] : "";
+  const html = await avjbPage(path || `/video/${id}/`);
+  const title = decodeHtml(html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.replace(/-\s*爱微社区\s*$/, "") || id);
+  const cover = avjbCover(html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "");
+  const durationSec = Number(html.match(/<meta property="video:duration" content="(\d+)"/)?.[1] || 0);
+  const durationText = durationSec > 0 ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, "0")}` : "";
+  const date = html.match(/<meta property="og:video:release_date" content="([^"]+)"/)?.[1] || "";
+  const views = html.match(/<meta property="ya:ovs:views_total" content="(\d+)"/)?.[1] || "";
+  const quality = html.match(/<meta property="ya:ovs:quality" content="([^"]+)"/)?.[1] || "";
+  const tags = (html.match(/<meta property="video:tag" content="([^"]+)"/)?.[1] || "").split(/,\s*/).filter(Boolean);
+  const cats = [];
+  for (const m of html.matchAll(/href="(https:\/\/avjb\.com\/categories\/[a-f0-9]+)/g)) cats.push(m[1].split("/").pop());
+  const card = {
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: durationText || "VIDEO",
+    vod_area: "avjb.com",
+    vod_year: date?.slice(0, 4) || "",
+    type_name: quality ? quality.toUpperCase() : "AVJB",
+    vod_blurb: [views && `${views} 次观看`, tags.join(" · ")].filter(Boolean).join("  "),
+    media_kind: "video",
+    provider: "avjb",
+  };
+  if (durationSec > 0) {
+    const play = avjbBuildPlaylist(id, durationSec);
+    card.vod_play_url = play.url;
+    card.streams = [{ label: "裸 CDN 完整片", url: play.url }];
+    card.play_notice = `公开完整片 · ${play.count} 段 × 2s（list.avstatic.com 直连）`;
+  } else {
+    card.play_notice = "此条目无公开播放地址";
+  }
+  return json(card, { headers: { "cache-control": "public, max-age=60" } });
+}
+
+function avjbBuildPlaylist(id, durationSec) {
+  const bucket = Math.floor(Number(id) / 1000) * 1000;
+  const count = Math.max(1, Math.ceil(durationSec / 2));
+  let body = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n";
+  for (let i = 0; i < count; i++) {
+    body += "#EXTINF:2.000000,\n";
+    body += `https://list.avstatic.com/cdn/videos/${bucket}/${id}/${String(i).padStart(4, "0")}.jpg\n`;
+  }
+  body += "#EXT-X-ENDLIST\n";
+  return { url: `data:application/vnd.apple.mpegurl;base64,${btoa(body)}`, count };
+}
+
+function btoa(value) {
+  if (typeof Buffer !== "undefined") return Buffer.from(value, "utf8").toString("base64");
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  for (let i = 0; i < value.length; i += 3) {
+    const c1 = value.charCodeAt(i), c2 = i + 1 < value.length ? value.charCodeAt(i + 1) : NaN, c3 = i + 2 < value.length ? value.charCodeAt(i + 2) : NaN;
+    const b1 = c1 >> 2, b2 = ((c1 & 3) << 4) | ((c2 >> 4) || 0), b3 = isNaN(c2) ? 64 : ((c2 & 15) << 2) | ((c3 >> 6) || 0), b4 = isNaN(c3) ? 64 : (c3 & 63);
+    out += chars[b1] + chars[b2] + (b3 === 64 ? "=" : chars[b3]) + (b4 === 64 ? "=" : chars[b4]);
+  }
+  return out;
+}
+
 export async function handleProviderRequest(request) {
   const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
@@ -3536,6 +3734,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
     if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
     if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
+    if (provider === "avjb") return await (action === "detail" ? avjbDetail(requestUrl) : avjbList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

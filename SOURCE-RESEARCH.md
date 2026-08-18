@@ -2,6 +2,28 @@
 
 本项目的目标不是转发 `cfnav.me/api/*`，而是确认真正上游并以可替换 provider adapter 接入。
 
+> **研究新站点前的第一步：先查「Richy 脚本索引」**（见下一节）。用户提供的 `docs/Richy*.txt`（15 份油猴/工具脚本）里可能已包含目标站的上游域名、API 契约、播放/下载逻辑的完整线索，是最快的信息来源。已落地案例：`hj`（Richy (12) 的 wasm key 解密）、`ph`（Richy (13)）、`9s`（Richy (2)）、`kankan`/AVJB（Richy (6)）。每次新增/发现脚本对应关系，都同步更新索引。
+
+## Richy 脚本索引（docs/Richy*.txt，15 份）
+
+| 文件 | 对应站点 | 参考入口 | 关键线索 |
+|---|---|---|---|
+| Richy (1).txt | 91porna.com | — | 全站去广告 + HLS 保播 + 悬浮下载（桌面/手机） |
+| Richy (2).txt | jiuse.tv（别名 91porny.com） | `9s` / 看九色 | **已落地**：免登录看高清 VIP 正片（自动替换预览假流为真实正片），与 9s 实现同源 |
+| Richy (3).txt | tangxinvlog.pro（糖心 Vlog） | `tx` / 看糖心 Vlog | AES-128 解密 HLS 浏览器下载（边下边写 .ts）；tx 已实现同款解密播放 |
+| Richy (4).txt | 18j.tv | — | 去广告 + 保播 + 悬浮下载 + 拦追踪；CDN `*.cdn202511.com`/`*.18j2026.com` |
+| Richy (5).txt | cherrygasp.com | — | 去广告 + 保播 + 紧凑悬浮下载 + 拦追踪 |
+| Richy (6).txt | avjb.com（AVJB-爱微社区） | `kankan` | **已落地（2026-08-18）**：完整播放逻辑 = `list.avstatic.com/cdn/videos/{bucket}/{id}/NNNN.jpg` 裸分片匿名 200（`.jpg` 伪装真实 MPEG-TS、2s/段）+ 二分找段数 + 自建 playlist；embed 页 `timeLimit` 限时器吞掉；详情页 fetch `/newembed/{id}` 提取 m3u8 |
+| Richy (7).txt | h5.xxoo473.org（香蕉视频） | `xo` / 爱看 | 列表广告隐藏 + VIP preview 升级 + 原播放位叠层播放；xo 已实现同款 Richy 解锁（preview key → full master） |
+| Richy (8).txt | jerkmotion.com | — | 去广告 + 保播 + 悬浮下载 MP4 + 拦追踪；`api.jerkmotion.com/video/{slug}` |
+| Richy (9).txt | rou.video | `rou` / 看肉视频 | 去广告 + 悬浮下载 HLS + 隐私检测；rou 已实现 |
+| Richy (10).txt | porn87.com | — | 去广告（ExoClick/magsrv/smartpop）+ 保 HLS + 悬浮下载（GM 绕过 CORS） |
+| Richy (11).txt | 18mh.net（及 jmtt1.net 镜像） | `jm` / 看禁漫天堂 | 去广告 + 保漫画/小说/视频可播 + 下载；jm 已实现（18mh.net 官方新站） |
+| Richy (12).txt | haijiao.com（看海角） | `hj` / 看海角 | **已落地**：屏蔽广告/剪贴板劫持、捕获完整 m3u8/音频、原位播放/下载；hj 完整正片实现（wasm `jquery_key` 解密、ts 分片 LCP 反推完整 m3u8）源自此脚本线索 |
+| Richy (13).txt | pornhub.com（实验来源） | `ph`（非参考入口） | **已落地**：去前贴片/暂停/片尾广告、保留原生播放器与全部视频源；ph 调查确认本架构自建播放器无需它 |
+| Richy.txt | bestjavporn.com | `best` | BestJavPorn 去广告与原生播放修复 v2.5.0；调查确认上游 WordPress + streamplay JWT 播放链，但目录锁在参考站登录墙后，用户跳过 |
+| Richy.py.txt | 漫画站（bz2vraf.live 等） | — | Python 漫画下载器 + 竖版阅读器（`comic.py 52065` 下载全章节→阅读器；`--workers` 并发加速），非浏览器脚本 |
+
 ## 已确认、可直接独立接入
 
 ### GDLSP / MacCMS JSON
@@ -672,3 +694,62 @@
 - **浏览层**（列表/分类/标签/详情/封面）可匿名独立实现，且 feed key 与参考站一致 → 理论上能复刻参考站目录体验。
 - **播放层硬锁死**：manifest 与加密分片匿名可拉，唯独 AES 解密 key 端点 403（登录墙）；参考站能播是因为其后端持有 SWAG 会话拿 key、解密后经 cfnav 私有 `/media?ticket=` 重发。无法在「零 cfnav + 无登录 + 实时抓取」约束下实现播放。
 - 重开条件（需新证据）：① key 端点开放匿名（feed/详情直接带 key）；② 上游出现匿名 preview 通道（`trailer_url` 填充可匿名 m3u8）；③ 出现无 AES/DRM 的 CF-free SWAG 镜像（商业品牌站，可能性低）。
+
+---
+
+## KANKAN / AVJB-爱微社区（`kankan`，2026-08-18 调查 + 已实现）
+
+调查为只读（未改代码）；用户登录态参考站 console 配合取证，并核实 `docs/Richy (6).txt` 即为 AVJB 的完整版播放脚本。结论：**真实上游 = `avjb.com`（AVJB-爱微社区），全链路匿名直连，播放零代理，已接入（2026-08-18，headless 验收通过）**。
+
+### 参考站契约（kankan.cfnav.me，登录态 console 取证）
+
+- 参考站是 cfnav 反向代理包装的上游完整站（登录墙外 + 登录后转发上游内容页），**非自建 API**。Node 匿名访问任意路径返回登录页 HTML；`/api/home` 404（上游无此路由）。
+- 首页导航 tabs：精选 / 最新 / 分类 / 相册 / VIP；卡片带时长、VIP/HD 徽章、100%/0% 评分、发布相对时间、观看数。
+- 播放器：参考站内嵌 Richy 脚本（richy-core.js/richy-resolver.js/richy-player.js），日志显示其完整版播放走 `https://kankan.cfnav.me/__avjb/open-cdn.m3u8?videoId={id}&count={segments}`（**cfnav 自建的代理端点，上游无此路径**），分片实际来自 `list.avstatic.com`；`/newembed/{id}` 参考站 401。
+
+### 上游判定（avjb.com，同源铁证）
+
+- 参考站首页卡片链接/视频 id 与 `avjb.com` 首页**逐字一致**（`/video/129483/mm11/` 等），标题同为「AVJB-爱微社区-亚洲成人社区」。
+- `docs/Richy (6).txt` @match `avjb.com/*`，脚本内注释「红队实锤：/cdn/videos/{bucket}/{id}/NNNN.jpg 匿名 200」——官方授权安全测试视角印证上游公开 CDN。
+
+### 上游链路验证（全部匿名 Node 实测，nginx 无 CF 拦截）
+
+| 功能 | 端点 | 结果 |
+|---|---|---|
+| 首页 | `GET /` | 200，置顶推荐 + 最新，20+ 卡 |
+| 最新 | `GET /new/`、`GET /new/{n}/` | 20 卡/页，分页通 |
+| 分类 | `GET /categories/`（30+ 分类，md5 slug，部分英文 slug 如 amateur/solowork） | 通 |
+| 分类分页 | `GET /categories/{md5}/?mode=async&function=get_block&block_id=list_videos_common_videos_list&sort_by=post_date&from={n}` | 200，20 卡/页；排序支持 video_viewed/rating/duration/most_commented/most_favourited |
+| 搜索 | `GET /search/?q={kw}`、`GET /search/{kw}/` | 200，48 卡 |
+| 相册 | `GET /albums/`、`GET /albums/{id}/{slug}/` | 12 卡 |
+| 详情 | `GET /video/{id}/{slug}/` | `videoId`、`video:duration`（秒）、`og:image`（`bmc2.imgclh.com/contents/videos_screenshots/{bucket}/{id}/preview.jpg`）、分类/标签链接、发布日期 |
+| 试看 | `GET /newembed/{id}` | MP4 试看 `https://r22.jb-aiwei.cc/videos/{bucket}/{id}/{id}video_limt.mp4` |
+| 悬浮预览 | 卡片 `data-preview` | `/get_file/4/{hash}/{bucket}/{id}/{id}_preview.mp4/` |
+
+卡片结构：`a[href=/video/{id}/{slug}/]` + `img.data-original`（封面 `bmc2.imgclh.com/.../385x233/N.jpg`）+ `.duration` + `.is-vip`/`.is-hd` 徽章 + `data-preview` 悬浮 MP4 + `.rating` 百分比。
+
+### 完整播放（核心，Richy (6) 验证 + 本地实测）
+
+- 分片：`https://list.avstatic.com/cdn/videos/{bucket}/{videoId}/NNNN.jpg`，`bucket = floor(id/1000)*1000`
+  - **匿名 GET/HEAD 200 + `Access-Control-Allow-Origin: *`**（浏览器可直连）
+  - 头部 `47 40 11 10` = **真实 MPEG-TS 同步字节**（`.jpg` 伪装、无加密）
+  - 每段 2 秒（实测段尺寸 ~670KB–840KB）
+- **段数**：`ceil(时长秒 / 2)`（实测 61:30 → 3690s → 1845 段，二分验证 0~1844 全 200、1845 起 404；与参考站 `count` 一致）；无时长时用二分（0~3000）HEAD 找最后一片，同 Richy 下载器
+- 播放实现：自建 `#EXTM3U` playlist（`#EXT-X-TARGETDURATION:2` + 每 2s 一段的绝对 URL）→ blob URL → hls.js；VIP 视频同样匿名可拉（裸 CDN 无门控）
+
+### 与参考站差异
+
+- 参考站用 `/__avjb/open-cdn.m3u8?videoId&count` 代理端点；本实现直接用裸 CDN 自建 playlist，**更独立、零 cfnav 依赖**。
+- 参考站搜索 = 上游 `/search/?q=`（有真实搜索 API，非前端过滤）。
+
+### 实现要点（供后续实现者）
+
+1. `providers/catalog.js`：新增 `avjb` provider（name「爱微社区 AVJB 实时上游」、upstream `avjb.com`、capabilities「列表/搜索/分类/相册/详情/HLS 播放」），写入 `ROUTE_CONFIGS` 对应 `kankan` 入口。**已落地（2026-08-18）**。
+2. `providers/runtime.js`：
+   - `avjbList`：抓 `/`、`/new/`、`/new/{n}/`（最新）、`/categories/{md5}/` + `?mode=async...from={n}`（分类分页）、`/search/?q=`（搜索）
+   - `avjbCards`：解析 `div.item`（id/slug/标题/封面 `data-original`/时长/HD/VIP/评分/悬浮预览）
+   - `avjbDetail`：抓 `/video/{id}/{slug}/`，取 `videoId`/`video:duration`/封面/分类/标签/相关
+   - `avjbPlaylist`：`segmentCount = ceil(durationSec/2)`（或二分兜底），生成完整 playlist 返回（分片 URL 直接绝对指向 `list.avstatic.com`，CORS `*` 浏览器直连，无需代理）**已实现为 `avjbBuildPlaylist`（data: base64 m3u8）**。
+3. 前端：复用 QiyingModal/DetailModal hls.js 播放路径；参考 `9s` 的 SitePage 接线与 ROUTE_CONFIGS 注册。**已实现：KANKAN_TABS（精选/最新/相册/VIP）+ 分类索引网格 + `cat:` 前缀分类视频 + detail 传 `link`**。
+4. 验证：列表 20+ 卡 + 封面加载 → 详情 → hls.js 播放推进（readyState=4）→ 分页/搜索/分类，零 console 错误。**已通过 headless 验收：24 卡/滚动后 0 破图/播放 currentTime 3.97s 推进/79 分类/搜索 fc2 36 卡/零 JS 错误；构建 + test:sites 全绿**。
+5. 文档：实现后更新 `PROJECT-HANDBOOK.md` 对应记录与本节状态；`npm run build` + `npm run test:sites` 必须通过。**已更新（PROJECT-HANDBOOK.md 74 行 + 文末记录）**。

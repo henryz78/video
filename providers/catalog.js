@@ -167,6 +167,13 @@ kan98: {
     discoveredFrom: "看JAV 参考站 /api/home sourceLink 与 /api/play 契约同源核对 javhd.com（标题逐字一致，2026-08-18；static2.javhd.com 拿到 jplayer.min.js → content-path → /zh/player_api 匿名完整源）",
     capabilities: "最新列表 / 搜索 / 详情 / 匿名签名完整 1080p MP4 直连播放（4 码率）",
   },
+  avjb: {
+    id: "avjb",
+    name: "爱微社区 AVJB 实时上游",
+    upstream: "avjb.com + list.avstatic.com 裸 CDN 分片（.jpg 伪装 2s MPEG-TS，CORS *）+ bmc2.imgclh.com 封面",
+    discoveredFrom: "爱微社区参考站 kankan.cfnav.me 与 avjb.com 同源核对（卡片/视频 id 逐字一致，2026-08-18；docs/Richy (6).txt 即 AVJB 完整播放脚本）",
+    capabilities: "首页 / 最新 / 分类 / 搜索 / 相册 / 详情 / 裸 CDN 分片自建 playlist 完整播放（VIP 同源匿名）",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -191,6 +198,7 @@ hj: { provider: "hj" },
   xo: { provider: "kanxo" },
   "9s": { provider: "js9", preset: "home" },
   jav: { provider: "jav" },
+  kankan: { provider: "avjb" },
 };
 
 export function getProviderForSite(slug) {

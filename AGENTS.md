@@ -2,6 +2,8 @@
 
 Before any work, read `PROJECT-HANDBOOK.md`. It is the canonical project handoff, original 39-site registry (38 currently in scope), priority list, implementation map, and safety boundary. Update it whenever a site's provider, preset, status, verification result, or next step changes.
 
+Before starting research on any new site, first read the **Richy 脚本索引** at the top of `SOURCE-RESEARCH.md` (`docs/Richy*.txt`, 15 scripts). If the target site has a matching Richy script, it already contains the upstream domain, API contract, and playback logic — the fastest possible source of information. Update the index whenever a new script-to-site mapping is discovered.
+
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 
 Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
