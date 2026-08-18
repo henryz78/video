@@ -3189,6 +3189,134 @@ async function phMedia(requestUrl) {
   });
 }
 
+const JS9_ORIGIN = "https://jiuse.tv";
+const JS9_TABS = [
+  ["latest", "最新"], ["hd", "高清"], ["recent-favorite", "最近加精"], ["hot-list", "当前最热"],
+  ["recent-rating", "最近得分"], ["nonpaid", "非付费"], ["ori", "91原创"], ["long-list", "10分钟+"],
+  ["longer-list", "20分钟+"], ["month-discuss", "本月讨论"], ["top-favorite", "本月收藏"],
+  ["most-favorite", "收藏最多"], ["top-list", "本月最热"], ["top-last", "上月最热"],
+];
+
+async function js9Page(path) {
+  const response = await fetch(`${JS9_ORIGIN}${path}`, {
+    headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`jiuse.tv ${response.status}`);
+  return await response.text();
+}
+
+function js9Cover(url) {
+  if (!url) return "";
+  return url.replace(/^\/\//, "https://").replace(/^http:\/\//i, "https://");
+}
+
+function js9Cards(html) {
+  const cards = [];
+  for (const block of html.split('<div class="video-elem">').slice(1)) {
+    const href = block.match(/class="display[^"]*" href="([^"]+)"/)?.[1];
+    if (!href) continue;
+    const match = href.match(/\/(video|vod|videos)\/view\/([^/"]+)/);
+    if (!match) continue;
+    const kind = match[1];
+    const id = match[2];
+    const slug = kind === "videos" ? (href.match(/\/([^/"]+)\/$/)?.[1] || "") : "";
+    const cover = js9Cover(block.match(/background-image:\s*url\('([^']+)'\)/)?.[1] || "");
+    const layer = block.match(/<small class="layer">([^<]*)<\/small>/)?.[1] || "";
+    const title = decodeHtml(block.match(/class="title[^"]*" href="[^"]+">([\s\S]*?)<\/a>/)?.[1] || "");
+    if (!title) continue;
+    const author = decodeHtml(block.match(/作者:\s*<a[^>]*>([\s\S]*?)<\/a>/)?.[1] || "");
+    const muted = [...block.matchAll(/<div class="text-muted">([\s\S]*?)<\/div>/g)].map((m) => decodeHtml(m[1]));
+    const stats = muted.pop() || "";
+    cards.push({
+      vod_id: id,
+      vod_kind: kind,
+      vod_slug: slug,
+      vod_name: title,
+      vod_pic: cover,
+      vod_remarks: layer || "VIDEO",
+      vod_area: author || "—",
+      vod_blurb: stats,
+      type_name: kind === "video" ? "91自拍" : kind === "vod" ? "精选" : "视频",
+      media_kind: "video",
+      provider: "js9",
+      needs_detail: true,
+    });
+  }
+  return cards;
+}
+
+async function js9Home() {
+  const [videoHtml, vodHtml, videosHtml] = await Promise.all([js9Page("/"), js9Page("/vod"), js9Page("/videos")]);
+  const list = [...js9Cards(videoHtml).slice(0, 17), ...js9Cards(vodHtml).slice(0, 12), ...js9Cards(videosHtml).slice(0, 12)];
+  return { list };
+}
+
+async function js9List(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd") || "";
+  const preset = requestUrl.searchParams.get("preset") || requestUrl.searchParams.get("category") || "";
+  if (keyword) {
+    const html = await js9Page(`/video/search?q=${encodeURIComponent(keyword)}`);
+    return json({ list: js9Cards(html), page: 1, pages: 1, provider: "js9" }, { headers: { "cache-control": "public, max-age=60" } });
+  }
+  if (!preset || preset === "home" || !JS9_TABS.some(([key]) => key === preset)) {
+    const home = await js9Home();
+    return json({ ...home, page: 1, pages: 1, provider: "js9" }, { headers: { "cache-control": "public, max-age=180" } });
+  }
+  const path = page === 1 ? `/video/${preset}` : `/video/category/${preset}/${page}`;
+  const html = await js9Page(path);
+  const items = js9Cards(html);
+  const pages = Math.max(1, ...[...html.matchAll(new RegExp(`/video/category/${preset}/(\\d+)`, "g"))].map((m) => Number(m[1])));
+  return json({ list: items, page, pages, provider: "js9" }, { headers: { "cache-control": "public, max-age=180" } });
+}
+
+async function js9Detail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  const kind = requestUrl.searchParams.get("kind") || "video";
+  const slug = requestUrl.searchParams.get("slug") || "";
+  if (!id) return json({ message: "missing id" }, { status: 400 });
+  const path = kind === "video" ? `/video/view/${id}` : kind === "vod" ? `/vod/view/${id}` : `/videos/view/${id}/${slug || "1"}`;
+  const html = await js9Page(path);
+  const title = decodeHtml(html.match(/<title>([\s\S]*?)<\/title>/)?.[1] || id).replace(/[-\s]*(?:91视频\|91自拍\|国产自拍|蝌蚪窝\|成人电影\|91PORNY\|九色)[^\n]*$/i, "");
+  const cover = js9Cover(html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || html.match(/data-poster="([^"]+)"/)?.[1] || "");
+  const playUrl = js9Cover(decodeHtml((html.match(/data-src="([^"]+)"/) || [])[1] || ""));
+  const card = {
+    vod_id: id,
+    vod_kind: kind,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: "VIDEO",
+    vod_area: "看九色",
+    type_name: kind === "video" ? "91自拍" : kind === "vod" ? "精选" : "视频",
+    media_kind: "video",
+    provider: "js9",
+  };
+  if (kind === "video" && playUrl) {
+    const lines = [playUrl];
+    const seen = new Set([playUrl]);
+    const others = await Promise.all(["line2", "line3"].map(async (server) => {
+      try {
+        const lineHtml = await js9Page(`/video/view/${id}?server=${server}`);
+        const lineSrc = js9Cover(decodeHtml((lineHtml.match(/data-src="([^"]+)"/) || [])[1] || ""));
+        if (lineSrc && !seen.has(lineSrc)) { seen.add(lineSrc); return lineSrc; }
+      } catch { /* line unavailable */ }
+      return null;
+    }));
+    lines.push(...others.filter(Boolean));
+    card.vod_play_url = lines[0];
+    card.streams = lines.map((url, index) => ({ label: `线路${index + 1}`, url }));
+    card.play_notice = "公开 m3u8 · 多线路直连";
+  } else if (playUrl) {
+    card.vod_play_url = playUrl;
+    card.streams = [{ label: kind === "videos" ? "直连" : "线路1", url: playUrl }];
+    card.play_notice = kind === "videos" ? "公开 MP4 直连" : "公开 m3u8 · 直连";
+  } else {
+    card.play_notice = "此条目无公开播放地址";
+  }
+  return json(card);
+}
+
 export async function handleProviderRequest(request) {  const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
@@ -3238,6 +3366,7 @@ export async function handleProviderRequest(request) {  const requestUrl = reque
 if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
     if (provider === "kanxo") return await (action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
     if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
+    if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

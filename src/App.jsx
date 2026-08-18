@@ -349,6 +349,12 @@ function SitePage({ site, go, health, setHealth }) {
   ];
   const TX_TABS = [["", "最新"], ["videos", "全部作品"], ["artists", "博主"]];
   const ROU_TABS = [["home", "首页"], ["cat", "分类"], ["tag", "标签"]];
+  const JS9_TABS = [
+    ["", "首页"], ["latest", "最新"], ["hd", "高清"], ["recent-favorite", "最近加精"], ["hot-list", "当前最热"],
+    ["recent-rating", "最近得分"], ["nonpaid", "非付费"], ["ori", "91原创"], ["long-list", "10分钟+"],
+    ["longer-list", "20分钟+"], ["month-discuss", "本月讨论"], ["top-favorite", "本月收藏"],
+    ["most-favorite", "收藏最多"], ["top-list", "本月最热"], ["top-last", "上月最热"],
+  ];
   const MADOU_TABS = [
     ["", "最新"], ["麻豆传媒", "麻豆传媒"], ["麻豆番外篇", "番外篇"], ["麻豆花絮", "花絮"],
     ["HongKongDoll", "HongKongDoll"], ["PsychopornTW", "PsychopornTW"], ["91制片厂", "91制片厂"],
@@ -367,7 +373,7 @@ function SitePage({ site, go, health, setHealth }) {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [page, setPage] = useState(1);
-  const [category, setCategory] = useState(provider?.id === "madou" ? "" : provider?.preset || "");
+  const [category, setCategory] = useState(provider?.id === "madou" || provider?.id === "js9" ? "" : provider?.preset || "");
   const [order, setOrder] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -416,7 +422,7 @@ function SitePage({ site, go, health, setHealth }) {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}`);
+      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}${provider.id === "js9" ? `&kind=${encodeURIComponent(item.vod_kind || "video")}&slug=${encodeURIComponent(item.vod_slug || "")}` : ""}`);
       const detail = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
       if (provider.id === "eporner") setSelected(epNormalize(detail));
@@ -445,7 +451,8 @@ function SitePage({ site, go, health, setHealth }) {
     {provider?.id === "tx" && <div className="qiying-tabs">{TX_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "rou" && <div className="qiying-tabs">{ROU_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "kanxo" && <div className="qiying-tabs">{KANXO_TABS.map(([key, label]) => <button key={key} className={category === key ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}<span className="qiying-tabs-spacer"></span>{KANXO_ORDERS.map(([key, label]) => <button key={key} className={order === key ? "is-active" : ""} onClick={() => { setOrder(key); }}>{label}</button>)}</div>}
-    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
+    {provider?.id === "js9" && <div className="qiying-tabs">{JS9_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : provider?.id === "js9" ? (category ? "CATEGORY BROWSE" : "HOME FEED") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : provider?.id === "js9" ? (category ? (JS9_TABS.find(([k]) => k === category)?.[1] || category) : "首页") : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
       {!loading && !error && provider?.id === "tx" && category === "artists" && <div className="tx-artist-grid">{items.map((artist) => <button className="tx-artist-card" key={artist.vod_id} onClick={() => setCategory(artist.vod_id)}><div className="tx-artist-avatar">{artist.vod_pic ? <img src={artist.vod_pic} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>AVATAR</span>}</div><strong>{artist.vod_name}</strong>{artist.vod_remarks && <small>{artist.vod_remarks}</small>}{artist.vod_blurb && <p>{artist.vod_blurb}</p>}</button>)}</div>}

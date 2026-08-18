@@ -153,6 +153,13 @@ kan98: {
     discoveredFrom: "用户单独要求的实验来源（docs/Richy (13).txt 线索），2026-08-17 全链路实测：列表/搜索/分类/详情 SSR 直抓 + mediaDefinitions 内联 HLS + 媒体无 CORS 需同源代理",
     capabilities: "列表 / 搜索 / 分类 / 详情 / 多清晰度 HLS（同源代理）",
   },
+  js9: {
+    id: "js9",
+    name: "看九色 91视频 实时上游",
+    upstream: "jiuse.tv / 91porny.com + cdn2.jiuse3.cloud / dp.jiuse.cloud / cdn22.jiuse3.cloud / cdn.cdnkdjs.com + int.ucloud160.xyz / i.ucloud160.xyz / int.qiniuyun36.xyz",
+    discoveredFrom: "看九色 参考站 /api/home 与 /api/video/video 契约同源核对 jiuse.tv（首页第一项 id b2cbcc3a… 与参考逐项一致，2026-08-18）",
+    capabilities: "首页三路合并 / 14 分类 / 搜索 / 三类型详情（91自拍·精选·视频）/ 多线路 HLS 与 MP4 直连播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -175,6 +182,7 @@ const ROUTE_CONFIGS = {
 hj: { provider: "hj" },
   98: { provider: "kan98", preset: "41" },
   xo: { provider: "kanxo" },
+  "9s": { provider: "js9", preset: "home" },
 };
 
 export function getProviderForSite(slug) {
