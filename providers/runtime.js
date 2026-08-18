@@ -2921,15 +2921,27 @@ const KANXO_REFERER = "https://h5.xxoo473.org/";
 const KANXO_HEADERS = { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" };
 
 async function kanxoFetch(path, init = {}) {
-  const response = await fetch(KANXO_API + path, {
-    ...init,
-    headers: { ...KANXO_HEADERS, referer: KANXO_REFERER, ...(init.headers || {}) },
-  });
-  const text = await response.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  if (!response.ok) throw new Error(json.errmsg || json.message || `kanxo upstream ${response.status}`);
-  return json;
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(KANXO_API + path, {
+        ...init,
+        headers: { ...KANXO_HEADERS, referer: KANXO_REFERER, ...(init.headers || {}) },
+      });
+      const text = await response.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch { json = { raw: text }; }
+      if (!response.ok) {
+        if (response.status === 403 && attempt < 2) { await new Promise((r) => setTimeout(r, 1500)); continue; }
+        throw new Error(json.errmsg || json.message || `kanxo upstream ${response.status}`);
+      }
+      return json;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  throw lastError || new Error("kanxo upstream unavailable");
 }
 
 function kanxoCard(v = {}) {
@@ -3007,10 +3019,10 @@ async function kanxoDetail(id) {
   card.vod_area = (d.categories || []).map((c) => c.catename).filter(Boolean).join(" / ") || "";
   card.tags = (d.categories || []).map((c) => c.catename).filter(Boolean);
   card.similar = (d.similarrows || []).map(kanxoCard).map((x) => ({ vod_id: x.vod_id, vod_name: x.vod_name, vod_pic: x.vod_pic, vod_remarks: x.vod_remarks, vod_play_url: x.vod_play_url }));
-  const play = await kanxoResolvePlay(id);
-  card.vod_play_url = play.video || card.vod_play_url;
-  card.play_mode = play.mode;
-  card.play_notice = play.mode === "escalated" ? "已解锁完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "";
+  // 播放解锁改为前端执行（住宅 IP 直连媒体 CDN，绕开 CF 出口对媒体 CDN 的 403）。
+  // 这里只保证 preview_url 传递；vod_play_url 由前端 kanxoResolveMediaFront 反推完整 master。
+  card.needs_detail = false;
+  card.httpurl_preview = d.vodrow?.httpurl_preview || "";
   return json({ ...card, provider: "kanxo" });
 }
 

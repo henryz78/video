@@ -337,6 +337,90 @@ function epDetailUrl(id) {
   return upstream.href;
 }
 
+const KANXO_API = "https://h5.xxoo473.org/api";
+function kanxoCardFront(v = {}) {
+  const price = Number(v.view_price || 0);
+  const vip = Number(v.vip_price || 0);
+  const isVip = price >= 1000000 || vip >= 1000000;
+  const single = !isVip && (price > 0 || vip > 0);
+  return {
+    vod_id: String(v.vodid || ""),
+    vod_name: v.title || "未命名",
+    vod_pic: v.coverpic || "",
+    vod_remarks: isVip ? "VIP" : single ? "付费" : "可播放",
+    vod_play_url: v.preview_url || "",
+    vod_blurb: v.intro || "",
+    vod_year: v.yearname || "",
+    type_name: v.catename || "",
+    duration: v.duration || "",
+    score: v.scorenum || "",
+    views: v.upnum || "",
+    definition: v.definition || "",
+    view_price: price,
+    vip_price: vip,
+    preview_url: v.preview_url || "",
+    needs_detail: true,
+    provider: "kanxo",
+  };
+}
+function kanxoEscalateFromPreview(previewText, previewUrl) {
+  if (!/^\s*#EXTM3U/i.test(previewText)) return "";
+  const match = previewText.match(/URI="([^"]+)"/);
+  if (!match) return "";
+  let keyAbs;
+  try { keyAbs = new URL(match[1], previewUrl).href; } catch { return ""; }
+  const parsed = new URL(keyAbs);
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  if (parts.length < 2) return "";
+  return `${parsed.protocol}//${parsed.host}/${parts[0]}/${parts[1]}/index.m3u8`;
+}
+// 浏览器端媒体解锁：从 preview m3u8 的 key URI 反推完整 master（住宅 IP 直连媒体 CDN）
+async function kanxoResolveMediaFront(previewUrl, previewFallback = "") {
+  for (const candidate of [previewUrl, previewFallback]) {
+    if (!candidate) continue;
+    try {
+      const r = await fetch(candidate, { signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) continue;
+      const text = await r.text();
+      const master = kanxoEscalateFromPreview(text, candidate);
+      if (master) {
+        const mr = await fetch(master, { signal: AbortSignal.timeout(15_000) });
+        if (mr.ok && /EXTM3U/i.test(await mr.text())) return { video: master, mode: "escalated" };
+      }
+    } catch { /* try next */ }
+  }
+  return { video: previewUrl || previewFallback || "", mode: "preview" };
+}
+// 列表兜底：CF 函数失败时浏览器直连 h5 API（住宅 IP + ACAO *）
+async function kanxoDirectListFront({ pg, wd, preset, order }) {
+  const keyword = wd?.trim();
+  const path = keyword
+    ? `/search?wd=${encodeURIComponent(keyword)}&page=${pg || 1}`
+    : `/v2/vod/listing-${preset || "0"}-0-0-0-0-0-0-0-${order || "0"}-${pg || 1}`;
+  const r = await fetch(`${KANXO_API}${path}`, { signal: AbortSignal.timeout(15_000) });
+  if (!r.ok) throw new Error(`kanxo upstream ${r.status}`);
+  const j = await r.json();
+  const d = j.data || {};
+  return {
+    list: (d.vodrows || []).map(kanxoCardFront),
+    totalPages: (d.pageinfo && d.pageinfo.totalpage) || 1,
+    provider: "kanxo",
+  };
+}
+// 详情：CF 函数返回 card + preview_url，浏览器端做媒体解锁
+async function kanxoDetailFront(id) {
+  const r = await fetch(`/provider-api/kanxo?action=detail&id=${encodeURIComponent(id)}`);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.message || `详情返回 ${r.status}`);
+  const play = await kanxoResolveMediaFront(body.preview_url, body.httpurl_preview || "");
+  return {
+    ...body,
+    vod_play_url: play.video || body.vod_play_url || "",
+    play_mode: play.mode,
+    play_notice: play.mode === "escalated" ? "已解锁完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "",
+  };
+}
+
 function SitePage({ site, go, health, setHealth }) {
   const provider = getProviderForSite(site.slug);  if (provider?.id === "qiying" || provider?.id === "mr" || provider?.id === "hj") return <QiyingPage site={site} go={go} setHealth={setHealth} provider={provider} />;
   if (provider?.id === "jm") return <JmPage site={site} go={go} setHealth={setHealth} />;
@@ -404,9 +488,7 @@ function SitePage({ site, go, health, setHealth }) {
     const fetchUrl = epDirect
       ? epListUrl({ pg: page, wd: submitted, preset: category || provider.preset })
       : `/provider-api/${provider.id}?${params}`;
-    fetch(fetchUrl, { signal: controller.signal }).then((r) => {
-      if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
-    }).then((data) => {
+    const applyList = (data) => {
       if (epDirect && data && Array.isArray(data.videos)) {
         setItems(data.videos.map(epNormalize));
       } else {
@@ -414,7 +496,16 @@ function SitePage({ site, go, health, setHealth }) {
       }
       if (provider.id === "rou") setRouData({ sections: data.sections || null, groups: data.groups || null });
       setHealth("ok");
-    }).catch((e) => {
+    };
+    fetch(fetchUrl, { signal: controller.signal }).then((r) => {
+      if (!r.ok) throw new Error(`上游返回 ${r.status}`); return r.json();
+    }).then(applyList).catch((e) => {
+      if (provider.id === "kanxo" && e.name !== "AbortError") {
+        // CF 函数被上游风控时，浏览器直连 h5 API 兜底
+        return kanxoDirectListFront({ pg: page, wd: submitted, preset: category || provider.preset, order }).then(applyList).catch((e2) => {
+          setError(e2.message || "来源暂时不可用"); setHealth("error");
+        });
+      }
       if (e.name !== "AbortError") { setError(e.message || "来源暂时不可用"); setHealth("error"); }
     }).finally(() => setLoading(false));
     return () => controller.abort();
@@ -425,9 +516,16 @@ function SitePage({ site, go, health, setHealth }) {
     if (!item.needs_detail) return setSelected(item);
     setSelected({ ...item, detail_loading: true });
     try {
-      const response = await fetch(provider.id === "eporner" ? epDetailUrl(item.vod_id) : `/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}${provider.id === "js9" ? `&kind=${encodeURIComponent(item.vod_kind || "video")}&slug=${encodeURIComponent(item.vod_slug || "")}` : ""}${provider.id === "jav" ? `&link=${encodeURIComponent(item.vod_url || "")}` : ""}${provider.id === "avjb" ? `&link=${encodeURIComponent(item.vod_url || "")}` : ""}`);
-      const detail = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(detail.message || `详情返回 ${response.status}`);
+      const detail = provider.id === "eporner"
+        ? await fetch(epDetailUrl(item.vod_id)).then((r) => { if (!r.ok) throw new Error(`详情返回 ${r.status}`); return r.json(); })
+        : provider.id === "kanxo"
+          ? await kanxoDetailFront(item.vod_id)
+          : await (async () => {
+            const r = await fetch(`/provider-api/${provider.id}?action=detail&id=${encodeURIComponent(item.vod_id)}${provider.id === "js9" ? `&kind=${encodeURIComponent(item.vod_kind || "video")}&slug=${encodeURIComponent(item.vod_slug || "")}` : ""}${provider.id === "jav" ? `&link=${encodeURIComponent(item.vod_url || "")}` : ""}${provider.id === "avjb" ? `&link=${encodeURIComponent(item.vod_url || "")}` : ""}`);
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(body.message || `详情返回 ${r.status}`);
+            return body;
+          })();
       if (provider.id === "eporner") setSelected(epNormalize(detail));
       else setSelected({
         ...detail,
@@ -906,7 +1004,7 @@ export function App() {
   const [welcome, setWelcome] = useState(false);
   const [ageAccepted, setAgeAccepted] = useState(() => localStorage.getItem("cf-age") === "yes" || ((location.hostname === "127.0.0.1" || location.hostname === "localhost") && new URLSearchParams(location.search).has("qa")));
   useEffect(() => {
-    Promise.allSettled(Object.keys(PROVIDERS).filter((provider) => provider !== "ph").map((provider) => fetch(provider === "eporner" ? epListUrl({ pg: 1 }) : `/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
+    Promise.allSettled(Object.keys(PROVIDERS).filter((provider) => provider !== "ph").map((provider) => fetch(provider === "eporner" ? epListUrl({ pg: 1 }) : provider === "kanxo" ? `/provider-api/kanxo?wd=asian&pg=1` : `/provider-api/${provider}?pg=1&limit=1&ac=detail`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok ? r.json() : Promise.reject()))).then((results) => {
       const ready = results.filter((result) => result.status === "fulfilled");
       setHealth(ready.length === results.length ? "ok" : ready.length ? "checking" : "error");
     });
