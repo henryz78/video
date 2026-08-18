@@ -375,7 +375,17 @@ function kanxoEscalateFromPreview(previewText, previewUrl) {
   return `${parsed.protocol}//${parsed.host}/${parts[0]}/${parts[1]}/index.m3u8`;
 }
 // 浏览器端媒体解锁：从 preview m3u8 的 key URI 反推完整 master（住宅 IP 直连媒体 CDN）
-async function kanxoResolveMediaFront(previewUrl, previewFallback = "") {
+// 浏览器端媒体解锁：先试 reqplay 拿完整 httpurl（免费内容匿名可用），VIP 锁定再走 preview key 反推
+async function kanxoResolveMediaFront(id, previewUrl, previewFallback = "") {
+  try {
+    const rp = await fetch(`${KANXO_API}/vod/reqplay/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) });
+    if (rp.ok) {
+      const j = await rp.json();
+      if (j.retcode === 0 && (j.data?.httpurl || j.data?.play_url || j.data?.url || j.data?.httpurl_play)) {
+        return { video: j.data.httpurl || j.data.play_url || j.data.url || j.data.httpurl_play, mode: "reqplay" };
+      }
+    }
+  } catch { /* fall through to preview escalation */ }
   for (const candidate of [previewUrl, previewFallback]) {
     if (!candidate) continue;
     try {
@@ -412,12 +422,12 @@ async function kanxoDetailFront(id) {
   const r = await fetch(`/provider-api/kanxo?action=detail&id=${encodeURIComponent(id)}`);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.message || `详情返回 ${r.status}`);
-  const play = await kanxoResolveMediaFront(body.preview_url, body.httpurl_preview || "");
+  const play = await kanxoResolveMediaFront(id, body.preview_url, body.httpurl_preview || "");
   return {
     ...body,
     vod_play_url: play.video || body.vod_play_url || "",
     play_mode: play.mode,
-    play_notice: play.mode === "escalated" ? "已解锁完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "",
+    play_notice: play.mode === "escalated" ? "已解锁完整片源" : play.mode === "reqplay" ? "完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "",
   };
 }
 

@@ -2990,8 +2990,8 @@ async function kanxoResolvePlay(id) {
   let reqplay = null;
   try {
     const rp = await kanxoFetch(`/vod/reqplay/${encodeURIComponent(id)}`);
-    if (rp.retcode === 0 && (rp.data?.play_url || rp.data?.url || rp.data?.httpurl_play)) {
-      reqplay = rp.data.play_url || rp.data.url || rp.data.httpurl_play || "";
+    if (rp.retcode === 0 && (rp.data?.httpurl || rp.data?.play_url || rp.data?.url || rp.data?.httpurl_play)) {
+      reqplay = rp.data.httpurl || rp.data.play_url || rp.data.url || rp.data.httpurl_play || "";
     }
   } catch { /* fall through to preview escalation */ }
   if (reqplay) return { video: reqplay, mode: "reqplay" };
