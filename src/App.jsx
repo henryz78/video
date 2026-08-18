@@ -375,14 +375,14 @@ function kanxoEscalateFromPreview(previewText, previewUrl) {
   return `${parsed.protocol}//${parsed.host}/${parts[0]}/${parts[1]}/index.m3u8`;
 }
 // 浏览器端媒体解锁：从 preview m3u8 的 key URI 反推完整 master（住宅 IP 直连媒体 CDN）
-// 浏览器端媒体解锁：先试 reqplay 拿完整 httpurl（免费内容匿名可用），VIP 锁定再走 preview key 反推
+// 浏览器端媒体解锁：先走同源 reqplay 代理拿完整 httpurl（免费内容匿名可用），VIP 锁定再走 preview key 反推
 async function kanxoResolveMediaFront(id, previewUrl, previewFallback = "") {
   try {
-    const rp = await fetch(`${KANXO_API}/vod/reqplay/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) });
+    const rp = await fetch(`/provider-api/kanxo?action=reqplay&id=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15_000) });
     if (rp.ok) {
       const j = await rp.json();
-      if (j.retcode === 0 && (j.data?.httpurl || j.data?.play_url || j.data?.url || j.data?.httpurl_play)) {
-        return { video: j.data.httpurl || j.data.play_url || j.data.url || j.data.httpurl_play, mode: "reqplay" };
+      if (j.retcode === 0 && (j.httpurl || j.play_url || j.url || j.httpurl_play)) {
+        return { video: j.httpurl || j.play_url || j.url || j.httpurl_play, mode: "reqplay" };
       }
     }
   } catch { /* fall through to preview escalation */ }
@@ -392,6 +392,7 @@ async function kanxoResolveMediaFront(id, previewUrl, previewFallback = "") {
       const r = await fetch(candidate, { signal: AbortSignal.timeout(15_000) });
       if (!r.ok) continue;
       const text = await r.text();
+      if (text.trim().startsWith("{")) continue; // retcode JSON（如仅付费可预览）不可用作解锁源
       const master = kanxoEscalateFromPreview(text, candidate);
       if (master) {
         const mr = await fetch(master, { signal: AbortSignal.timeout(15_000) });
@@ -399,7 +400,7 @@ async function kanxoResolveMediaFront(id, previewUrl, previewFallback = "") {
       }
     } catch { /* try next */ }
   }
-  return { video: previewUrl || previewFallback || "", mode: "preview" };
+  return { video: "", mode: "unavailable" };
 }
 // 列表兜底：CF 函数失败时浏览器直连 h5 API（住宅 IP + ACAO *）
 async function kanxoDirectListFront({ pg, wd, preset, order }) {
@@ -427,7 +428,7 @@ async function kanxoDetailFront(id) {
     ...body,
     vod_play_url: play.video || body.vod_play_url || "",
     play_mode: play.mode,
-    play_notice: play.mode === "escalated" ? "已解锁完整片源" : play.mode === "reqplay" ? "完整片源" : play.mode === "preview" ? "当前仅可播放预览" : "",
+    play_notice: play.mode === "escalated" ? "已解锁完整片源" : play.mode === "reqplay" ? "完整片源" : play.mode === "preview" ? "当前仅可播放预览" : play.mode === "unavailable" ? "此条目无公开播放地址" : "",
   };
 }
 

@@ -3011,6 +3011,20 @@ async function kanxoResolvePlay(id) {
   return { video: previewUrl || previewFallback || "", mode: "preview" };
 }
 
+// reqplay 同源代理：浏览器跨域直调 h5 reqplay 无 ACAO 会被拒，改走 Pages 函数后端抓取（CF 边缘可访问 h5）
+async function kanxoReqplay(id) {
+  const j = await kanxoFetch(`/vod/reqplay/${encodeURIComponent(id)}`);
+  return json({
+    retcode: j.retcode,
+    errmsg: j.errmsg || "",
+    httpurl: j.data?.httpurl || "",
+    play_url: j.data?.play_url || "",
+    url: j.data?.url || "",
+    httpurl_play: j.data?.httpurl_play || "",
+    provider: "kanxo",
+  }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
 async function kanxoDetail(id) {
   const j = await kanxoFetch(`/vod/show/${encodeURIComponent(id)}`);
   const d = j.data || {};
@@ -3742,7 +3756,7 @@ export async function handleProviderRequest(request) {
     if (provider === "iptvorg") return await iptvOrgList(requestUrl);
     if (provider === "adulttv") return await (action === "media" ? adultTvMedia(requestUrl) : action === "detail" ? adultTvDetail(requestUrl.searchParams.get("id")) : adultTvList(requestUrl));
 if (provider === "kan98") return await (action === "image" ? kan98Image(requestUrl) : action === "detail" ? kan98Detail(requestUrl.searchParams.get("id")) : kan98List(requestUrl));
-    if (provider === "kanxo") return await (action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
+    if (provider === "kanxo") return await (action === "reqplay" ? kanxoReqplay(requestUrl.searchParams.get("id")) : action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
     if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
     if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
     if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
