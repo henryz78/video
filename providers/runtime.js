@@ -3575,6 +3575,10 @@ function javAsset(value = "") {
   return `${JAV_ORIGIN}${cleaned.startsWith("/") ? "" : "/"}${cleaned}`;
 }
 
+function javMediaUrl(url) {
+  return `/provider-api/jav?action=media&url=${encodeURIComponent(url)}`;
+}
+
 function javCardFromObject(item = {}) {
   const id = String(item.id || "");
   if (!/^\d+$/.test(id)) return null;
@@ -3788,16 +3792,36 @@ async function javPlay(requestUrl) {
   const label = (source) => `${source.label || `${source.res || ""}p`}p`;
   return json({
     vod_id: pid,
-    vod_play_url: sources[0].src,
+    vod_play_url: javMediaUrl(sources[0].src),
     streams: sources.map((source, index) => ({
       label: `${source.label || source.res || "高清"}${index === 0 ? " · 直连" : ""}`,
-      url: source.src,
+      url: javMediaUrl(source.src),
       quality: Number(source.res) || 0,
     })),
     poster: javAsset(data.poster || ""),
     play_notice: "javhd 匿名签名直链 · 完整版 4 码率",
     provider: "jav",
   }, { headers: { "cache-control": "no-store" } });
+}
+
+async function javMedia(requestUrl, request) {
+  let target;
+  try { target = new URL(requestUrl.searchParams.get("url") || ""); } catch { return json({ message: "invalid jav media" }, { status: 400 }); }
+  if (!/^(?:c3|c4)\.cdnjhd\.com$/i.test(target.hostname) || !/\/content-01\/contents\//i.test(target.pathname)) {
+    return json({ message: "invalid jav media host" }, { status: 400 });
+  }
+  const headers = { ...JAV_DETAIL_HEADERS };
+  const range = request?.headers?.get?.("range");
+  if (range) headers.range = range;
+  const upstream = await fetch(target, { headers, signal: AbortSignal.timeout(30_000) });
+  const out = new Headers();
+  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified"]) {
+    const value = upstream.headers.get(name);
+    if (value) out.set(name, value);
+  }
+  out.set("access-control-allow-origin", "*");
+  out.set("cache-control", "public, max-age=300");
+  return new Response(upstream.body, { status: upstream.status, headers: out });
 }
 
 const AVJB_ORIGIN = "https://avjb.com";
@@ -4605,7 +4629,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "kanxo") return await (action === "reqplay" ? kanxoReqplay(requestUrl.searchParams.get("id")) : action === "detail" ? kanxoDetail(requestUrl.searchParams.get("id")) : kanxoList(requestUrl));
     if (provider === "ph") return await (action === "media" ? phMedia(requestUrl) : action === "detail" ? phDetail(requestUrl.searchParams.get("id")) : phList(requestUrl));
     if (provider === "js9") return await (action === "detail" ? js9Detail(requestUrl) : js9List(requestUrl));
-    if (provider === "jav") return await (action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
+    if (provider === "jav") return await (action === "media" ? javMedia(requestUrl, request) : action === "play" ? javPlay(requestUrl) : action === "detail" ? javDetail(requestUrl) : javList(requestUrl));
     if (provider === "avjb") return await (action === "detail" ? avjbDetail(requestUrl) : avjbList(requestUrl));
     if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
     if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
