@@ -2826,8 +2826,11 @@ async function kan98SearchPage(keyword, page) {
     body,
   });
   if (page <= 1) return result.text;
-  const legacyToken = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "0";
-  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(legacyToken)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
+  const searchMd5 = result.text.match(/[?&]searchmd5=([^&"'<>\s]+)/i)?.[1]
+    || result.text.match(/(?:name|id)=["']searchmd5["'][^>]*value=["']([^"']+)/i)?.[1]
+    || result.text.match(/searchmd5["'=]+([a-z0-9]+)/i)?.[1]
+    || "0";
+  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(searchMd5)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
   return (await kan98Page(url, result.cookie ? { headers: { cookie: result.cookie } } : {})).text;
 }
 
