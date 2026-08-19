@@ -2667,6 +2667,10 @@ const KAN98_CATEGORIES = {
   46: "剧情三级",
 };
 
+function kan98CookieHeader(raw = "") {
+  return String(raw).split(/,(?=[^;,=\s]+=[^;,]+)/).map((part) => part.split(";")[0].trim()).filter(Boolean).join("; ");
+}
+
 function kan98ImageProxy(source) {
   if (!source) return "";
   const url = new URL(source, KAN98_ORIGIN);
@@ -2717,14 +2721,14 @@ async function kan98Page(pathname, init = {}) {
         }
         text = await retry.text();
         if (retry.ok && !/(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
-          return { text, url: retry.url || url.href, cookie: retry.headers.get("set-cookie") || init.headers?.cookie || "" };
+          return { text, url: retry.url || url.href, cookie: [init.headers?.cookie, safeId ? `_safe=${safeId}` : kan98CookieHeader(retry.headers.get("set-cookie"))].filter(Boolean).join("; ") };
         }
       }
       if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
         lastError = new Error(`kan98 upstream ${response.status || 502} (${origin})`);
         continue;
       }
-      return { text, url: response.url || url.href, cookie: response.headers.get("set-cookie") || init.headers?.cookie || "" };
+      return { text, url: response.url || url.href, cookie: [init.headers?.cookie, kan98CookieHeader(response.headers.get("set-cookie"))].filter(Boolean).join("; ") };
     } catch (error) {
       lastError = error;
     }
