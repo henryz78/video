@@ -3829,14 +3829,54 @@ const headers = { ...JAV_DETAIL_HEADERS };
       await new Promise((resolve) => setTimeout(resolve, 1200));
     }
   }
-  const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
+const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
+  const limit = Math.max(0, end - start + 1);
   const out = new Headers();
   out.set("accept-ranges", "bytes");
   if (total) out.set("content-range", `bytes ${start}-${end}/${total}`);
-  out.set("content-length", String(Math.max(0, Math.min(end - start + 1, Number(total) - start))));
+  out.set("content-length", String(Math.min(limit, Number(total || limit) - start)));
   out.set("access-control-allow-origin", "*");
   out.set("cache-control", "public, max-age=300");
-  return new Response(upstream.body, { status: 206, headers: out });
+  return new Response(javTruncate(upstream.body, limit), { status: 206, headers: out });
+}
+
+function javTruncate(stream, limit) {
+  if (!stream || typeof stream.getReader !== "function") return stream;
+  const reader = stream.getReader();
+  let sent = 0;
+  return new ReadableStream({
+    async pull(controller) {
+      if (sent >= limit) {
+        controller.close();
+        try { await reader.cancel(); } catch {}
+        return;
+      }
+      let value, done;
+      try {
+        ({ value, done } = await reader.read());
+      } catch (error) {
+        controller.error(error);
+        return;
+      }
+      if (done) {
+        controller.close();
+        return;
+      }
+      const need = limit - sent;
+      if (value.length > need) {
+        sent += need;
+        controller.enqueue(value.subarray(0, need));
+        controller.close();
+        try { await reader.cancel(); } catch {}
+      } else {
+        sent += value.length;
+        controller.enqueue(value);
+      }
+    },
+    async cancel() {
+      try { await reader.cancel(); } catch {}
+    },
+  });
 }
 
 const AVJB_ORIGIN = "https://avjb.com";

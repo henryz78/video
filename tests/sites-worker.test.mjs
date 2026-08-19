@@ -365,6 +365,36 @@ test("jav media proxy caps each response at 8MB with correct content-range", asy
   }
 });
 
+test("jav media truncates the body even when the upstream ignores the range end", async () => {
+  const originalFetch = globalThis.fetch;
+  const total = 3337577689;
+  globalThis.fetch = async (input, init) => {
+    // upstream ignores the requested end and streams a large body with total content-length
+    const range = init?.headers?.range || "bytes=0-";
+    const start = Number((range.match(/^bytes=(\d+)/) || [])[1] || 0);
+    const oversized = new Uint8Array(12 * 1024 * 1024).fill(9);
+    return new Response(oversized, {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-range": `bytes ${start}-${total - 1}/${total}`, "content-length": String(total), "accept-ranges": "bytes" },
+    });
+  };
+  try {
+    const url = "https://c3.cdnjhd.com/x==,1787148997/content-01/contents/1-a/videos/1-a_sh.mp4";
+    const r = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=0-" } }));
+    assert.equal(r.status, 206);
+    assert.equal(r.headers.get("content-range"), "bytes 0-8388607/3337577689");
+    assert.equal(r.headers.get("content-length"), "8388608");
+    assert.equal((await r.arrayBuffer()).byteLength, 8388608);
+    // mid-file chunk: truncated to 8MB from the start offset
+    const r2 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=8388608-" } }));
+    assert.equal(r2.headers.get("content-range"), "bytes 8388608-16777215/3337577689");
+    assert.equal(r2.headers.get("content-length"), "8388608");
+    assert.equal((await r2.arrayBuffer()).byteLength, 8388608);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/server/index.js", import.meta.url));
