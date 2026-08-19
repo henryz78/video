@@ -822,3 +822,25 @@
 **浏览器行为（真实抓包）**：首页即发 getDefaultGraph/genre、getConfigPub（sitename/key 表）、panel、visitor/add（随机昵称+uuid）、getMessageCount、getList×5 路（各分类 tab 预载）；登录弹窗「登录Fi11，尊享品质观影体验」。
 
 **实现要点（2026-08-18 已落地）**：provider hxc：列表（默认 orderType:1 最新、5 分类 tab orderType:7 + subTypeIds）+ 分页 + 搜索（videoName）+ 详情 getInfo + 播放 = getPreUrl → 改 start/end 为全长 → m3u8 全量 → key/ts 绝对化直连；封面 `.aes` 加密图经 `/provider-api/hxc?action=img` 代理（**worker 端手写 AES-128-ECB 解密，零填充非 PKCS7；必须返回图片 bytes + ACAO `*`，JSON 包裹会让 img 破图**）；卡片必须 `needs_detail: true`（否则前端不请求详情直接无片源）。AES 信封（endata/ents）在 worker 端用 crypto.subtle（workerd 无 Node crypto 模块），ents 固定 `epoch-28800`。API/媒体/图 CORS 全 `*` 匿名直连。参考站 __cfnav_media/m/kan-hxc/* 私有代理不依赖。**参考站对照结论**：首页 = orderType:1 最新（ids 逐字一致）；播放接口 `/media/playlist/{id}?sort=1`（上游同款 m3u8）；无片源条目参考站同样 404 `playlist unavailable`——牌型一致。
+
+## 私房TV / sf 侦查记录（2026-08-19 定案 + 已实现）
+
+**结论：参考站 sf.cfnav.me 是 SFE 库登录墙、上游主站 502 已停，无法独立接入；用户指示按 jm 模式接入官方独立站 sifangtv.cc（MacCMS 10），已实现并本地 headless 验收通过。**
+
+### 参考站契约（sf.cfnav.me，内置浏览器 + 用户 console 取证）
+
+- Next.js SPA；`/api/videos?page&category={New|1|2|3|6|wmov|free}&sort={start_date|hot_count}&q=`、`/api/videos/{id}?category=`、`/api/play/{id}?method=0..7&category=`、`/api/meta`、`/js/app.js`（20569B 前端）——**匿名全 401**（登录墙全覆盖，Node 与 headless 均 401）。
+- UI 分类 = 最新 / 国产自拍 / 偷拍 / 主播实录 / 欧美 / 日本 / 免费专区；首页 964 页；详情含 methods[0..7]/screenshots/related/resolution；描述带「帖子编号:428239」论坛帖号特征。
+- **播放**：`/api/play/{id}?method=N&category=X` → `{"sources":[{"name":"线路 1","playUrl":"https://14.29.46.204/aboxVOD/mp4:{hex}/manifest.mpd"}]}`（methods 0-7 同源）；媒体 = Wowza Streaming Engine 4.7.7（广东移动），`aboxVOD/mp4:{hex}/index.m3u8` 也 200（HLS 480x854）。**hex 由登录态后端签发**：完整 hex 才 200、截断 403；同视频多次请求前缀 ~450 hex 字符稳定、后缀动态——无法独立实时生成。
+- **上游判定**：psf0404.shop 后端 = 14.29.46.204 同机 Apache/PHP MacCMS（搜素路径泄露 index.php/aboxVod 结构），**主站 502 已停**；封面 CDN `*.psf0404.shop` 匿名 200（仅图片）。SFE/SFA/SFR/SFK/SFG = 新库（2024+），ZPSS/TPSS/ZBSS = 2018-2020 老库；**SFE/SFA 编号与 GCAV 同库**（gcav.club 目录公开但对应条目只给 preview_mp4、完整源 VIP）。sifangs.com / sifang.online / sifangtv.one 不是匹配上游；sifangtv.lol = Porkbun 卖域名页；sifangtv.com 301 → g4.lomeybb1.shop（2026-06 快照，现也死）。TG 频道 @sftvpd 只给 d.sifang011.com（已死）。**结论：参考站不可独立接入，divergence 声明成立**。
+
+### 替代上游 sifangtv.cc（2026-08-19 全链验证 + 实现）
+
+- Hostinger（www.sifangtv.cc CNAME *.hstgr.net）+ 播放 CDN `v2024.sysybf.com`（=sy3.newdnsnew.com，94.154.178.58/192.198.184.2）。MacCMS 10（maccms JS 变量 aid=15 确认）。
+- **卡片**：`<a href="/index.php/vod/play/id/{id}/sid/1/nid/1.html"><img class="lozad" data-src="/upload/vod/{date}/{md5}.jpg" alt="标题">` + HD 徽章；首页 840 个 play 锚点 / 去重 260 卡（主体最新区 + 底部区块重复），**无分页链接（单页）**；分类页 20 卡/页 + `/type/id/{cat}/page/{n}.html` 分页（如 21 国产 325 页）；搜索 `/vod/search/wd/{kw}.html` + `/page/{n}.html`（如「人妻」首页 + 分页）。
+- **13 分类**：20 推荐 / 21 国产 / 22 日本 / 23 女优 / 24 中文 / 25 网红 / 26 动漫 / 27 欧美 / 28 国模 / 29 长腿 / 30 邻家 / 31 韩国 / 32 香港。
+- **无详情页**：卡片直接链播放页 `/index.php/vod/play/id/{id}/sid/1/nid/1.html`；页面 = H1 标题 + `var player_aaaa={"flag":"play","encrypt":0,"trysee":0,"points":0,"link":"...","link_next":"","link_pre":"","vod_data":{"vod_name":"...","vod_actor":"","vod_director":"","vod_class":"国产情色"},"url":"https:\/\/v2024.sysybf.com\/20250218\/{hash}\/index.m3u8","url_next":"","from":"sym3u8","server":"no","note":"","id":"34312","sid":1,"nid":1}`（**JSON 对象后无分号直接 `</script>`**）+ 相关推荐 12 卡；播放页无日期/时长/og:image/poster/主体封面（详情弹层封面用卡片图回退）。
+- **媒体**：封面 `www.sifangtv.cc/upload/vod/...` 与播放 `v2024.sysybf.com/.../index.m3u8`（master → 多码率 variant + ts 相对路径）全 CORS `*`、无 Referer 防盗链、无 KEY → **浏览器直连零代理**。
+- **反爬（2026-08-19 实测）**：本机出口直连全 IP TLS reset（000；curl/undici 均挂——2026-08-18 密集抓取触发 Hostinger 反爬封禁），但 Clash 代理 127.0.0.1:7890 出口正常（200/265KB）。→ `sfPage` 检测 `process.env.HTTPS_PROXY`/`HTTP_PROXY` 时动态 `import("node:net"/"node:tls")` + 手写 CONNECT 隧道 HTTP/1.1 GET（`sfProxyRequest`；动态 import + `typeof process` 守卫，Pages workerd 无 process 永不触发）。本地 dev 需 `set HTTPS_PROXY=http://127.0.0.1:7890`。生产 Pages 边缘直连（Hostinger 对 CF 边缘 IP 无封禁迹象，如被封则通过部署验证再定）。
+- **实现**：runtime.js `sfPage/sfFetch/sfProxyRequest/sfAsset/sfCards/sfList/sfDetail` + 分发；catalog.js `sf`（divergence 记录）+ ROUTE_CONFIGS.sf；App.jsx `SF_TABS`（"" 最新 + 20-32 十三分类）+ heading + category 默认 ""；`sfCards` 要求块内含 `data-src` 封面（否则过滤——首页无图链接块会造成 259→重复计数）；`player_aaaa` 正则 `(?=<\/script>|;)` 前瞻（无分号）。tests 新增列表 + 详情 mock 2 项（14/14 全过）。
+- **headless 验收（2026-08-19）**：首页 259 卡 / 0 破图 / 14 tabs；日本分类 20 卡（heading「日本」）；搜索「人妻」20 卡；详情 = 标题 + poster（卡片图回退）+ 1 线路 + related 12；1080p（1920×1080）readyState=4 播放推进（duration 6930s，t 10.8→22.8s）；零 JS 错误。构建 + test:sites 全绿。零 cfnav 依赖。

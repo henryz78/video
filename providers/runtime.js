@@ -3215,6 +3215,208 @@ async function phMedia(requestUrl) {
   });
 }
 
+const SF_ORIGIN = "https://www.sifangtv.cc";
+const SF_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+const SF_TABS = [
+  ["", "最新"], ["20", "推荐"], ["21", "国产"], ["22", "日本"], ["23", "女优"], ["24", "中文"],
+  ["25", "网红"], ["26", "动漫"], ["27", "欧美"], ["28", "国模"], ["29", "长腿"], ["30", "邻家"],
+  ["31", "韩国"], ["32", "香港"],
+];
+
+async function sfPage(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+    try {
+      const response = await sfFetch(`${SF_ORIGIN}${path}`);
+      if (!response.ok) throw new Error(`sifangtv.cc ${response.status}`);
+      return response.body;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("sifangtv.cc unreachable");
+}
+
+let sfProxyModules = null;
+async function sfGetProxy() {
+  if (!sfProxyModules && typeof process !== "undefined" && (process.env.HTTPS_PROXY || process.env.HTTP_PROXY)) {
+    try {
+      sfProxyModules = {
+        net: await import(/* @vite-ignore */ "node:net"),
+        tls: await import(/* @vite-ignore */ "node:tls"),
+        proxy: process.env.HTTPS_PROXY || process.env.HTTP_PROXY,
+      };
+    } catch {
+      sfProxyModules = null;
+    }
+  }
+  return sfProxyModules;
+}
+
+function sfProxyRequest(urlString, mods, timeout) {
+  const url = new URL(urlString);
+  const targetPort = url.port || 443;
+  const proxyUrl = new URL(mods.proxy);
+  const proxyPort = Number(proxyUrl.port) || 80;
+  return new Promise((resolve, reject) => {
+    const socket = mods.net.connect({ host: proxyUrl.hostname, port: proxyPort });
+    let settled = false;
+    const fail = (error) => { if (!settled) { settled = true; reject(error); } };
+    socket.setTimeout(timeout, () => { socket.destroy(); fail(new Error("sf proxy connect timeout")); });
+    socket.on("error", fail);
+    socket.on("connect", () => {
+      socket.write(`CONNECT ${url.hostname}:${targetPort} HTTP/1.1\r\nHost: ${url.hostname}:${targetPort}\r\nProxy-Connection: keep-alive\r\n\r\n`);
+    });
+    let head = "";
+    socket.on("data", (chunk) => {
+      head += chunk.toString("latin1");
+      const idx = head.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+      const statusMatch = head.slice(0, idx).match(/^HTTP\/1\.[01] (\d+)/);
+      if (!statusMatch || Number(statusMatch[1]) !== 200) {
+        socket.destroy();
+        fail(new Error("sf proxy CONNECT failed"));
+        return;
+      }
+      if (settled) return;
+      socket.removeAllListeners("data");
+      const stream = mods.tls.connect({ socket, servername: url.hostname }, () => {
+        if (settled) return;
+        settled = true;
+        stream.write(`GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.hostname}\r\nuser-agent: ${SF_UA}\r\naccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\naccept-encoding: identity\r\nconnection: close\r\n\r\n`);
+        const resp = { status: 0 };
+        let body = Buffer.alloc(0);
+        let headerDone = false;
+        stream.on("data", (data) => {
+          if (!headerDone) {
+            const rbuf = Buffer.concat([body, data]);
+            const sep = rbuf.indexOf("\r\n\r\n");
+            if (sep === -1) { body = rbuf; return; }
+            const headText = rbuf.slice(0, sep).toString("latin1");
+            const lines = headText.split("\r\n");
+            const statusLine = lines[0].match(/^HTTP\/1\.[01] (\d+)/);
+            resp.status = statusLine ? Number(statusLine[1]) : 0;
+            headerDone = true;
+            body = rbuf.slice(sep + 4);
+          } else {
+            body = Buffer.concat([body, data]);
+          }
+        });
+        stream.on("end", () => {
+          resolve({ ok: resp.status >= 200 && resp.status < 300, status: resp.status, body: body.toString("utf8") });
+        });
+        stream.on("error", fail);
+        stream.setTimeout(timeout, () => { stream.destroy(); fail(new Error("sf proxy read timeout")); });
+      });
+      stream.on("error", fail);
+    });
+  });
+}
+
+async function sfFetch(urlString, { timeout = 25000 } = {}) {
+  const proxyModules = await sfGetProxy();
+  if (!proxyModules) {
+    const response = await fetch(urlString, {
+      headers: { "user-agent": SF_UA, accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" },
+      signal: AbortSignal.timeout(timeout),
+    });
+    return { ok: response.ok, status: response.status, body: await response.text() };
+  }
+  return sfProxyRequest(urlString, proxyModules, timeout);
+}
+
+function sfAsset(value = "") {
+  if (!value) return "";
+  if (/^https?:/i.test(value)) return value;
+  if (value.startsWith("//")) return `https:${value}`;
+  return `${SF_ORIGIN}${value.startsWith("/") ? "" : "/"}${value}`;
+}
+
+function sfCards(html) {
+  const cards = [];
+  const seen = new Set();
+  for (const block of html.split("/index.php/vod/play/id/").slice(1)) {
+    const id = block.match(/^(\d+)/)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const title = decodeHtml(block.match(/alt="([^"]*)"/)?.[1] || `私房TV ${id}`);
+    const cover = sfAsset(block.match(/data-src="([^"]+)"/)?.[1] || "");
+    if (!cover) continue;
+    const hd = /<span[^>]*>HD<\/span>/.test(block);
+    cards.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: cover,
+      vod_remarks: hd ? "HD" : "可播放",
+      vod_area: "sifangtv.cc",
+      type_name: "私房",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "sf",
+    });
+  }
+  return cards;
+}
+
+async function sfList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd") || "";
+  const preset = requestUrl.searchParams.get("preset") || requestUrl.searchParams.get("category") || "";
+  let html;
+  let pages = 1;
+  if (keyword) {
+    const encoded = encodeURIComponent(keyword);
+    html = await sfPage(page === 1 ? `/index.php/vod/search/wd/${encoded}.html` : `/index.php/vod/search/wd/${encoded}/page/${page}.html`);
+  } else if (!preset || preset === "home" || preset === "latest") {
+    html = await sfPage("/");
+  } else {
+    const cat = SF_TABS.some(([key]) => key === preset) ? preset : "20";
+    html = await sfPage(page === 1 ? `/index.php/vod/type/id/${cat}.html` : `/index.php/vod/type/id/${cat}/page/${page}.html`);
+    pages = Math.max(1, ...[...html.matchAll(/\/type\/id\/\d+\/page\/(\d+)\.html/g)].map((m) => Number(m[1])));
+  }
+  const items = sfCards(html);
+  return json({ list: items, page, pages, provider: "sf" }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+async function sfDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!id) return json({ message: "missing id" }, { status: 400 });
+  const html = await sfPage(`/index.php/vod/play/id/${id}/sid/1/nid/1.html`);
+  const card = {
+    vod_id: id,
+    vod_name: decodeHtml(html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/)?.[1] || id),
+    vod_remarks: "HD",
+    vod_area: "sifangtv.cc",
+    type_name: "私房",
+    media_kind: "video",
+    provider: "sf",
+  };
+  const playerBlock = html.match(/var player_aaaa=(\{[\s\S]*?\})(?=<\/script>|;)/)?.[1];
+  if (playerBlock) {
+    try {
+      const parsed = JSON.parse(playerBlock.replace(/\\\//g, "/").replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))));
+      const url = parsed.url || "";
+      card.vod_play_url = url;
+      card.streams = url ? [{ label: parsed.from || "线路1", url }] : [];
+      card.play_notice = "公开 m3u8 · 直连";
+      if (parsed.vod_data) {
+        const vodClass = parsed.vod_data.vod_class;
+        if (vodClass) card.vod_label = String(vodClass);
+        const actor = parsed.vod_data.vod_actor;
+        if (actor) card.vod_actor = String(actor);
+      }
+    } catch {
+      card.play_notice = "播放地址解析失败";
+    }
+  } else {
+    card.play_notice = "此条目无公开播放地址";
+  }
+  const related = sfCards(html).filter((item) => item.vod_id !== id).slice(0, 12);
+  if (related.length) card.related = related;
+  return json(card);
+}
+
 const JS9_ORIGIN = "https://jiuse.tv";
 const JS9_TABS = [
   ["latest", "最新"], ["hd", "高清"], ["recent-favorite", "最近加精"], ["hot-list", "当前最热"],
@@ -4318,6 +4520,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "avjb") return await (action === "detail" ? avjbDetail(requestUrl) : avjbList(requestUrl));
     if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
     if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
+    if (provider === "sf") return await (action === "detail" ? sfDetail(requestUrl) : sfList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

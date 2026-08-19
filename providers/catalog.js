@@ -188,6 +188,13 @@ kan98: {
     discoveredFrom: "看含羞草 参考站 /api/videos 条目与 Fi11 官方站（SleazyFork 456275 脚本）同源核对（2026-08-18；sign 窗口技巧实现全量播放）",
     capabilities: "推荐/5 分类 / 分页 / 搜索 / 详情 / 试看 sign 改全量 AES-128 HLS 播放（直连）",
   },
+  sf: {
+    id: "sf",
+    name: "私房TV 实时上游",
+    upstream: "www.sifangtv.cc（MacCMS 10）+ v2024.sysybf.com 明文 HLS CDN",
+    discoveredFrom: "私房TV 参考站 sf.cfnav.me 取证（2026-08-19）：登录墙 SPA，/api/* 与 /js/* 匿名全 401；数据指纹（SFE/SFA 系列编号、psf0404.shop 封面、Wowza aboxVOD hex 签发）与 sifangtv.cc 不同源，其上游主站 502 不可达 → 按用户指示以 jm 模式接入独立官方站 sifangtv.cc（divergence 记录见 PROJECT-HANDBOOK）",
+    capabilities: "最新 / 13 分类 / 分页 / 搜索 / 详情（播放页解析）/ 明文 HLS 直连播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -215,6 +222,7 @@ hj: { provider: "hj" },
   kankan: { provider: "avjb" },
   dsd: { provider: "dsd" },
   hxc: { provider: "hxc" },
+  sf: { provider: "sf" },
 };
 
 export function getProviderForSite(slug) {

@@ -194,6 +194,68 @@ test("hxc list request reaches the upstream API with the signed envelope", async
   }
 });
 
+test("sf list parses sifangtv.cc cards and category pagination", async () => {
+  const originalFetch = globalThis.fetch;
+  const hits = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    hits.push(url);
+    return new Response(`<!doctype html><html><head><title>分类</title></head><body>
+      <a href="/index.php/vod/play/id/34312/sid/1/nid/1.html"><img class="lozad" data-src="/upload/vod/20250218/ab12cd.jpg" alt="姐姐的深夜一课"><span class="hd">HD</span></a>
+      <a href="/index.php/vod/play/id/34313/sid/1/nid/1.html"><img class="lozad" data-src="/upload/vod/20250218/ef34ab.jpg" alt="邻家女孩 02"></a>
+      <a href="/index.php/vod/type/id/21/page/2.html">2</a><a href="/index.php/vod/type/id/21/page/3.html">3</a>
+    </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const requestUrl = new URL("https://app.example/provider-api/sf?pg=2&preset=21");
+    const response = await handleProviderRequest(requestUrl);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.list.length, 2);
+    assert.equal(body.list[0].vod_id, "34312");
+    assert.equal(body.list[0].vod_name, "姐姐的深夜一课");
+    assert.equal(body.list[0].vod_remarks, "HD");
+    assert.equal(body.list[0].vod_pic, "https://www.sifangtv.cc/upload/vod/20250218/ab12cd.jpg");
+    assert.equal(body.list[1].vod_id, "34313");
+    assert.equal(body.list[1].vod_remarks, "可播放");
+    assert.equal(body.pages, 3);
+    assert.ok(hits.some((url) => url.includes("/index.php/vod/type/id/21/page/2.html")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("sf detail extracts the plaintext m3u8 from player_aaaa", async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (input) => {
+    captured = String(input);
+    return new Response(`<!doctype html><html><head></head><body>
+      <h1>姐姐的深夜一课</h1>
+      <script>var player_aaaa={"flag":"play","encrypt":0,"url":"https:\\/\\/v2024.sysybf.com\\/20250218\\/zwDuyDnJ\\/index.m3u8","from":"sym3u8","server":"no","vod_data":{"vod_name":"姐姐的深夜一课","vod_class":"国产情色","vod_actor":"小鱼"}};</script>
+      <a href="/index.php/vod/play/id/34313/sid/1/nid/1.html"><img class="lozad" data-src="/upload/vod/20250218/ef34ab.jpg" alt="邻家女孩 02"></a>
+    </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const requestUrl = new URL("https://app.example/provider-api/sf?action=detail&id=34312");
+    const response = await handleProviderRequest(requestUrl);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.vod_id, "34312");
+    assert.equal(body.vod_name, "姐姐的深夜一课");
+    assert.equal(body.vod_play_url, "https://v2024.sysybf.com/20250218/zwDuyDnJ/index.m3u8");
+    assert.equal(body.streams.length, 1);
+    assert.equal(body.streams[0].url, "https://v2024.sysybf.com/20250218/zwDuyDnJ/index.m3u8");
+    assert.equal(body.vod_label, "国产情色");
+    assert.equal(body.vod_actor, "小鱼");
+    assert.equal(body.related.length, 1);
+    assert.equal(body.related[0].vod_id, "34313");
+    assert.ok(captured.includes("/index.php/vod/play/id/34312/sid/1/nid/1.html"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/server/index.js", import.meta.url));
