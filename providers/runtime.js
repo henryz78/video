@@ -2699,7 +2699,7 @@ async function kan98Page(pathname, init = {}) {
       if (safeId) {
         let retry = await fetch(url, {
           ...init,
-          headers: { ...KAN98_HEADERS, ...(init.headers || {}), cookie: `_safe=${safeId}` },
+          headers: { ...KAN98_HEADERS, ...(init.headers || {}), cookie: [init.headers?.cookie, `_safe=${safeId}`].filter(Boolean).join("; ") },
           redirect: "manual",
           signal: init.signal || AbortSignal.timeout(20_000),
         });
@@ -2710,21 +2710,21 @@ async function kan98Page(pathname, init = {}) {
               ...init,
               method: "GET",
               body: undefined,
-              headers: { ...KAN98_HEADERS, cookie: `_safe=${safeId}` },
+              headers: { ...KAN98_HEADERS, cookie: [init.headers?.cookie, `_safe=${safeId}`].filter(Boolean).join("; ") },
               signal: init.signal || AbortSignal.timeout(20_000),
             });
           }
         }
         text = await retry.text();
         if (retry.ok && !/(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
-          return { text, url: retry.url || url.href };
+          return { text, url: retry.url || url.href, cookie: retry.headers.get("set-cookie") || init.headers?.cookie || "" };
         }
       }
       if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
         lastError = new Error(`kan98 upstream ${response.status || 502} (${origin})`);
         continue;
       }
-      return { text, url: response.url || url.href };
+      return { text, url: response.url || url.href, cookie: response.headers.get("set-cookie") || init.headers?.cookie || "" };
     } catch (error) {
       lastError = error;
     }
@@ -2836,7 +2836,7 @@ async function kan98SearchPage(keyword, page) {
   const params = new URLSearchParams({ mod: "forum", searchid: searchId, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
   if (searchMd5) params.set("searchmd5", searchMd5);
   const url = `/search.php?${params}`;
-  return (await kan98Page(url)).text;
+  return (await kan98Page(url, result.cookie ? { headers: { cookie: result.cookie } } : {})).text;
 }
 
 async function kan98List(requestUrl) {
