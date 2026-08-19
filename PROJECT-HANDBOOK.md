@@ -30,7 +30,7 @@
 | 下一项 | **2026-08-19 `sf` / 私房TV 已接入并通过本地 headless 验收（真实上游 sifangtv.cc 独立官方站：首页 259 卡、13 分类/分页、搜索、详情播放页解析、1080p 明文 HLS 直连播放推进、零 JS 错误；参考站 sf.cfnav.me 为 SFE 库登录墙、上游主站 502 不可达，按用户指示 jm 模式接入替代上游，见 48 行与文末记录）**。2026-08-18 `hxc` 已接入并通过参考站 console 核对 + 本地 headless 验收（Fi11 上游 a64d.vd9h4.com：首页 24 卡与参考站逐字一致、详情/分类/搜索/翻页、全量线路 1280×720 播放推进、无片源条目与参考站同样不可播，见 65 行与文末记录）。2026-08-16 第二轮浏览器对比验收已完成：双端同内容且播放推进通过 9 站（hj/mr/tx/rou/lg/pmv/fj/ep/tna/movie）；本地可用待参考 5 站（qiying/madou/ai/jm/91）；`tv` 阻塞已复现并修复（CDN 根路径分片重写 + HLS 判断无后缀代理 URL，MyCamTV MILF readyState=4 播放推进，见文末记录）；`miss` 为上游 CF 全站挑战阻塞（本地 Node 无解，参考站 FastAPI 服务器代抓路线已查明，轮换域名全部实测 403，待海外出口）。第一轮 `pmv` 空列表已查明为验收误判（health check 并发抢占连接，已加 1.5s 超时优化）。已接入并本地 headless 验收过的站点：`qiying`、`madou`、`tx`、`rou`、`mr`、`jm`、`91`、`ai`、`lg`、`pmv`、`fj`、`movie`、`ep`、`tna`、`tv`(adulttv 39 路主题流已验，41 路 oxax 品牌流 2026-08-17 定案部署端不可用：数据中心 IP 404 + 签名绑定解析者 IP，仅本地/开发可播)、`9s`、`jav`、`kankan`、`dsd`、`hxc`、`sf`；`qms`、`hqw`、`mt`、`best`、`xf`、`sjs`、`book`、`one` 用户决定跳过（风控/登录墙/私有票据/CF 全站保护/磁力下载站/上游不明/目录锁在登录墙后）；`miss` 2026-08-16 起因上游 CF 挑战阻塞（调查中）；`dsd` 2026-08-18 已接入（真实上游懂色帝 dsd900.com，MacCMS + jsfuck 签名播放链破解，VIP 视频同源可播，见 80 行与文末记录）；`dj` 2026-08-18 调查定案用户决定跳过（黄豆短剧付费制，见 203 行）；`bj` 2026-08-18 侦查定案用户决定跳过（真实上游 skbj.tv 目录/详情/搜索全匿名可用但 storageUrl 仅登录态返回、VIP 全锁、参考播放走黄豆短剧 psfxhhox.top 不可复用，见 90 行与 SOURCE-RESEARCH.md「韩国主播 / bj 侦查记录」）；`swag` 2026-08-18 调查定案用户决定跳过（浏览层匿名可用但 AES key 端点 403 播放锁死 + 参考播放走私有 `/media?ticket=`，见 69 行与文末记录）；`kankan` 2026-08-18 已接入（真实上游 avjb.com，裸 CDN 分片匿名直连播放零代理，见 74 行与文末记录）；ASMR 按用户决定暂时跳过；`mm` / 墨影集 内容已由用户独立图库站「栖光集」完成（同批数据），聚合入口待接入、未来做外链跳转（链接未就绪）。`hj` 完整正片已实现（2026-08-16，Richy 线索验证有效并落地：preview ts 分片名 LCP 反推完整 m3u8，匿名可拉、无需金币） |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 已有部署 `video-4nn.pages.dev`；98 研究 adapter 已在 Pages 边缘通过，根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
-| 测试 | `npm run test:sites` 9 项；`npm run test:cloudflare` 4 项，当前均通过 |
+| 测试 | `npm run test:sites` 18 项；`npm run test:cloudflare` 4 项，当前均通过 |
 | 主导航视觉 | 2026-08-17 已按当前在线 `cfnav.me` 的 40-node 版本再次逐模块对齐：新增 `sf` / `98` 卡片与当前顺序/颜色/点击文案，ACTIVE NODES 40 / GAME 0，完整筛选、线路徽标、账户区、排行榜、佬友优选、绿色通道、双主题与卡片 hover。排行榜/优选没有独立真实数据时只显示明确空态，不写假用户、假标题或假热度；未接入卡继续显示 PENDING。 |
 
 ### 状态术语
@@ -384,5 +384,5 @@ npm.cmd run test:cloudflare
 ### 2026-08-19 全 40 入口页面层复核
 
 - 使用真实浏览器对主导航 40 个 `/site/{slug}` 逐一打开并等待实时目录：25 个已接入入口返回目录卡片，14 个用户决定跳过/待接入入口正确显示 `SOURCE PENDING`，`91` 单独发现上游图片 CDN 更换导致 `total=48` 但解析列表为空。
-- `91porna.com` 当前卡片图片从 `pic.xmbvxj.cn` 轮换为 `pic.yrfmba.cn`；本地已在 `providers/runtime.js` 同时修正卡片正则与 AES 图片代理白名单，提交 `889304f`，待 GitHub 网络恢复后推送 Pages，再复核 91 详情/播放。
+- `91porna.com` 当前卡片图片从 `pic.xmbvxj.cn` 轮换为 `pic.yrfmba.cn`；`providers/runtime.js` 已同时修正卡片正则与 AES 图片代理白名单，提交 `889304f` 已推送并部署。Pages 复核已恢复 23 条卡片、详情 m3u8 200；真实浏览器点播受控制接口超时影响未重复计为失败，Node/媒体链路正常。
 - 页面层抽样目录数：sf 260、98 24、ai 24、hj 20、mr 26、qiying 16、tx 12、lg 24、hxc 24、rou 153、fj 24、kankan 24、pmv 24、jm 48、9s 41、miss 12、dsd 115、movie 20、jav 24、xo 16、ep 24、madou 20、tna 24、tv 24。卡片封面未滚动时的未加载图不视为破图；已接入站点的播放证据继续以本节及既有 headless/真实浏览器记录为准。
