@@ -2852,6 +2852,10 @@ async function kan98SearchPage(keyword, page) {
     const md5Only = new URLSearchParams({ mod: "forum", searchmd5: searchMd5, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
     candidates.push(`/search.php?${md5Only}`);
   }
+  const directQuery = new URLSearchParams({ mod: "forum", srchtxt: keyword, srchtype: "title", searchsubmit: "yes", page: String(page) });
+  candidates.push(`/search.php?${directQuery}`);
+  const keywordQuery = new URLSearchParams({ mod: "forum", kw: keyword, searchsubmit: "yes", page: String(page) });
+  candidates.push(`/search.php?${keywordQuery}`);
   const postBody = new URLSearchParams(body);
   postBody.set("page", String(page));
   let first = "";
