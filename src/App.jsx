@@ -456,6 +456,9 @@ function SitePage({ site, go, health, setHealth }) {
   const DSD_TABS = [
     ["", "独家精选"], ["cat", "分类"], ["2", "中文字幕"], ["4", "无码破解"],
   ];
+  const JAV_TABS = [
+    ["home", "推荐"], ["latest", "最新"], ["popular", "热门"], ["top", "高分"],
+  ];
   const HXC_TABS = [
     ["", "推荐"], ["4", "国产"], ["11", "主播"], ["17", "日韩"], ["23", "欧美"], ["29", "动漫"],
   ];
@@ -482,7 +485,7 @@ function SitePage({ site, go, health, setHealth }) {
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [page, setPage] = useState(1);
-  const [category, setCategory] = useState(provider?.id === "madou" || provider?.id === "js9" || provider?.id === "sf" ? "" : provider?.preset || "");
+  const [category, setCategory] = useState(provider?.id === "jav" ? "home" : provider?.id === "madou" || provider?.id === "js9" || provider?.id === "sf" ? "" : provider?.preset || "");
   const [order, setOrder] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -577,9 +580,10 @@ function SitePage({ site, go, health, setHealth }) {
     {provider?.id === "js9" && <div className="qiying-tabs">{JS9_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "avjb" && <div className="qiying-tabs">{KANKAN_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}<button className={category === "cat" ? "is-active" : ""} onClick={() => { setCategory("cat"); }}>分类</button></div>}
     {provider?.id === "dsd" && <div className="qiying-tabs">{DSD_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}<button className={category === "cat" ? "is-active" : ""} onClick={() => { setCategory("cat"); }}>分类</button></div>}
+    {provider?.id === "jav" && <div className="qiying-tabs">{JAV_TABS.map(([key, label]) => <button key={key} className={key === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "hxc" && <div className="qiying-tabs">{HXC_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
     {provider?.id === "sf" && <div className="qiying-tabs">{SF_TABS.map(([key, label]) => <button key={key} className={(key || "home") === (category || "home") ? "is-active" : ""} onClick={() => { setCategory(key); }}>{label}</button>)}</div>}
-    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : provider?.id === "js9" ? (category ? "CATEGORY BROWSE" : "HOME FEED") : provider?.id === "sf" ? (category ? "CATEGORY BROWSE" : "HOME FEED") : provider?.id === "avjb" ? (category === "cat" ? "CATEGORY INDEX" : category.startsWith("cat:") ? "CATEGORY BROWSE" : category === "albums" ? "ALBUM GALLERY" : category === "premium" ? "VIP PREMIUM" : category === "new" ? "LATEST UPDATE" : "FEATURED") : provider?.id === "dsd" ? (category === "cat" ? "CATEGORY INDEX" : category.startsWith("cat:") ? "CATEGORY BROWSE" : category ? "CATEGORY BROWSE" : "LATEST UPDATE") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : provider?.id === "js9" ? (category ? (JS9_TABS.find(([k]) => k === category)?.[1] || category) : "首页") : provider?.id === "sf" ? (category ? (SF_TABS.find(([k]) => k === category)?.[1] || category) : "首页") : provider?.id === "avjb" ? (category === "cat" ? "全部分类" : category.startsWith("cat:") ? category.slice(4) : (KANKAN_TABS.find(([k]) => k === category)?.[1] || "精选")) : provider?.id === "dsd" ? (category === "cat" ? "全部分类" : category.startsWith("cat:") ? (DSD_TABS.find(([k]) => k === category.slice(4))?.[1] || category.slice(4)) : (DSD_TABS.find(([k]) => k === category)?.[1] || "独家精选")) : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : provider?.id === "hxc" ? (HXC_TABS.find(([k]) => k === category)?.[1] || "推荐") : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
+    <section className="content-section"><div className="content-heading"><div><small>{submitted ? "SEARCH RESULT" : provider?.id === "rou" ? (category === "cat" ? "CATEGORY INDEX" : category === "tag" ? "TAG INDEX" : category.startsWith("tag:") ? "TAG WORKS" : "LATEST UPDATE") : category === "artists" ? "ARTIST INDEX" : category.startsWith("artist:") ? "ARTIST WORKS" : category === "videos" ? "ALL WORKS" : provider?.id === "js9" ? (category ? "CATEGORY BROWSE" : "HOME FEED") : provider?.id === "sf" ? (category ? "CATEGORY BROWSE" : "HOME FEED") : provider?.id === "jav" ? "JAV BROWSE" : provider?.id === "avjb" ? (category === "cat" ? "CATEGORY INDEX" : category.startsWith("cat:") ? "CATEGORY BROWSE" : category === "albums" ? "ALBUM GALLERY" : category === "premium" ? "VIP PREMIUM" : category === "new" ? "LATEST UPDATE" : "FEATURED") : provider?.id === "dsd" ? (category === "cat" ? "CATEGORY INDEX" : category.startsWith("cat:") ? "CATEGORY BROWSE" : category ? "CATEGORY BROWSE" : "LATEST UPDATE") : "LATEST UPDATE"}</small><h2>{submitted ? `“${submitted}”` : provider?.id === "rou" ? (category === "cat" ? "分类" : category === "tag" ? "标签" : category.startsWith("tag:") ? category.slice("tag:".length) : "首页") : category === "artists" ? "全部博主" : category.startsWith("artist:") ? category.slice("artist:".length) : category === "videos" ? "全部作品" : provider?.id === "js9" ? (category ? (JS9_TABS.find(([k]) => k === category)?.[1] || category) : "首页") : provider?.id === "sf" ? (category ? (SF_TABS.find(([k]) => k === category)?.[1] || category) : "首页") : provider?.id === "jav" ? (JAV_TABS.find(([k]) => k === category)?.[1] || "推荐") : provider?.id === "avjb" ? (category === "cat" ? "全部分类" : category.startsWith("cat:") ? category.slice(4) : (KANKAN_TABS.find(([k]) => k === category)?.[1] || "精选")) : provider?.id === "dsd" ? (category === "cat" ? "全部分类" : category.startsWith("cat:") ? (DSD_TABS.find(([k]) => k === category.slice(4))?.[1] || category.slice(4)) : (DSD_TABS.find(([k]) => k === category)?.[1] || "独家精选")) : category ? (provider?.id === "madou" ? (MADOU_TABS.find(([k]) => k === category)?.[1] || category) : provider?.id === "hxc" ? (HXC_TABS.find(([k]) => k === category)?.[1] || "推荐") : "LATEST UPDATE") : site.mode === "live" ? "直播频道" : site.mode === "comic" ? "最新图册" : site.mode === "audio" ? "最新音声" : "最新内容"}</h2></div><span>{category === "artists" ? `${items.length} 位` : `PAGE ${page}`}</span></div>
       {loading && <div className="loading-grid">{Array.from({ length: 12 }, (_, i) => <i key={i}></i>)}</div>}
       {error && <div className="error-state"><h3>来源连接失败</h3><p>{error}</p><button onClick={() => setPage((x) => x)}>重新检查</button></div>}
       {!loading && !error && provider?.id === "tx" && category === "artists" && <div className="tx-artist-grid">{items.map((artist) => <button className="tx-artist-card" key={artist.vod_id} onClick={() => setCategory(artist.vod_id)}><div className="tx-artist-avatar">{artist.vod_pic ? <img src={artist.vod_pic} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>AVATAR</span>}</div><strong>{artist.vod_name}</strong>{artist.vod_remarks && <small>{artist.vod_remarks}</small>}{artist.vod_blurb && <p>{artist.vod_blurb}</p>}</button>)}</div>}
@@ -620,11 +624,13 @@ function parseStreams(item) {
 function DetailModal({ item, mode, provider, onClose }) {
   const streams = parseStreams(item);
   const [active, setActive] = useState(streams[0]);
+  const [embedFallback, setEmbedFallback] = useState(false);
   const isAudio = mode === "audio";
   const mediaRef = useRef(null);
   useEffect(() => {
     setActive(streams[0]);
-  }, [item.vod_play_url]);
+    setEmbedFallback(false);
+  }, [item.vod_play_url, item.fallback_embed_url]);
   useEffect(() => {
     const media = mediaRef.current;
     if (!media || !active) return;
@@ -639,12 +645,17 @@ function DetailModal({ item, mode, provider, onClose }) {
       const hls = new Hls({ enableWorker: true });
       hls.loadSource(active.url); hls.attachMedia(media);
       hls.on(Hls.Events.MANIFEST_PARSED, () => media.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) console.error("hls fatal:", data.type, data.details); });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        console.error("hls fatal:", data.type, data.details);
+        if (provider?.id === "dsd" && item.fallback_embed_url) setEmbedFallback(true);
+      });
       return () => hls.destroy();
     }
-  }, [active, mode, item.detail_loading]);
+  }, [active, mode, item.detail_loading, item.fallback_embed_url, provider?.id]);
+  const useEmbedFallback = provider?.id === "dsd" && embedFallback && item.fallback_embed_url;
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><article className="detail-modal"><button className="modal-close" onClick={onClose}>关闭</button>
-    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline poster={item.vod_pic} referrerPolicy="no-referrer" />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
+    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : useEmbedFallback ? <iframe src={item.fallback_embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline poster={item.vod_pic} referrerPolicy="no-referrer" />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
     <div className="detail-copy"><small>{item.type_name || "CONTENT DETAIL"}</small><h2>{item.vod_name}</h2><p>{item.vod_blurb || item.vod_content?.replace(/<[^>]+>/g, "") || "暂无简介"}</p>{streams.length > 0 && <div className="stream-list">{streams.slice(0, 24).map((stream, i) => <button className={active?.url === stream.url ? "active" : ""} key={`${stream.url}-${i}`} onClick={() => setActive(stream)}>{stream.label}</button>)}</div>}<dl><div><dt>年份</dt><dd>{item.vod_year || "—"}</dd></div><div><dt>地区</dt><dd>{item.vod_area || "—"}</dd></div><div><dt>来源</dt><dd>{provider.name}</dd></div></dl></div>
   </article></div>;
 }

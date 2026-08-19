@@ -2807,7 +2807,9 @@ function kan98SearchCards(html) {
 }
 
 function kan98PageCount(html) {
-  return Number(html.match(/共\s*([\d,]+)\s*页/i)?.[1]?.replace(/,/g, "") || 1);
+  const explicit = Number(html.match(/共\s*([\d,]+)\s*页/i)?.[1]?.replace(/,/g, "") || 0);
+  const linked = [...html.matchAll(/(?:[?&]page=|\/page\/)(\d+)/gi)].map((m) => Number(m[1])).filter(Number.isFinite);
+  return Math.max(1, explicit, ...linked);
 }
 
 async function kan98SearchPage(keyword, page) {
@@ -2824,8 +2826,16 @@ async function kan98SearchPage(keyword, page) {
     body,
   });
   if (page <= 1) return result.text;
-  const searchId = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "0";
-  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(searchId)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
+  const findSearchToken = (name) => {
+    const field = result.text.match(new RegExp(`(?:name|id)=["']${name}["'][^>]*value=["']([^"']+)`, "i"))?.[1];
+    if (field) return field;
+    return result.text.match(new RegExp(`[?&]${name}=([^&"']+)`, "i"))?.[1] || "";
+  };
+  const searchId = findSearchToken("searchid") || "0";
+  const searchMd5 = findSearchToken("searchmd5") || result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "";
+  const params = new URLSearchParams({ mod: "forum", searchid: searchId, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
+  if (searchMd5) params.set("searchmd5", searchMd5);
+  const url = `/search.php?${params}`;
   return (await kan98Page(url)).text;
 }
 
@@ -3608,6 +3618,39 @@ function javParseCards(jsonText) {
   return cards;
 }
 
+function javParseHtmlCards(html) {
+  const cards = [];
+  const seen = new Set();
+  const anchors = [...html.matchAll(/<a\b[^>]*class=["'][^"']*thumb__link[^"']*["'][^>]*>/gi)];
+  for (let i = 0; i < anchors.length; i += 1) {
+    const tag = anchors[i][0];
+    const block = html.slice(anchors[i].index, anchors[i + 1]?.index || html.length);
+    const href = tag.match(/href=["']([^"']+)["']/i)?.[1] || "";
+    const id = tag.match(/(?:data-(?:rstat|stat)-id|\/zh\/id\/)(\d+)/i)?.[1] || href.match(/\/zh\/id\/(\d+)/i)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const title = decodeHtml(tag.match(/title=["']([^"']*)["']/i)?.[1] || `JAV ${id}`);
+    const style = tag.match(/--backgroundThumb:\s*url\(([^)]+)\)/i)?.[1] || "";
+    const time = block.match(/thumb__label--time[^>]*>([^<]*)</i)?.[1]?.trim() || "";
+    const premium = /thumb__label-icon--premium/i.test(block);
+    cards.push({
+      vod_id: id,
+      vod_player_id: id,
+      vod_name: title,
+      vod_pic: javAsset(style),
+      vod_remarks: time || (premium ? "premium" : "VIDEO"),
+      vod_label: premium ? "premium" : "",
+      vod_url: javAsset(href),
+      vod_area: "javhd.com",
+      type_name: premium ? "premium" : "免费",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "jav",
+    });
+  }
+  return cards;
+}
+
 function javPageCount(jsonText, page) {
   let payload;
   try {
@@ -3640,12 +3683,26 @@ async function javFetch(path, detail = false) {
 async function javList(requestUrl) {
   const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
   const keyword = (requestUrl.searchParams.get("wd") || "").trim();
-  const path = keyword
-    ? `/zh/search?q=${encodeURIComponent(keyword)}${page > 1 ? `&page=${page}` : ""}`
-    : page > 1 ? `/zh/japanese-porn-videos/justadded/all/${page}` : "/zh/japanese-porn-videos";
-  const text = await javFetch(path);
-  const list = javParseCards(text);
-  const pages = javPageCount(text, page);
+  const preset = (requestUrl.searchParams.get("preset") || "home").trim();
+  let text;
+  let list;
+  let pages;
+  if (keyword) {
+    text = await javFetch(`/zh/search?q=${encodeURIComponent(keyword)}${page > 1 ? `&page=${page}` : ""}`);
+    list = javParseCards(text);
+    pages = javPageCount(text, page);
+  } else if (preset === "home" && page === 1) {
+    text = await javFetch("/zh/", true);
+    list = javParseHtmlCards(text);
+    pages = 1;
+  } else {
+    const path = preset === "popular" ? "/zh/japanese-porn-videos/popular"
+      : preset === "top" ? "/zh/japanese-porn-videos/top?content=jav"
+        : page > 1 ? `/zh/japanese-porn-videos/justadded/all/${page}` : "/zh/japanese-porn-videos";
+    text = await javFetch(path);
+    list = javParseCards(text);
+    pages = javPageCount(text, page);
+  }
   return json({ list, page, pages, total: list.length, provider: "jav" }, {
     headers: { "cache-control": keyword ? "public, max-age=60" : "public, max-age=180" },
   });
@@ -4014,7 +4071,7 @@ async function dsdList(requestUrl) {
     html = await dsdPage(`/index.php/vod/type/id/${cid}${page > 1 ? `/page/${page}` : ""}.html`);
     pages = Math.max(page, ...[...html.matchAll(/type\/id\/\d+\/page\/(\d+)\.html/g)].map((m) => Number(m[1])));
   } else {
-    html = await dsdPage("/index.php/vod/type/id/1.html");
+    html = await dsdPage(page === 1 ? "/" : `/index.php/vod/type/id/1/page/${page}.html`);
     pages = Math.max(page, ...[...html.matchAll(/type\/id\/1\/page\/(\d+)\.html/g)].map((m) => Number(m[1])));
   }
   const list = dsdParseCards(html);
@@ -4082,6 +4139,7 @@ async function dsdDetail(requestUrl) {
   };
   if (rawUrl && /\.m3u8/i.test(rawUrl)) {
     card.vod_play_url = dsdMediaUrl(rawUrl, "hls");
+    card.fallback_embed_url = `${DSD_ORIGIN}/addons/vplayer/?url=${encodeURIComponent(rawUrl)}&jump=`;
     card.play_notice = "完整片 · AES-128 HLS（jsfuck 签名 + 同源代理）";
   } else {
     card.play_notice = "此条目无公开播放地址";
