@@ -784,7 +784,7 @@ function kan91ImageProxy(source) {
 function parseKan91Cards(html) {
   const cards = [];
   const seen = new Set();
-  const pattern = /video_key=(\d+)[^"]*"[\s\S]{0,600}?data-src="(https:\/\/pic\.xmbvxj\.cn\/[^"]+)"[\s\S]{0,600}?alt="([^"]*)"/g;
+  const pattern = /video_key=(\d+)[^"]*"[\s\S]{0,600}?data-src="(https:\/\/pic\.(?:xmbvxj|yrfmba)\.cn\/[^"]+)"[\s\S]{0,600}?alt="([^"]*)"/g;
   for (const match of html.matchAll(pattern)) {
     const id = match[1];
     if (seen.has(id)) continue;
@@ -918,7 +918,7 @@ async function kan91Image(requestUrl) {
   } catch {
     return json({ message: "invalid image source" }, { status: 400 });
   }
-  if (source.hostname !== "pic.xmbvxj.cn" || !["https:", "http:"].includes(source.protocol)) {
+  if (!/^pic\.(?:xmbvxj|yrfmba)\.cn$/i.test(source.hostname) || !["https:", "http:"].includes(source.protocol)) {
     return json({ message: "invalid image source" }, { status: 400 });
   }
   const response = await fetch(source, { headers: { ...KAN91_HEADERS, accept: "image/*" } });
