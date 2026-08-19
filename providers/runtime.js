@@ -2721,7 +2721,7 @@ async function kan98Page(pathname, init = {}) {
         }
         text = await retry.text();
         if (retry.ok && !/(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
-          return { text, url: retry.url || url.href, cookie: [init.headers?.cookie, safeId ? `_safe=${safeId}` : kan98CookieHeader(retry.headers.get("set-cookie"))].filter(Boolean).join("; ") };
+          return { text, url: retry.url || url.href, cookie: [init.headers?.cookie, kan98CookieHeader(retry.headers.get("set-cookie")), safeId ? `_safe=${safeId}` : ""].filter(Boolean).join("; ") };
         }
       }
       if (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated|var\s+safeid\s*=)/i.test(text.slice(0, 5000))) {
