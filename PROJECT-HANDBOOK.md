@@ -380,3 +380,9 @@ npm.cmd run test:cloudflare
 - 线上已确认：`sf` 列表/搜索/详情/明文 HLS 播放，`hxc` 24 卡与 1280×720 全量 HLS 播放，`dsd` 首页改为参考上游根页精选排序并通过官方 `vplayer` iframe 回退播放（Cloudflare Workers 禁止运行时 jsfuck/eval；iframe 视频 readyState=4 且 currentTime 推进），`jav` 推荐接口改为官方 `/zh/api/content_block` 24 条，`kankan`、`9s`、`xo`、`ph` 列表/搜索/详情/播放均已在部署端采样推进。
 - `xo` 搜索「制服」首条在真实浏览器中已复核：readyState=4、currentTime 推进、duration 5446.12s、722×406；`ph` relay 首条也 readyState=4 且推进。JAV 目录/搜索/分页/详情已对齐，签名 MP4 已加 Pages Range 同源代理并验证 206；当前 IAB/Chrome 对该超大 MP4 仍停在 readyState=0，Node Range 与此前 GPU headless 可播放，故不把真实浏览器播放标成全绿，继续保留待确认。
 - 98 上游 Chrome 实测搜索第 2 页真实可用（公开链接带 `searchid=0&searchmd5&kw&page=2`）；Pages 第 1 页/列表/详情/动态 HLS 全通，但 Functions 的年龄 `_safe` 与搜索会话在 POST→GET 间仍被 dmn12 边缘挡回（第 2 页返回 0 条）。已多次修正 Cookie/令牌解析而不写入用户会话；当前如实记录为“搜索翻页待上游边缘会话方案”，不伪造结果。
+
+### 2026-08-19 全 40 入口页面层复核
+
+- 使用真实浏览器对主导航 40 个 `/site/{slug}` 逐一打开并等待实时目录：25 个已接入入口返回目录卡片，14 个用户决定跳过/待接入入口正确显示 `SOURCE PENDING`，`91` 单独发现上游图片 CDN 更换导致 `total=48` 但解析列表为空。
+- `91porna.com` 当前卡片图片从 `pic.xmbvxj.cn` 轮换为 `pic.yrfmba.cn`；本地已在 `providers/runtime.js` 同时修正卡片正则与 AES 图片代理白名单，提交 `889304f`，待 GitHub 网络恢复后推送 Pages，再复核 91 详情/播放。
+- 页面层抽样目录数：sf 260、98 24、ai 24、hj 20、mr 26、qiying 16、tx 12、lg 24、hxc 24、rou 153、fj 24、kankan 24、pmv 24、jm 48、9s 41、miss 12、dsd 115、movie 20、jav 24、xo 16、ep 24、madou 20、tna 24、tv 24。卡片封面未滚动时的未加载图不视为破图；已接入站点的播放证据继续以本节及既有 headless/真实浏览器记录为准。
