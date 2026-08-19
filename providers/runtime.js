@@ -4343,7 +4343,7 @@ function hxcImgUrl(path) {
 function hxcParseSeconds(value) {
   if (!value && value !== 0) return null;
   if (typeof value === "number") return value;
-  const match = String(value).match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  let match = String(value).match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
   if (match) return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
   match = String(value).match(/^(\d{1,2}):(\d{2})$/);
   if (match) return Number(match[1]) * 60 + Number(match[2]);
