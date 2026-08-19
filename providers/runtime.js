@@ -2848,6 +2848,9 @@ async function kan98SearchPage(keyword, page) {
   const params = new URLSearchParams({ mod: "forum", searchid: searchId, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
   if (searchMd5) params.set("searchmd5", searchMd5);
   candidates.push(`/search.php?${params}`);
+  const legacyToken = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || searchMd5 || "0";
+  const legacyParams = new URLSearchParams({ mod: "forum", searchid: "0", searchmd5: legacyToken, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
+  candidates.push(`/search.php?${legacyParams}`);
   if (searchMd5) {
     const md5Only = new URLSearchParams({ mod: "forum", searchmd5: searchMd5, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
     candidates.push(`/search.php?${md5Only}`);
