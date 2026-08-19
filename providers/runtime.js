@@ -3575,6 +3575,29 @@ function javAsset(value = "") {
   return `${JAV_ORIGIN}${cleaned.startsWith("/") ? "" : "/"}${cleaned}`;
 }
 
+function javCardFromObject(item = {}) {
+  const id = String(item.id || "");
+  if (!/^\d+$/.test(id)) return null;
+  const free = item.isFreeCreatorVideo === true || item.isFreeCreatorVideo === 1;
+  const label = free ? "premiumFree" : "premium";
+  return {
+    vod_id: id,
+    vod_player_id: id,
+    vod_name: decodeHtml(item.title || `JAV ${id}`),
+    vod_pic: javAsset(item.thumbs?.["728x413"] || item.thumbs?.["468x264"] || item.thumbs?.["374x233"] || ""),
+    vod_remarks: item.length || label,
+    vod_blurb: [item.clicks && `${item.clicks} 次观看`, item.rating?.good_per != null && `${item.rating.good_per}%`].filter(Boolean).join(" · "),
+    vod_label: label,
+    vod_preview: javAsset(item.video || ""),
+    vod_url: javAsset(item.studioUrl || `/zh/id/${id}`),
+    vod_area: "javhd.com",
+    type_name: free ? "免费" : "premium",
+    media_kind: "video",
+    needs_detail: true,
+    provider: "jav",
+  };
+}
+
 function javParseCards(jsonText) {
   const cards = [];
   let payload;
@@ -3583,6 +3606,7 @@ function javParseCards(jsonText) {
   } catch {
     return cards;
   }
+  if (Array.isArray(payload.template)) return payload.template.map(javCardFromObject).filter(Boolean);
   if (payload.status !== 1 || typeof payload.template !== "string") return cards;
   const count = payload.results_count;
   const seen = new Set();
@@ -3664,12 +3688,16 @@ function javPageCount(jsonText, page) {
   return page;
 }
 
-async function javFetch(path, detail = false) {
+async function javFetch(path, detail = false, init = {}) {
   const upstream = new URL(path, JAV_ORIGIN);
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetch(upstream, { headers: detail ? JAV_DETAIL_HEADERS : JAV_HEADERS, signal: AbortSignal.timeout(20_000) });
+      const response = await fetch(upstream, {
+        ...init,
+        headers: { ...(detail ? JAV_DETAIL_HEADERS : JAV_HEADERS), ...(init.headers || {}) },
+        signal: init.signal || AbortSignal.timeout(20_000),
+      });
       if (!response.ok) throw new Error(`javhd ${response.status}`);
       return await response.text();
     } catch (error) {
@@ -3692,8 +3720,11 @@ async function javList(requestUrl) {
     list = javParseCards(text);
     pages = javPageCount(text, page);
   } else if (preset === "home" && page === 1) {
-    text = await javFetch("/zh/", true);
-    list = javParseHtmlCards(text);
+    text = await javFetch("/zh/api/content_block?block=custom&pgid=532619287&isCasting=1&count=21&offset=0&castingPosition=8", false, {
+      method: "POST",
+      headers: { "X-Requested-With": "XMLHttpRequest", accept: "application/json, text/plain, */*" },
+    });
+    list = javParseCards(text);
     pages = 1;
   } else {
     const path = preset === "popular" ? "/zh/japanese-porn-videos/popular"
