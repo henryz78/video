@@ -2692,7 +2692,7 @@ async function kan98Page(pathname, init = {}) {
       // dmn12/sehuatang 的公开年龄页由 safeid 生成 host-only `_safe` cookie。
       // 用户已明确允许进入年龄页；这里仅复现该公开流程，不读取用户浏览器 Cookie。
       let safeId = text.match(/var\s+safeid\s*=\s*["']([^"']+)["']/i)?.[1] || "";
-      if (!safeId && init.method && init.method !== "GET" && (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated)/i.test(text.slice(0, 5000)))) {
+      if (!safeId && (!response.ok || /(?:just a moment|enable javascript and cookies to continue|cf-mitigated)/i.test(text.slice(0, 5000)))) {
         const gate = await fetch(new URL("/", origin), {
           headers: KAN98_HEADERS,
           signal: init.signal || AbortSignal.timeout(20_000),
