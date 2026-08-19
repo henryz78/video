@@ -2825,50 +2825,10 @@ async function kan98SearchPage(keyword, page) {
     headers: { "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` },
     body,
   });
-  const findSearchToken = (name) => {
-    const field = result.text.match(new RegExp(`(?:name|id)=["']${name}["'][^>]*value=["']([^"']+)`, "i"))?.[1];
-    if (field) return field;
-    return result.text.match(new RegExp(`[?&]${name}=([^&"']+)`, "i"))?.[1] || "";
-  };
-  const searchId = findSearchToken("searchid") || "0";
-  const searchMd5 = findSearchToken("searchmd5") || result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "";
   if (page <= 1) return result.text;
-  const pageInit = result.cookie ? { headers: { cookie: result.cookie } } : {};
-  const candidates = [];
-  const pushCandidate = (value) => {
-    if (!value) return;
-    try {
-      const candidate = new URL(value, KAN98_ORIGIN);
-      candidate.searchParams.set("page", String(page));
-      const path = candidate.pathname + candidate.search;
-      if (!candidates.includes(path)) candidates.push(path);
-    } catch { /* ignore malformed upstream links */ }
-  };
-  for (const match of result.text.matchAll(/href=["']([^"']*search\.php[^"']*page=\d+[^"']*)["']/gi)) pushCandidate(match[1].replace(/&amp;/gi, "&"));
-  const params = new URLSearchParams({ mod: "forum", searchid: searchId, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
-  if (searchMd5) params.set("searchmd5", searchMd5);
-  candidates.push(`/search.php?${params}`);
-  const legacyToken = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || searchMd5 || "0";
-  const legacyParams = new URLSearchParams({ mod: "forum", searchid: "0", searchmd5: legacyToken, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
-  candidates.push(`/search.php?${legacyParams}`);
-  if (searchMd5) {
-    const md5Only = new URLSearchParams({ mod: "forum", searchmd5: searchMd5, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
-    candidates.push(`/search.php?${md5Only}`);
-  }
-  const directQuery = new URLSearchParams({ mod: "forum", srchtxt: keyword, srchtype: "title", searchsubmit: "yes", page: String(page) });
-  candidates.push(`/search.php?${directQuery}`);
-  const keywordQuery = new URLSearchParams({ mod: "forum", kw: keyword, searchsubmit: "yes", page: String(page) });
-  candidates.push(`/search.php?${keywordQuery}`);
-  const postBody = new URLSearchParams(body);
-  postBody.set("page", String(page));
-  let first = "";
-  for (const path of candidates) {
-    const response = await kan98Page(path, pageInit);
-    first ||= response.text;
-    if (kan98SearchCards(response.text).length) return response.text;
-  }
-  const repost = await kan98Page("/search.php?searchsubmit=yes", { ...pageInit, method: "POST", headers: { ...(pageInit.headers || {}), "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` }, body: postBody });
-  return kan98SearchCards(repost.text).length ? repost.text : first || repost.text;
+  const legacyToken = result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "0";
+  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(legacyToken)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
+  return (await kan98Page(url, result.cookie ? { headers: { cookie: result.cookie } } : {})).text;
 }
 
 async function kan98List(requestUrl) {
