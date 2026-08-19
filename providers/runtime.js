@@ -2825,7 +2825,6 @@ async function kan98SearchPage(keyword, page) {
     headers: { "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` },
     body,
   });
-  if (page <= 1) return result.text;
   const findSearchToken = (name) => {
     const field = result.text.match(new RegExp(`(?:name|id)=["']${name}["'][^>]*value=["']([^"']+)`, "i"))?.[1];
     if (field) return field;
@@ -2833,10 +2832,36 @@ async function kan98SearchPage(keyword, page) {
   };
   const searchId = findSearchToken("searchid") || "0";
   const searchMd5 = findSearchToken("searchmd5") || result.text.match(/search(?:id|md5)["'=]+([a-z0-9]+)/i)?.[1] || "";
+  if (page <= 1) return result.text;
+  const pageInit = result.cookie ? { headers: { cookie: result.cookie } } : {};
+  const candidates = [];
+  const pushCandidate = (value) => {
+    if (!value) return;
+    try {
+      const candidate = new URL(value, KAN98_ORIGIN);
+      candidate.searchParams.set("page", String(page));
+      const path = candidate.pathname + candidate.search;
+      if (!candidates.includes(path)) candidates.push(path);
+    } catch { /* ignore malformed upstream links */ }
+  };
+  for (const match of result.text.matchAll(/href=["']([^"']*search\.php[^"']*page=\d+[^"']*)["']/gi)) pushCandidate(match[1].replace(/&amp;/gi, "&"));
   const params = new URLSearchParams({ mod: "forum", searchid: searchId, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
   if (searchMd5) params.set("searchmd5", searchMd5);
-  const url = `/search.php?${params}`;
-  return (await kan98Page(url, result.cookie ? { headers: { cookie: result.cookie } } : {})).text;
+  candidates.push(`/search.php?${params}`);
+  if (searchMd5) {
+    const md5Only = new URLSearchParams({ mod: "forum", searchmd5: searchMd5, orderby: "lastpost", ascdesc: "desc", searchsubmit: "yes", kw: keyword, page: String(page) });
+    candidates.push(`/search.php?${md5Only}`);
+  }
+  const postBody = new URLSearchParams(body);
+  postBody.set("page", String(page));
+  let first = "";
+  for (const path of candidates) {
+    const response = await kan98Page(path, pageInit);
+    first ||= response.text;
+    if (kan98SearchCards(response.text).length) return response.text;
+  }
+  const repost = await kan98Page("/search.php?searchsubmit=yes", { ...pageInit, method: "POST", headers: { ...(pageInit.headers || {}), "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` }, body: postBody });
+  return kan98SearchCards(repost.text).length ? repost.text : first || repost.text;
 }
 
 async function kan98List(requestUrl) {
@@ -2849,7 +2874,7 @@ async function kan98List(requestUrl) {
     ? await kan98SearchPage(keyword, page)
     : (await kan98Page(`/forum-${categoryId}-${page}.html`)).text;
   const list = keyword ? kan98SearchCards(html) : kan98Cards(html, categoryId);
-  return json({
+  const response = {
     code: 1,
     page,
     pagecount: kan98PageCount(html),
@@ -2857,7 +2882,8 @@ async function kan98List(requestUrl) {
     total: list.length,
     list: list.slice(0, limit),
     provider: "kan98",
-  }, { headers: { "cache-control": "no-store" } });
+  };
+  return json(response, { headers: { "cache-control": "no-store" } });
 }
 
 async function kan98Image(requestUrl) {
