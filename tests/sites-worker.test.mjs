@@ -256,6 +256,115 @@ test("sf detail extracts the plaintext m3u8 from player_aaaa", async () => {
   }
 });
 
+test("kan98 search page 2 reuses the real searchid from the POST redirect", async () => {
+  const originalFetch = globalThis.fetch;
+  const hits = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    hits.push(url);
+    if (url.includes("search.php?searchsubmit=yes")) {
+      const finalUrl = "https://dmn12.vip/search.php?mod=forum&searchid=12345&searchmd5=e0b53f3a1b2c&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=abc";
+      return new Response(`<!doctype html><html><body>
+        <a href="search.php?mod=forum&searchid=12345&searchmd5=e0b53f3a1b2c&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=abc&page=2">2</a>
+        <a href="forum.php?mod=viewthread&amp;tid=10000" title="搜索标题零">搜索标题零</a>
+      </body></html>`, { status: 200, url: finalUrl, headers: { "content-type": "text/html" } });
+    }
+    return new Response(`<!doctype html><html><body>
+      <a href="forum.php?mod=viewthread&amp;tid=10001" title="搜索标题一">搜索标题一</a>
+      <a href="thread-10002-1-1.html" title="搜索标题二">搜索标题二</a>
+    </body></html>`, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const requestUrl = new URL("https://app.example/provider-api/kan98?pg=2&wd=abc");
+    const response = await handleProviderRequest(requestUrl);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.list.length, 2);
+    assert.equal(body.list[0].vod_id, "10001");
+    assert.equal(body.list[0].vod_name, "搜索标题一");
+    assert.equal(body.list[1].vod_id, "10002");
+    const page2 = hits.find((url) => url.includes("page=2") && url.includes("search.php"));
+    assert.ok(page2, "page-2 request was made");
+    assert.ok(page2.includes("searchid=12345"), `page-2 uses real searchid, got: ${page2}`);
+    assert.ok(!page2.includes("searchid=0"), "page-2 must not use searchid=0");
+    assert.ok(page2.includes("searchmd5=e0b53f3a1b2c"), "searchmd5 is carried over");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("jav play returns direct CDN streams with proxy fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/zh/player_api?")) {
+      return new Response(JSON.stringify({
+        sources: [
+          { src: "https://c3.cdnjhd.com/xxx==,1787148997/content-01/contents/1-abc/videos/1-abc_sh.mp4", res: "1080", label: "1080p" },
+          { src: "https://c3.cdnjhd.com/xxx==,1787148997/content-01/contents/1-abc/videos/1-abc_low.mp4", res: "240", label: "240p" },
+        ],
+        poster: "https://static2.javhd.com/poster.jpg",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error("unexpected fetch " + url);
+  };
+  try {
+    const requestUrl = new URL("https://app.example/provider-api/jav?action=play&pid=119105");
+    const response = await handleProviderRequest(requestUrl);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.vod_play_url.startsWith("https://c3.cdnjhd.com/"), "primary stream is the direct CDN");
+    assert.equal(body.streams.length, 4, "4 streams = 2 qualities x (direct + proxy)");
+    assert.ok(body.streams[0].url.startsWith("https://c3.cdnjhd.com/"), "first stream direct");
+    assert.ok(body.streams[0].label.includes("推荐"));
+    assert.ok(body.streams[1].url.startsWith("/provider-api/jav?action=media&url="), "second stream proxy fallback");
+    assert.equal(body.streams[2].quality, 240);
+    assert.equal(body.streams[3].label, "240p · 备用代理");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("jav media proxy caps each response at 8MB with correct content-range", async () => {
+  const originalFetch = globalThis.fetch;
+  const captured = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const range = init?.headers?.range || "";
+    captured.push(range);
+    const m = range.match(/^bytes=(\d+)-(\d+)$/);
+    const start = m ? Number(m[1]) : 0;
+    const end = m ? Number(m[2]) : 8388607;
+    const total = 3337577689;
+    return new Response(new Uint8Array(end - start + 1), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-range": `bytes ${start}-${end}/${total}`, "content-length": String(end - start + 1), "accept-ranges": "bytes" },
+    });
+  };
+  try {
+    const url = "https://c3.cdnjhd.com/x==,1787148997/content-01/contents/1-a/videos/1-a_sh.mp4";
+    // open-ended browser range -> capped to 8MB chunk
+    const r1 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=0-" } }));
+    assert.equal(r1.status, 206);
+    assert.equal(r1.headers.get("content-range"), "bytes 0-8388607/3337577689");
+    assert.equal(captured[0], "bytes=0-8388607");
+    assert.equal((await r1.arrayBuffer()).byteLength, 8388608);
+    assert.equal(r1.headers.get("access-control-allow-origin"), "*");
+    // explicit small range passes through
+    const r2 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=1000-1999" } }));
+    assert.equal(r2.status, 206);
+    assert.equal(r2.headers.get("content-range"), "bytes 1000-1999/3337577689");
+    assert.equal(captured[1], "bytes=1000-1999");
+    assert.equal((await r2.arrayBuffer()).byteLength, 1000);
+    // huge explicit range capped to 8MB
+    const r3 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=0-100000000" } }));
+    assert.equal(r3.headers.get("content-range"), "bytes 0-8388607/3337577689");
+    assert.equal(captured[2], "bytes=0-8388607");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("emits the files required by Sites packaging", async () => {
   await access(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/server/index.js", import.meta.url));

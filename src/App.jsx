@@ -627,9 +627,11 @@ function DetailModal({ item, mode, provider, onClose }) {
   const [embedFallback, setEmbedFallback] = useState(false);
   const isAudio = mode === "audio";
   const mediaRef = useRef(null);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     setActive(streams[0]);
     setEmbedFallback(false);
+    setRetry(0);
   }, [item.vod_play_url, item.fallback_embed_url]);
   useEffect(() => {
     const media = mediaRef.current;
@@ -652,10 +654,10 @@ function DetailModal({ item, mode, provider, onClose }) {
       });
       return () => hls.destroy();
     }
-  }, [active, mode, item.detail_loading, item.fallback_embed_url, provider?.id]);
+  }, [active, mode, item.detail_loading, item.fallback_embed_url, provider?.id, retry]);
   const useEmbedFallback = provider?.id === "dsd" && embedFallback && item.fallback_embed_url;
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><article className="detail-modal"><button className="modal-close" onClick={onClose}>关闭</button>
-    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : useEmbedFallback ? <iframe src={item.fallback_embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline crossOrigin="anonymous" preload="metadata" poster={item.vod_pic} referrerPolicy="no-referrer" />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
+    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : useEmbedFallback ? <iframe src={item.fallback_embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline crossOrigin="anonymous" preload="metadata" poster={item.vod_pic} referrerPolicy="no-referrer" onError={() => { if (retry < 2) setRetry((r) => r + 1); }} />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
     <div className="detail-copy"><small>{item.type_name || "CONTENT DETAIL"}</small><h2>{item.vod_name}</h2><p>{item.vod_blurb || item.vod_content?.replace(/<[^>]+>/g, "") || "暂无简介"}</p>{streams.length > 0 && <div className="stream-list">{streams.slice(0, 24).map((stream, i) => <button className={active?.url === stream.url ? "active" : ""} key={`${stream.url}-${i}`} onClick={() => setActive(stream)}>{stream.label}</button>)}</div>}<dl><div><dt>年份</dt><dd>{item.vod_year || "—"}</dd></div><div><dt>地区</dt><dd>{item.vod_area || "—"}</dd></div><div><dt>来源</dt><dd>{provider.name}</dd></div></dl></div>
   </article></div>;
 }

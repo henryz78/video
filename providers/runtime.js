@@ -2829,12 +2829,15 @@ async function kan98SearchPage(keyword, page) {
     headers: { "content-type": "application/x-www-form-urlencoded", referer: `${KAN98_ORIGIN}/` },
     body,
   });
-  if (page <= 1) return result.text;
+if (page <= 1) return result.text;
+  const searchId = result.url.match(/searchid=(\d+)/i)?.[1]
+    || result.text.match(/searchid=(\d+)/i)?.[1]
+    || "0";
   const searchMd5 = result.text.match(/[?&]searchmd5=([^&"'<>\s]+)/i)?.[1]
     || result.text.match(/(?:name|id)=["']searchmd5["'][^>]*value=["']([^"']+)/i)?.[1]
     || result.text.match(/searchmd5["'=]+([a-z0-9]+)/i)?.[1]
     || "0";
-  const url = `/search.php?mod=forum&searchid=0&searchmd5=${encodeURIComponent(searchMd5)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
+  const url = `/search.php?mod=forum&searchid=${searchId}&searchmd5=${encodeURIComponent(searchMd5)}&orderby=lastpost&ascdesc=desc&searchsubmit=yes&kw=${encodeURIComponent(keyword)}&page=${page}`;
   return (await kan98Page(url, result.cookie ? { headers: { cookie: result.cookie } } : {})).text;
 }
 
@@ -3789,17 +3792,16 @@ async function javPlay(requestUrl) {
   const data = await response.json();
   const sources = Array.isArray(data.sources) ? data.sources : [];
   if (!sources.length) return json({ message: "javhd no public stream" }, { status: 502 });
-  const label = (source) => `${source.label || `${source.res || ""}p`}p`;
+const label = (source) => `${source.label || `${source.res || ""}p`}p`;
   return json({
     vod_id: pid,
-    vod_play_url: javMediaUrl(sources[0].src),
-    streams: sources.map((source, index) => ({
-      label: `${source.label || source.res || "高清"}${index === 0 ? " · 直连" : ""}`,
-      url: javMediaUrl(source.src),
-      quality: Number(source.res) || 0,
-    })),
+    vod_play_url: sources[0].src,
+    streams: sources.map((source, index) => [
+      { label: `${source.label || source.res || "高清"} · 直连${index === 0 ? " · 推荐" : ""}`, url: source.src, quality: Number(source.res) || 0 },
+      { label: `${source.label || source.res || "高清"} · 备用代理`, url: javMediaUrl(source.src), quality: Number(source.res) || 0 },
+    ]).flat(),
     poster: javAsset(data.poster || ""),
-    play_notice: "javhd 匿名签名直链 · 完整版 4 码率",
+    play_notice: "javhd 匿名签名直链 · 完整版 4 码率（直连优先，代理备用）",
     provider: "jav",
   }, { headers: { "cache-control": "no-store" } });
 }
@@ -3810,18 +3812,31 @@ async function javMedia(requestUrl, request) {
   if (!/^(?:c3|c4)\.cdnjhd\.com$/i.test(target.hostname) || !/\/content-01\/contents\//i.test(target.pathname)) {
     return json({ message: "invalid jav media host" }, { status: 400 });
   }
-  const headers = { ...JAV_DETAIL_HEADERS };
-  const range = request?.headers?.get?.("range");
-  if (range) headers.range = range;
-  const upstream = await fetch(target, { headers, signal: AbortSignal.timeout(30_000) });
-  const out = new Headers();
-  for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified"]) {
-    const value = upstream.headers.get(name);
-    if (value) out.set(name, value);
+const headers = { ...JAV_DETAIL_HEADERS };
+  const CHUNK = 8 * 1024 * 1024;
+  const parsed = (request?.headers?.get?.("range") || "").match(/^bytes=(\d*)-(\d*)$/);
+  const start = parsed && parsed[1] !== "" ? Number(parsed[1]) : 0;
+  let end = parsed && parsed[2] !== "" ? Number(parsed[2]) : start + CHUNK - 1;
+  if (end - start + 1 > CHUNK) end = start + CHUNK - 1;
+  headers.range = `bytes=${start}-${end}`;
+  let upstream;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      upstream = await fetch(target, { headers, signal: AbortSignal.timeout(15_000) });
+      break;
+    } catch (error) {
+      if (attempt === 2) return json({ message: "jav media upstream unreachable" }, { status: 502 });
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
   }
+  const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
+  const out = new Headers();
+  out.set("accept-ranges", "bytes");
+  if (total) out.set("content-range", `bytes ${start}-${end}/${total}`);
+  out.set("content-length", String(Math.max(0, Math.min(end - start + 1, Number(total) - start))));
   out.set("access-control-allow-origin", "*");
   out.set("cache-control", "public, max-age=300");
-  return new Response(upstream.body, { status: upstream.status, headers: out });
+  return new Response(upstream.body, { status: 206, headers: out });
 }
 
 const AVJB_ORIGIN = "https://avjb.com";
@@ -4202,11 +4217,69 @@ async function dsdDetail(requestUrl) {
   return json(card, { headers: { "cache-control": "public, max-age=120" } });
 }
 
+function dsdDecodeAaencode(jsfuck) {
+  const re = /\uFF9F\u0414\uFF9F\)\s*\[\s*['"]_['"]\s*\]\s*\(\s*\(\s*\uFF9F\u0414\uFF9F\)\s*\[\s*['"]_['"]\s*\]\s*\(\s*/g;
+  const hits = [...jsfuck.matchAll(re)];
+  if (!hits.length) return null;
+  const m = hits[hits.length - 1];
+  let s = jsfuck.slice(m.index + m[0].length);
+  s = s.replace(/\s*\)\s*\(\s*\uFF9F\u0398\uFF9F\s*\)\s*\)\s*\(\s*['"]_['"]\s*\)\s*;?\s*$/, "");
+  const splitTop = (s) => {
+    const out = [];
+    let depth = 0, cur = "";
+    for (const ch of s) {
+      if (ch === "(") depth++;
+      if (ch === ")") depth--;
+      if ((ch === "+" || ch === "-") && depth === 0 && cur) { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+  const evalTerm = (term) => {
+    let t = term.trim();
+    t = t.replace(/\(\uFF9F\u0398\uFF9F\)|\uFF9F\u0398\uFF9F/g, "1");
+    t = t.replace(/\(\uFF9F\uFF70\uFF9F\)|\uFF9F\uFF70\uFF9F/g, "4");
+    t = t.replace(/\(\s*o\^_\^o\s*\)|\bo\^_\^o\b/g, "3");
+    t = t.replace(/\(\s*c\^_\^o\s*\)|\bc\^_\^o\b/g, "0");
+    t = t.replace(/[()\s]/g, "");
+    let sum = 0, sign = 1, num = "";
+    for (const ch of t) {
+      if (ch === "+" || ch === "-") { sum += sign * (num ? Number(num) : 0); num = ""; sign = ch === "-" ? -1 : 1; }
+      else num += ch;
+    }
+    return sum + sign * (num ? Number(num) : 0);
+  };
+  let out = "";
+  for (const tok of splitTop(s)) {
+    const norm = tok.replace(/\s+/g, "");
+    if (norm === "\uFF9F\u03B5\uFF9F" || norm === "(\uFF9F\u0414\uFF9F)[\uFF9F\u03B5\uFF9F]") { out += "\\"; continue; }
+    if (norm === "(\uFF9F\u0414\uFF9F)[\uFF9Fo\uFF9F]") { out += '"'; continue; }
+    out += String(evalTerm(tok));
+  }
+  let real = "";
+  for (let k = 0; k < out.length; k++) {
+    if (out[k] === "\\") {
+      let digits = "", n = k + 1;
+      while (n < out.length && /[0-7]/.test(out[n]) && digits.length < 3) { digits += out[n]; n++; }
+      if (!digits) { real += "\\"; continue; }
+      real += String.fromCharCode(parseInt(digits, 8));
+      k = n - 1;
+    } else real += out[k];
+  }
+  return real;
+}
+
 function dsdDecodeJsfuck(html) {
   const i = html.indexOf("\uFF9F\u03C9\uFF9F\uFF89");
   if (i === -1) return null;
   const j = html.indexOf("</script>", i);
   const jsfuck = html.slice(i, j);
+  const code = dsdDecodeAaencode(jsfuck);
+  if (code) {
+    const vPath = code.match(/vPath\s*=\s*["']([^"']+)/)?.[1];
+    if (vPath) return vPath;
+  }
   let captured = "";
   const mockVideo = { on: () => {}, addClass: () => {}, currentTime: () => 0, play: () => {}, duration: () => 0 };
   const fakeWin = {};
