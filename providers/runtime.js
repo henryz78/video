@@ -197,11 +197,94 @@ function normalizeEporner(item) {
     vod_year: item.added?.slice(0, 4) || "",
     vod_area: "eporner.com",
     type_name: "EPORNER",
-    embed_url: item.embed || `https://www.eporner.com/embed/${encodeURIComponent(item.id)}/`,
-    media_kind: "embed",
+    media_kind: "video",
     needs_detail: true,
     provider: "eporner",
   };
+}
+
+const EPORNER_HEADERS = {
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  accept: "application/json,text/html,application/xhtml+xml,*/*;q=0.8",
+};
+
+async function epornerPlayPayload(id) {
+  let sources = null;
+  try {
+    const api = new URL("https://www.eporner.com/api/v2/video/sources/");
+    api.searchParams.set("id", id);
+    api.searchParams.set("format", "json");
+    const response = await fetch(api, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
+    if (response.ok) {
+      const data = await response.json();
+      sources = Array.isArray(data?.sources) ? data.sources : Array.isArray(data?.medias) ? data.medias : null;
+    }
+  } catch { /* fall through to embed parse */ }
+  if (!sources) {
+    try {
+      const embed = await fetch(`https://www.eporner.com/embed/${encodeURIComponent(id)}/`, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
+      if (embed.ok) {
+        const html = await embed.text();
+        const files = [...html.matchAll(/["'](https?:\/\/[^"']+\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/gi)].map((m) => m[1]);
+        sources = [...new Set(files)].map((url) => ({ file: url, label: url.match(/(\d+p)/i)?.[1] || "" }));
+      }
+    } catch { /* no play */ }
+  }
+  if (!sources || !sources.length) return null;
+  const streams = sources
+    .map((s, i) => {
+      const file = s.file || s.url || s.src || "";
+      if (!/^https?:\/\//i.test(file) || !/\.(mp4|m3u8)(?:\?|$)/i.test(file)) return null;
+      const quality = (s.label || file.match(/(\d+p)/i)?.[1] || "").toString().trim();
+      return [
+        { label: quality ? `${quality} · 直连 · 推荐` : `线路 ${i + 1} · 直连 · 推荐`, url: file },
+        { label: quality ? `${quality} · 代理` : `线路 ${i + 1} · 代理`, url: `/provider-api/eporner?action=media&url=${encodeURIComponent(file)}` },
+      ];
+    })
+    .filter(Boolean)
+    .flat();
+  return { streams, play_notice: "eporner 官方源直链 · 自建播放器", media_kind: "video" };
+}
+
+async function epornerPlay(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!/^[a-z0-9_-]+$/i.test(id)) return json({ message: "invalid id" }, { status: 400 });
+  const payload = await epornerPlayPayload(id);
+  if (!payload) return json({ message: "eporner play unavailable", provider: "eporner" }, { status: 404 });
+  return json({ vod_id: id, ...payload, provider: "eporner" }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
+async function epornerMedia(requestUrl) {
+  const raw = requestUrl.searchParams.get("url") || "";
+  let target;
+  try { target = new URL(raw); } catch { return json({ message: "invalid media url" }, { status: 400 }); }
+  if (!/^(?:[a-z0-9-]+\.)*eporner\.com$/i.test(target.hostname)) return json({ message: "invalid media host" }, { status: 400 });
+  const CHUNK = 8 * 1024 * 1024;
+  const parsed = (request?.headers?.get?.("range") || "").match(/^bytes=(\d*)-(\d*)$/);
+  const start = parsed && parsed[1] !== "" ? Number(parsed[1]) : 0;
+  let end = parsed && parsed[2] !== "" ? Number(parsed[2]) : start + CHUNK - 1;
+  if (end - start + 1 > CHUNK) end = start + CHUNK - 1;
+  const headers = { ...EPORNER_HEADERS, referer: "https://www.eporner.com/" };
+  headers.range = `bytes=${start}-${end}`;
+  let upstream;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      upstream = await fetch(target, { headers, signal: AbortSignal.timeout(15_000) });
+      break;
+    } catch (error) {
+      if (attempt === 2) return json({ message: "eporner media upstream unreachable" }, { status: 502 });
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+  }
+  const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
+  const limit = Math.max(0, end - start + 1);
+  const out = new Headers();
+  out.set("accept-ranges", "bytes");
+  if (total) out.set("content-range", `bytes ${start}-${end}/${total}`);
+  out.set("content-length", String(Math.min(limit, Number(total || limit) - start)));
+  out.set("access-control-allow-origin", "*");
+  out.set("cache-control", "public, max-age=300");
+  return new Response(javTruncate(upstream.body, limit), { status: 206, headers: out });
 }
 
 async function epornerList(requestUrl) {
@@ -216,7 +299,7 @@ async function epornerList(requestUrl) {
   upstream.searchParams.set("gay", "0");
   upstream.searchParams.set("lq", "1");
   upstream.searchParams.set("format", "json");
-  const response = await fetch(upstream, { headers: { accept: "application/json" } });
+  const response = await fetch(upstream, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(20_000) });
   if (!response.ok) return json({ message: `eporner list ${response.status}` }, { status: 502 });
   const data = await response.json();
   const list = (Array.isArray(data.videos) ? data.videos : []).map(normalizeEporner);
@@ -231,15 +314,23 @@ async function epornerList(requestUrl) {
   }, { headers: { "cache-control": query === "all" ? "public, max-age=180" : "public, max-age=60" } });
 }
 
-async function epornerDetail(id) {
-  if (!/^[a-z0-9_-]+$/i.test(id || "")) return json({ message: "invalid id" }, { status: 400 });
+async function epornerDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!/^[a-z0-9_-]+$/i.test(id)) return json({ message: "invalid id" }, { status: 400 });
   const upstream = new URL("https://www.eporner.com/api/v2/video/id/");
   upstream.searchParams.set("id", id);
   upstream.searchParams.set("thumbsize", "medium");
   upstream.searchParams.set("format", "json");
-  const response = await fetch(upstream, { headers: { accept: "application/json" } });
+  const response = await fetch(upstream, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(20_000) });
   if (!response.ok) return json({ message: `eporner detail ${response.status}` }, { status: 502 });
-  return json(normalizeEporner(await response.json()), { headers: { "cache-control": "public, max-age=300" } });
+  const card = normalizeEporner(await response.json());
+  const play = await epornerPlayPayload(id);
+  if (play) {
+    card.streams = play.streams;
+    card.vod_play_url = play.streams[0]?.url || "";
+    card.play_notice = play.play_notice;
+  }
+  return json(card, { headers: { "cache-control": "public, max-age=300" } });
 }
 
 const MADOUAI_ORIGIN = "https://www.madouai.xyz";
@@ -4247,9 +4338,8 @@ async function dsdDetail(requestUrl) {
     provider: "dsd",
     metadata: { tags, desc, related: dsdParseRelated(html).slice(0, 12) },
   };
-  if (rawUrl && /\.m3u8/i.test(rawUrl)) {
+if (rawUrl && /\.m3u8/i.test(rawUrl)) {
     card.vod_play_url = dsdMediaUrl(rawUrl, "hls");
-    card.fallback_embed_url = `${DSD_ORIGIN}/addons/vplayer/?url=${encodeURIComponent(rawUrl)}&jump=`;
     card.play_notice = "完整片 · AES-128 HLS（jsfuck 签名 + 同源代理）";
   } else {
     card.play_notice = "此条目无公开播放地址";
@@ -4700,7 +4790,7 @@ export async function handleProviderRequest(request) {
     if (provider === "gdlsp") return await gdlsp(requestUrl);
     if (provider === "hstream") return await (action === "detail" ? hstreamDetail(requestUrl.searchParams.get("id")) : hstreamList(requestUrl));
     if (provider === "leakgallery") return await (action === "detail" ? leakGalleryDetail(requestUrl.searchParams.get("id")) : leakGalleryList(requestUrl));
-    if (provider === "eporner") return await (action === "detail" ? epornerDetail(requestUrl.searchParams.get("id")) : epornerList(requestUrl));
+    if (provider === "eporner") return await (action === "media" ? epornerMedia(requestUrl) : action === "play" ? epornerPlay(requestUrl) : action === "detail" ? epornerDetail(requestUrl) : epornerList(requestUrl));
     if (provider === "madouai") return await (action === "media" ? madouAiMedia(requestUrl) : action === "detail" ? madouAiDetail(requestUrl.searchParams.get("id"), requestUrl) : madouAiList(requestUrl));
     if (provider === "pmvhaven") return await (action === "detail" ? pmvHavenDetail(requestUrl.searchParams.get("id")) : pmvHavenList(requestUrl));
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));

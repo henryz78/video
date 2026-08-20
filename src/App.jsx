@@ -309,11 +309,17 @@ function epNormalize(item) {
     vod_year: item.added?.slice(0, 4) || "",
     vod_area: "eporner.com",
     type_name: "EPORNER",
-    embed_url: item.embed || `https://www.eporner.com/embed/${encodeURIComponent(item.id)}/`,
-    media_kind: "embed",
+    media_kind: "video",
     needs_detail: true,
     provider: "eporner",
   };
+}
+
+function epSourcesUrl(id) {
+  const upstream = new URL("https://www.eporner.com/api/v2/video/sources/");
+  upstream.searchParams.set("id", id);
+  upstream.searchParams.set("format", "json");
+  return upstream.href;
 }
 
 function epListUrl({ pg, wd, preset, order }) {
@@ -542,7 +548,36 @@ function SitePage({ site, go, health, setHealth }) {
     setSelected({ ...item, detail_loading: true });
     try {
       const detail = provider.id === "eporner"
-        ? await fetch(epDetailUrl(item.vod_id)).then((r) => { if (!r.ok) throw new Error(`详情返回 ${r.status}`); return r.json(); })
+        ? await (async () => {
+          const r = await fetch(epDetailUrl(item.vod_id));
+          if (!r.ok) throw new Error(`详情返回 ${r.status}`);
+          const card = epNormalize(await r.json());
+          try {
+            const sr = await fetch(epSourcesUrl(item.vod_id), { signal: AbortSignal.timeout(15_000) });
+            if (sr.ok) {
+              const sj = await sr.json();
+              const srcs = Array.isArray(sj?.sources) ? sj.sources : Array.isArray(sj?.medias) ? sj.medias : [];
+              const streams = srcs.map((s, i) => {
+                const file = s.file || s.url || s.src || "";
+                if (!/^https?:\/\//i.test(file) || !/\.(mp4|m3u8)(?:\?|$)/i.test(file)) return null;
+                const quality = (s.label || file.match(/(\d+p)/i)?.[1] || "").toString().trim();
+                return [
+                  { label: quality ? `${quality} · 直连 · 推荐` : `线路 ${i + 1} · 直连 · 推荐`, url: file },
+                  { label: quality ? `${quality} · 代理` : `线路 ${i + 1} · 代理`, url: `/provider-api/eporner?action=media&url=${encodeURIComponent(file)}` },
+                ];
+              }).filter(Boolean).flat();
+              if (streams.length) { card.streams = streams; card.vod_play_url = streams[0].url; card.play_notice = "eporner 官方源直链 · 自建播放器"; }
+            }
+          } catch { /* worker fallback below */ }
+          if (!card.streams) {
+            const pr = await fetch(`/provider-api/eporner?action=play&id=${encodeURIComponent(item.vod_id)}`, { signal: AbortSignal.timeout(20_000) });
+            if (pr.ok) {
+              const pj = await pr.json();
+              if (pj.streams) { card.streams = pj.streams; card.vod_play_url = pj.streams[0]?.url || ""; card.play_notice = pj.play_notice || ""; }
+            }
+          }
+          return card;
+        })()
         : provider.id === "kanxo"
           ? await kanxoDetailFront(item.vod_id)
           : await (async () => {
@@ -551,7 +586,7 @@ function SitePage({ site, go, health, setHealth }) {
             if (!r.ok) throw new Error(body.message || `详情返回 ${r.status}`);
             return body;
           })();
-      if (provider.id === "eporner") setSelected(epNormalize(detail));
+      if (provider.id === "eporner") setSelected(detail);
       else setSelected({
         ...detail,
         vod_pic: detail.vod_pic || item.vod_pic,
@@ -624,15 +659,13 @@ function parseStreams(item) {
 function DetailModal({ item, mode, provider, onClose }) {
   const streams = parseStreams(item);
   const [active, setActive] = useState(streams[0]);
-  const [embedFallback, setEmbedFallback] = useState(false);
   const isAudio = mode === "audio";
   const mediaRef = useRef(null);
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     setActive(streams[0]);
-    setEmbedFallback(false);
     setRetry(0);
-  }, [item.vod_play_url, item.fallback_embed_url]);
+  }, [item.vod_play_url]);
   useEffect(() => {
     const media = mediaRef.current;
     if (!media || !active) return;
@@ -647,17 +680,11 @@ function DetailModal({ item, mode, provider, onClose }) {
       const hls = new Hls({ enableWorker: true });
       hls.loadSource(active.url); hls.attachMedia(media);
       hls.on(Hls.Events.MANIFEST_PARSED, () => media.play().catch(() => {}));
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (!data.fatal) return;
-        console.error("hls fatal:", data.type, data.details);
-        if (provider?.id === "dsd" && item.fallback_embed_url) setEmbedFallback(true);
-      });
       return () => hls.destroy();
     }
-  }, [active, mode, item.detail_loading, item.fallback_embed_url, provider?.id, retry]);
-  const useEmbedFallback = provider?.id === "dsd" && embedFallback && item.fallback_embed_url;
+  }, [active, mode, item.detail_loading, provider?.id, retry]);
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><article className="detail-modal"><button className="modal-close" onClick={onClose}>关闭</button>
-    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : useEmbedFallback ? <iframe src={item.fallback_embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline crossOrigin="anonymous" preload="metadata" poster={item.vod_pic} referrerPolicy="no-referrer" onError={() => { if (retry < 2) setRetry((r) => r + 1); }} />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
+    <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline crossOrigin="anonymous" preload="metadata" poster={item.vod_pic} referrerPolicy="no-referrer" onError={() => { if (retry < 2) setRetry((r) => r + 1); }} />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
     <div className="detail-copy"><small>{item.type_name || "CONTENT DETAIL"}</small><h2>{item.vod_name}</h2><p>{item.vod_blurb || item.vod_content?.replace(/<[^>]+>/g, "") || "暂无简介"}</p>{streams.length > 0 && <div className="stream-list">{streams.slice(0, 24).map((stream, i) => <button className={active?.url === stream.url ? "active" : ""} key={`${stream.url}-${i}`} onClick={() => setActive(stream)}>{stream.label}</button>)}</div>}<dl><div><dt>年份</dt><dd>{item.vod_year || "—"}</dd></div><div><dt>地区</dt><dd>{item.vod_area || "—"}</dd></div><div><dt>来源</dt><dd>{provider.name}</dd></div></dl></div>
   </article></div>;
 }
