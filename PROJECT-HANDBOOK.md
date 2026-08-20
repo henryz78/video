@@ -385,4 +385,5 @@ npm.cmd run test:cloudflare
 
 - 使用真实浏览器对主导航 40 个 `/site/{slug}` 逐一打开并等待实时目录：25 个已接入入口返回目录卡片，14 个用户决定跳过/待接入入口正确显示 `SOURCE PENDING`，`91` 单独发现上游图片 CDN 更换导致 `total=48` 但解析列表为空。
 - `91porna.com` 当前卡片图片从 `pic.xmbvxj.cn` 轮换为 `pic.yrfmba.cn`；`providers/runtime.js` 已同时修正卡片正则与 AES 图片代理白名单，提交 `889304f` 已推送并部署。Pages 复核已恢复 23 条卡片、详情 m3u8 200；真实浏览器点播受控制接口超时影响未重复计为失败，Node/媒体链路正常。
+- 2026-08-20 对剩余风险项复核：`miss` Pages 列表 12、搜索 10、`milk-302` 详情与 playlist 200，真实浏览器视频 readyState=2、currentTime 3.95s 推进，已从“上游阻塞”降为可维护但需监控；`ep` 列表 24、官方 embed 点击后 readyState=4、currentTime 19.2s 推进，已通过；`tv` AdultIPTV 主题 manifest 200，oxax 品牌流仍是上游数据中心/IP 绑定问题；`98` Pages 搜索第 2 页仍返回 0（Chrome 直接上游第 2 页正常）；`jav` 已部署 eval-free/分块代理修复，目录与详情正常，普通浏览器播放仍需一次稳定采样确认。
 - 页面层抽样目录数：sf 260、98 24、ai 24、hj 20、mr 26、qiying 16、tx 12、lg 24、hxc 24、rou 153、fj 24、kankan 24、pmv 24、jm 48、9s 41、miss 12、dsd 115、movie 20、jav 24、xo 16、ep 24、madou 20、tna 24、tv 24。卡片封面未滚动时的未加载图不视为破图；已接入站点的播放证据继续以本节及既有 headless/真实浏览器记录为准。
