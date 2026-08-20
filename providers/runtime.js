@@ -254,40 +254,6 @@ async function epornerPlay(requestUrl) {
   return json({ vod_id: id, ...payload, provider: "eporner" }, { headers: { "cache-control": "public, max-age=120" } });
 }
 
-async function epornerProbe(requestUrl) {
-  const id = requestUrl.searchParams.get("id") || "";
-  const report = {};
-  try {
-    const api = new URL("https://www.eporner.com/xhr/video/" + encodeURIComponent(id));
-    api.searchParams.set("domain", "www.eporner.com");
-    api.searchParams.set("supportedFormats", "hls");
-    api.searchParams.set("_", Date.now());
-    const response = await fetch(api, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(20_000) });
-    report.xhrStatus = response.status;
-    const text = await response.text();
-    report.xhrBody = text.slice(0, 500);
-  } catch (error) {
-    report.xhrError = error?.message || String(error);
-  }
-  const raw = requestUrl.searchParams.get("url") || "";
-  if (raw) {
-    try {
-      const target = new URL(raw);
-      if (/^(?:dash|vid|static)[a-z0-9-]*\.eporner\.com$/i.test(target.hostname)) {
-        const response = await fetch(target, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
-        report.cdnStatus = response.status;
-        const text = await response.text();
-        report.cdnBody = text.slice(0, 200);
-      } else {
-        report.cdnStatus = "host not whitelisted";
-      }
-    } catch (error) {
-      report.cdnError = error?.message || String(error);
-    }
-  }
-  return json(report);
-}
-
 async function epornerMedia(requestUrl) {
   const raw = requestUrl.searchParams.get("url") || "";
   let target;
@@ -4824,7 +4790,7 @@ export async function handleProviderRequest(request) {
     if (provider === "gdlsp") return await gdlsp(requestUrl);
     if (provider === "hstream") return await (action === "detail" ? hstreamDetail(requestUrl.searchParams.get("id")) : hstreamList(requestUrl));
     if (provider === "leakgallery") return await (action === "detail" ? leakGalleryDetail(requestUrl.searchParams.get("id")) : leakGalleryList(requestUrl));
-    if (provider === "eporner") return await (action === "probe" ? epornerProbe(requestUrl) : action === "media" ? epornerMedia(requestUrl) : action === "play" ? epornerPlay(requestUrl) : action === "detail" ? epornerDetail(requestUrl) : epornerList(requestUrl));
+    if (provider === "eporner") return await (action === "media" ? epornerMedia(requestUrl) : action === "play" ? epornerPlay(requestUrl) : action === "detail" ? epornerDetail(requestUrl) : epornerList(requestUrl));
     if (provider === "madouai") return await (action === "media" ? madouAiMedia(requestUrl) : action === "detail" ? madouAiDetail(requestUrl.searchParams.get("id"), requestUrl) : madouAiList(requestUrl));
     if (provider === "pmvhaven") return await (action === "detail" ? pmvHavenDetail(requestUrl.searchParams.get("id")) : pmvHavenList(requestUrl));
     if (provider === "redgifs") return await (action === "detail" ? redgifsDetail(requestUrl.searchParams.get("id")) : redgifsList(requestUrl));

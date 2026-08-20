@@ -315,13 +315,6 @@ function epNormalize(item) {
   };
 }
 
-function epSourcesUrl(id) {
-  const upstream = new URL("https://www.eporner.com/api/v2/video/sources/");
-  upstream.searchParams.set("id", id);
-  upstream.searchParams.set("format", "json");
-  return upstream.href;
-}
-
 function epListUrl({ pg, wd, preset, order }) {
   const upstream = new URL("https://www.eporner.com/api/v2/video/search/");
   upstream.searchParams.set("query", wd?.trim() || preset?.trim() || "all");
@@ -553,29 +546,10 @@ function SitePage({ site, go, health, setHealth }) {
           if (!r.ok) throw new Error(`详情返回 ${r.status}`);
           const card = epNormalize(await r.json());
           try {
-            const sr = await fetch(epSourcesUrl(item.vod_id), { signal: AbortSignal.timeout(15_000) });
-            if (sr.ok) {
-              const sj = await sr.json();
-              const srcs = Array.isArray(sj?.sources) ? sj.sources : Array.isArray(sj?.medias) ? sj.medias : [];
-              const streams = srcs.map((s, i) => {
-                const file = s.file || s.url || s.src || "";
-                if (!/^https?:\/\//i.test(file) || !/\.(mp4|m3u8)(?:\?|$)/i.test(file)) return null;
-                const quality = (s.label || file.match(/(\d+p)/i)?.[1] || "").toString().trim();
-                return [
-                  { label: quality ? `${quality} · 直连 · 推荐` : `线路 ${i + 1} · 直连 · 推荐`, url: file },
-                  { label: quality ? `${quality} · 代理` : `线路 ${i + 1} · 代理`, url: `/provider-api/eporner?action=media&url=${encodeURIComponent(file)}` },
-                ];
-              }).filter(Boolean).flat();
-              if (streams.length) { card.streams = streams; card.vod_play_url = streams[0].url; card.play_notice = "eporner 官方源直链 · 自建播放器"; }
-            }
-          } catch { /* worker fallback below */ }
-          if (!card.streams) {
-            const pr = await fetch(`/provider-api/eporner?action=play&id=${encodeURIComponent(item.vod_id)}`, { signal: AbortSignal.timeout(20_000) });
-            if (pr.ok) {
-              const pj = await pr.json();
-              if (pj.streams) { card.streams = pj.streams; card.vod_play_url = pj.streams[0]?.url || ""; card.play_notice = pj.play_notice || ""; }
-            }
-          }
+            const pr = await phRelayFetch({ action: "ep", id: item.vod_id }, { signal: AbortSignal.timeout(30_000) });
+            const pj = await pr.json();
+            if (pj.streams) { card.streams = pj.streams; card.vod_play_url = pj.streams[0]?.url || ""; card.play_notice = pj.play_notice || "eporner 官方源直链 · 自建播放器"; }
+          } catch { /* 中继不可用时仅展示详情 */ }
           return card;
         })()
         : provider.id === "kanxo"
