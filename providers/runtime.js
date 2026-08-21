@@ -3585,7 +3585,10 @@ async function sfDetail(requestUrl) {
 // reader relay returns the same live HTML without creating a catalog snapshot.
 // Keep the relay isolated so it can be replaced by a user-controlled fetcher
 // later without touching the provider contract.
-const HM_READER_ORIGIN = "https://r.jina.ai/http://hanime1.com";
+const HM_READER_ORIGINS = [
+  "https://r.jina.ai/http://hanime1.com",
+  "https://r.jina.ai/https://hanime1.com",
+];
 const HM_READER_HEADERS = {
   accept: "text/html,application/xhtml+xml",
   "x-return-format": "html",
@@ -3607,14 +3610,22 @@ function hmMediaUrl(url) {
 
 async function hmPage(pathname) {
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
-  const response = await fetch(`${HM_READER_ORIGIN}${path}`, {
-    headers: HM_READER_HEADERS,
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`hanime1 reader ${response.status}`);
-  const html = await response.text();
-  if (!/<html\b|video-item-container|skip-page-form/i.test(html)) throw new Error("hanime1 reader returned invalid HTML");
-  return html;
+  let lastError;
+  for (const origin of HM_READER_ORIGINS) {
+    try {
+      const response = await fetch(`${origin}${path}`, {
+        headers: HM_READER_HEADERS,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error(`hanime1 reader ${response.status}`);
+      const html = await response.text();
+      if (!/<html\b|video-item-container|skip-page-form/i.test(html)) throw new Error("hanime1 reader returned invalid HTML");
+      return html;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("hanime1 reader unavailable");
 }
 
 function hmCards(html) {

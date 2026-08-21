@@ -862,7 +862,7 @@
 - 详情路由为 `/watch/{id}`。示例 `/watch/407804` 显示标题、播放次数、发布日期、上传者、标签、文件大小、相关推荐和 3 档画质（1080p/720p/480p）；播放器可见时长 `179.498s`、`1920×1080`，真实点击后 `currentTime` 从约 `2.50s` 推进到 `5.05s`，无 console 错误。当前页面直接给出短时效 MP4：`vdownload.hembed.com/{id}-1080p.mp4?secure=...`，不能把该签名 URL 写死为长期上游。
 - 字幕字段：示例详情明确显示“中文字幕：源站未提供”；官方 Issue 页记录该问题已有修复，但仍需抽样详情确认新旧条目的字幕字段与实际字幕轨道是否一致。
 - **独立上游确认**：`hanime1.com` 是 Hanime1 的公开备用域；其 `/search?query=&genre=&sort=&page=` HTML 与官方 `hm` API `/api/search` 的 ID、标题、品牌和分页逐项一致，`/watch?v={id}` 详情的 1080p/720p/480p `<source>` 也与 `hm /api/video/{id}.streams` 一致。`hanime1.com` 的普通数据中心请求会落到 Cloudflare challenge，但真实浏览器可正常读取。
-- **实时目录传输层**：当前 adapter 使用可替换的 `https://r.jina.ai/http://hanime1.com` HTML relay 读取实时页面（每次请求现抓，不落盘、不复制 `hm` 静态 JSON）；实现 `hmPage`/`hmCards`/`hmPageCount`/`hmSearchPath`。
+- **实时目录传输层**：当前 adapter 使用可替换的 `https://r.jina.ai/http://hanime1.com`（失败回退 `https://r.jina.ai/https://hanime1.com`）HTML relay 读取实时页面（每次请求现抓，不落盘、不复制 `hm` 静态 JSON）；实现 `hmPage`/`hmCards`/`hmPageCount`/`hmSearchPath`。
 - **媒体链路**：详情签名 URL 来自 `https://vdownload.hembed.com/{id}-{quality}p.mp4?secure=...`，HEAD/Range 200/206、`ACAO:*`；从本地浏览器跨源直接加载会返回 403，因此 `hmMedia` 仅代理白名单 Hembed URL，带 `Referer: https://hanime1.com/` 并转发 Range/CORS，播放器使用同源 MP4。
 - **已实现与验收**：`providers/catalog.js` / `ROUTE_CONFIGS.hm`、`runtime.js hmList/hmDetail/hmMedia`、App HAnime 分类 Tab；本地 `?qa` 验收首页 24 卡、搜索 AI 第 1/2 页内容不同、详情三档线路、`407804` `readyState=4`、`currentTime 4.91→9.95s`、`1280×720`、duration `179.498s`，无目标 JS 错误；构建、Sites 21/21、Cloudflare 4/4 通过。
 - **边界**：Jina 只是可替换的目录传输层，不是 cfnav API；后续应优先替换为用户自控 relay，以降低第三方依赖与 Pages 目录请求风险。字幕字段仍按官方实际返回处理，示例条目为“源站未提供”。

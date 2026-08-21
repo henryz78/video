@@ -50,7 +50,7 @@
 
 ### `hm` / HAnime（新增参考入口，已接入）
 
-真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 当前经可替换的实时 `r.jina.ai` HTML relay 抓取（不保存快照、不依赖 cfnav 登录 API）；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测本地：首页 24 卡、搜索 AI 第 1/2 页内容不同、详情 3 档线路，`407804` 播放 `readyState=4`、`currentTime 4.91→9.95s`、`1280×720`、duration `179.498s`；`test:sites` 21/21、Cloudflare 4/4。注意：Jina relay 是可替换的目录传输层，后续应优先替换为用户自控 relay，以减少第三方依赖与 Pages 目录请求风险。
+真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 当前经可替换的实时 `r.jina.ai` HTML relay（http/https 两条线路自动回退）抓取（不保存快照、不依赖 cfnav 登录 API）；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测本地：首页 24 卡、搜索 AI 第 1/2 页内容不同、详情 3 档线路，`407804` 播放 `readyState=4`、`currentTime 4.91→9.95s`、`1280×720`、duration `179.498s`；`test:sites` 21/21、Cloudflare 4/4。注意：Jina relay 是可替换的目录传输层，后续应优先替换为用户自控 relay，以减少第三方依赖与 Pages 目录请求风险。
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
