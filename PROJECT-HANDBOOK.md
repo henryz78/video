@@ -397,3 +397,9 @@ npm.cmd run test:cloudflare
 - `98`：目录 24 卡、封面 24/24、详情及动态 HLS 正常，播放 `readyState=4`、`currentTime 49.57→54.62s`、`480×270`。搜索“西野”第 1 页有结果；第 2 页仍为空。上游 Chrome 的公开 `searchid/searchmd5/kw&page=2` 有真实结果，Pages Functions 的年龄/搜索会话在 POST→GET 间仍被 dmn12 边缘挡回，保持待上游边缘会话方案。
 - `jav`：推荐 24 卡；搜索 `yuki` 第 1/2 页内容不同；详情显示 1080/720/480/240 直连与备用代理共 8 条线路。默认播放 `readyState=4`、`currentTime 9.04→14.07s`、`1920×1082`、`duration 3546.25s`，普通浏览器已稳定通过。
 - `tv`：第 3 页 AdultIPTV/MyCamTV 主题源可播，复测 `readyState=4`、`currentTime 58.97s`、`1280×720`；第 1 页 oxax 品牌流仍 `readyState=0`、无 duration，属于上游数据中心 IP/签名绑定死局，未将其冒充为可用。
+
+### 2026-08-21 参考站同项对照（修正“搜索第 2 页”判断）
+
+- 官方 `98.cfnav.me` 的前端 bundle 直接加载 `/data/videos.json` 并在浏览器端筛选，`/search?q=西野` 返回 1 条、`/search?q=女` 返回 53 条，`?page=2` 仍是同一个单页结果，没有搜索分页。因此本地 `98` 的空第 2 页不是“官方也坏了”，而是本地额外暴露了上游论坛翻页；若追求官方牌型，应隐藏 `98` 搜索分页，而不是继续做 Pages 会话中转。
+- 官方 `miss.cfnav.me/search?q=nact` 显示 **24 条结果（recombee）**，没有搜索分页；官方分类 `/list/fc2?page=N` 才有真实分页（实测共 2000 页）。因此本地 `miss` 搜索第 2 页为空同样是额外分页行为，后续应按官方搜索单页处理；分类分页仍保留。
+- 官方 `tv.cfnav.me/watch/oh-ah` 的 oxax 品牌流在同一浏览器出口复测 `readyState=0/currentTime=0/duration=null`；官方 `tv.cfnav.me/watch/aitv-mycamtv-milf` 主题流复测 `readyState=4`、`currentTime≈59.83s`、`1280×720`。oxax 不是本地独有故障，官方当前也无法解码，继续按部分可用记录。
