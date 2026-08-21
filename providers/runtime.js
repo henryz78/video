@@ -3580,6 +3580,171 @@ async function sfDetail(requestUrl) {
   return json(card);
 }
 
+/* ---------------- hm / HAnime（hanime1.com 实时 HTML 上游） ---------------- */
+// hanime1.me / hanime1.com challenge data-center fetches, while the public
+// reader relay returns the same live HTML without creating a catalog snapshot.
+// Keep the relay isolated so it can be replaced by a user-controlled fetcher
+// later without touching the provider contract.
+const HM_READER_ORIGIN = "https://r.jina.ai/http://hanime1.com";
+const HM_READER_HEADERS = {
+  accept: "text/html,application/xhtml+xml",
+  "x-return-format": "html",
+  "user-agent": "CFNav-Independent/2.0",
+};
+const HM_TABS = [
+  ["latest", "最新上市"], ["uploaded", "最新上傳"], ["裏番", "裏番"], ["泡麵番", "泡麵番"],
+  ["Motion Anime", "Motion Anime"], ["3DCG", "3DCG"], ["2.5D", "2.5D"], ["2D動畫", "2D動畫"],
+  ["AI生成", "AI生成"], ["MMD", "MMD"], ["Cosplay", "Cosplay"],
+];
+const HM_SORTS = new Map([
+  ["latest", "最新上市"],
+  ["uploaded", "最新上傳"],
+]);
+
+function hmMediaUrl(url) {
+  return `/provider-api/hm?action=media&url=${encodeURIComponent(url)}`;
+}
+
+async function hmPage(pathname) {
+  const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const response = await fetch(`${HM_READER_ORIGIN}${path}`, {
+    headers: HM_READER_HEADERS,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`hanime1 reader ${response.status}`);
+  const html = await response.text();
+  if (!/<html\b|video-item-container|skip-page-form/i.test(html)) throw new Error("hanime1 reader returned invalid HTML");
+  return html;
+}
+
+function hmCards(html) {
+  const cards = [];
+  const seen = new Set();
+  const pattern = /<a\b[^>]+href=["'](?:https?:\/\/hanime1\.com)?\/watch\?v=(\d+)["'][^>]*class=["'][^"']*video-link[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for (const match of html.matchAll(pattern)) {
+    const id = match[1];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const block = match[2];
+    const title = decodeHtml(block.match(/class=["']title["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] || `HAnime ${id}`);
+    const cover = decodeHtml(block.match(/(?:src|data-src)=["'](https:\/\/vdownload\.hembed\.com\/[^"']+)["']/i)?.[1] || "");
+    const duration = decodeHtml(block.match(/class=["']duration["'][^>]*>([^<]+)/i)?.[1] || "");
+    const tail = html.slice(match.index + match[0].length, match.index + match[0].length + 1000);
+    const brand = decodeHtml(tail.match(/class=["']subtitle["'][\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i)?.[1] || "");
+    const time = decodeHtml(tail.match(/class=["']subtitle-time["'][^>]*>([^<]+)/i)?.[1] || "").replace(/^•\s*/, "");
+    cards.push({
+      vod_id: id,
+      vod_name: brand && !title.startsWith(`[${brand}]`) ? `[${brand}] ${title}` : title,
+      vod_pic: cover,
+      vod_remarks: duration || "VIDEO",
+      vod_blurb: [brand, time].filter(Boolean).join(" · "),
+      vod_content: title,
+      vod_area: "hanime1.com",
+      type_name: "HAnime",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "hm",
+    });
+  }
+  return cards;
+}
+
+function hmPageCount(html, page) {
+  const total = Number(html.match(/validateNumberInput\(this,\s*1,\s*(\d+)/i)?.[1] || 0);
+  const linked = [...html.matchAll(/[?&]page=(\d+)/gi)].map((m) => Number(m[1])).filter(Number.isFinite);
+  return Math.max(1, page, total, ...linked);
+}
+
+function hmSearchPath(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  const params = new URLSearchParams();
+  if (keyword) params.set("query", keyword);
+  else if (HM_SORTS.has(preset)) params.set("sort", HM_SORTS.get(preset));
+  else if (preset && preset !== "home") params.set("genre", preset);
+  else params.set("sort", "最新上市");
+  if (page > 1) params.set("page", String(page));
+  return `/search?${params.toString()}`;
+}
+
+async function hmList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const html = await hmPage(hmSearchPath(requestUrl));
+  const list = hmCards(html).slice(0, Math.min(48, Math.max(1, Number(requestUrl.searchParams.get("limit") || 24))));
+  const pagecount = hmPageCount(html, page);
+  return json({ code: 1, page, pagecount, total: pagecount * 24, limit: list.length, list, provider: "hm" }, {
+    headers: { "cache-control": "public, max-age=60" },
+  });
+}
+
+async function hmMedia(requestUrl, request) {
+  let target;
+  try { target = new URL(requestUrl.searchParams.get("url") || ""); } catch { return json({ message: "invalid hm media url" }, { status: 400 }); }
+  if (target.protocol !== "https:" || target.hostname !== "vdownload.hembed.com") {
+    return json({ message: "invalid hm media host" }, { status: 400 });
+  }
+  const headers = {
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+    referer: "https://hanime1.com/",
+  };
+  const range = request?.headers?.get?.("range");
+  if (range) headers.range = range;
+  const upstream = await fetch(target, { headers, signal: AbortSignal.timeout(30_000) });
+  const responseHeaders = new Headers({
+    "access-control-allow-origin": "*",
+    "accept-ranges": upstream.headers.get("accept-ranges") || "bytes",
+    "cache-control": "public, max-age=300",
+    "content-type": upstream.headers.get("content-type") || "video/mp4",
+  });
+  for (const name of ["content-length", "content-range", "content-disposition"]) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+}
+
+function hmMeta(html, name) {
+  const re = new RegExp(`<meta\\s+[^>]*(?:name|property)=["']${name}["'][^>]*content=["']([^"']*)`, "i");
+  return decodeHtml(html.match(re)?.[1] || "");
+}
+
+async function hmDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!/^\d+$/.test(id)) return json({ message: "invalid id" }, { status: 400 });
+  const html = await hmPage(`/watch?v=${encodeURIComponent(id)}`);
+  const title = (hmMeta(html, "og:title") || decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || `HAnime ${id}`)).replace(/\s+-\s+(?:H?動漫.*|Hanime1\.me)$/i, "");
+  const poster = hmMeta(html, "og:image") || decodeHtml(html.match(/<video\b[^>]*poster=["']([^"']+)/i)?.[1] || "");
+  const description = hmMeta(html, "description") || hmMeta(html, "og:description");
+  const durationSeconds = Number(hmMeta(html, "og:video:duration") || 0);
+  const sources = [];
+  for (const match of html.matchAll(/<source\b[^>]*>/gi)) {
+    const tag = match[0];
+    const url = decodeHtml(tag.match(/src=["']([^"']+)["']/i)?.[1] || "");
+    const size = tag.match(/size=["'](\d+)["']/i)?.[1] || "";
+    if (!/^https:\/\/vdownload\.hembed\.com\//i.test(url) || sources.some((source) => source.url === url)) continue;
+    sources.push({ label: `${size || "默认"}p · 中转`, url: hmMediaUrl(url), type: "video/mp4", group: 0 });
+  }
+  const related = hmCards(html).filter((item) => item.vod_id !== id).slice(0, 12);
+  const tags = [...html.matchAll(/href=["'][^"']*search\?tags%5B%5D=[^"']+["'][^>]*>([^<]+)/gi)].map((m) => decodeHtml(m[1])).filter(Boolean).slice(0, 20);
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: poster,
+    vod_remarks: durationSeconds ? formatDuration(durationSeconds) : "VIDEO",
+    vod_blurb: description,
+    vod_content: tags.join(" · "),
+    vod_area: "hanime1.com",
+    type_name: tags[0] || "HAnime",
+    vod_play_url: sources[0]?.url || "",
+    streams: sources,
+    related,
+    media_kind: "video",
+    needs_detail: false,
+    provider: "hm",
+  }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
 const JS9_ORIGIN = "https://jiuse.tv";
 const JS9_TABS = [
   ["latest", "最新"], ["hd", "高清"], ["recent-favorite", "最近加精"], ["hot-list", "当前最热"],
@@ -4896,6 +5061,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
     if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
     if (provider === "sf") return await (action === "detail" ? sfDetail(requestUrl) : sfList(requestUrl));
+    if (provider === "hm") return await (action === "media" ? hmMedia(requestUrl, request) : action === "detail" ? hmDetail(requestUrl) : hmList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });

@@ -195,6 +195,13 @@ kan98: {
     discoveredFrom: "私房TV 参考站 sf.cfnav.me 取证（2026-08-19）：登录墙 SPA，/api/* 与 /js/* 匿名全 401；数据指纹（SFE/SFA 系列编号、psf0404.shop 封面、Wowza aboxVOD hex 签发）与 sifangtv.cc 不同源，其上游主站 502 不可达 → 按用户指示以 jm 模式接入独立官方站 sifangtv.cc（divergence 记录见 PROJECT-HANDBOOK）",
     capabilities: "最新 / 13 分类 / 分页 / 搜索 / 详情（播放页解析）/ 明文 HLS 直连播放",
   },
+  hm: {
+    id: "hm",
+    name: "HAnime 萌番实时上游",
+    upstream: "hanime1.com + r.jina.ai HTML relay + vdownload.hembed.com",
+    discoveredFrom: "hm.cfnav.me 官方 V6 API/页面契约与 hanime1.com 公开备用域逐条核对；目录经实时 HTML relay 抓取，不使用 cfnav 私有 API 或快照",
+    capabilities: "分类目录 / 搜索 / 分页 / 详情 / 标签 / 1080p/720p/480p MP4 直连播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -223,6 +230,7 @@ hj: { provider: "hj" },
   dsd: { provider: "dsd" },
   hxc: { provider: "hxc" },
   sf: { provider: "sf" },
+  hm: { provider: "hm" },
 };
 
 export function getProviderForSite(slug) {

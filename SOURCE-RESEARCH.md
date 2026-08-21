@@ -854,11 +854,15 @@
 - **实现**：runtime.js `sfPage/sfFetch/sfProxyRequest/sfAsset/sfCards/sfList/sfDetail` + 分发；catalog.js `sf`（divergence 记录）+ ROUTE_CONFIGS.sf；App.jsx `SF_TABS`（"" 最新 + 20-32 十三分类）+ heading + category 默认 ""；`sfCards` 要求块内含 `data-src` 封面（否则过滤——首页无图链接块会造成 259→重复计数）；`player_aaaa` 正则 `(?=<\/script>|;)` 前瞻（无分号）。tests 新增列表 + 详情 mock 2 项（14/14 全过）。
 - **headless 验收（2026-08-19）**：首页 259 卡 / 0 破图 / 14 tabs；日本分类 20 卡（heading「日本」）；搜索「人妻」20 卡；详情 = 标题 + poster（卡片图回退）+ 1 线路 + related 12；1080p（1920×1080）readyState=4 播放推进（duration 6930s，t 10.8→22.8s）；零 JS 错误。构建 + test:sites 全绿。零 cfnav 依赖。
 
-## 萌番 / HAnime（`hm`，2026-08-21 官方 V6 更新探索，尚未接入）
+## 萌番 / HAnime（`hm`，2026-08-21 已接入）
 
 - 官方 V6 帖子：[不许涩涩机场塔台 V6 更新](https://linux.do/t/topic/2783776) 宣布新增 1 站“萌番”，并上线“飞机故障 Issue”；官方实时主页当前为 **41 个节点**（影视 30 / 动漫 4 / 图集 3 / 社区 4 / GAME 0），新增入口为 `https://hm.cfnav.me/`，门户名称为“成人动漫（HAnime）”，站内品牌显示“萌番 · 简洁看番”。
 - Richy 索引与 SleazyFork/GreasyFork 检索：`docs/Richy*.txt` 没有 `hm`/HAnime 对应脚本；SleazyFork 检索到的是通用 `ComicRead`、`hanime1.me`/`hanime.tv` 增强脚本，不是 `hm.cfnav.me` 的上游或播放脚本，暂不建立映射。
 - 可见契约：主页有今日推荐、最新上市、最新上传、裏番、泡麵番、3DCG、2D动画、AI生成、MMD、Cosplay、他们在看等分区；搜索页支持关键词、排序（默认/最新上市/最新上传/观看次数/赞好比例/时长/日/周/月排行）、类型（裏番/泡麵番/Motion Anime/3DCG/2.5D/2D动画/AI生成/MMD/Cosplay）与分页。示例 `search?query=Relozer` 返回 34 个播放条目第一页。
 - 详情路由为 `/watch/{id}`。示例 `/watch/407804` 显示标题、播放次数、发布日期、上传者、标签、文件大小、相关推荐和 3 档画质（1080p/720p/480p）；播放器可见时长 `179.498s`、`1920×1080`，真实点击后 `currentTime` 从约 `2.50s` 推进到 `5.05s`，无 console 错误。当前页面直接给出短时效 MP4：`vdownload.hembed.com/{id}-1080p.mp4?secure=...`，不能把该签名 URL 写死为长期上游。
 - 字幕字段：示例详情明确显示“中文字幕：源站未提供”；官方 Issue 页记录该问题已有修复，但仍需抽样详情确认新旧条目的字幕字段与实际字幕轨道是否一致。
-- 结论：`hm` 是真实新增参考入口，目录/搜索/详情/多画质 MP4 播放契约已初步确认；独立上游域名、实时目录来源和签名生成链仍未查明。按独立性规则保持未接入，不用 HAnime/hanime1 等同类站点替代；下一步若要接入，先查 `hm` 前端 bundle/Network 与对应上游脚本，再与 `hm.cfnav.me` 做目录/排序/详情/字幕/播放逐项对照。
+- **独立上游确认**：`hanime1.com` 是 Hanime1 的公开备用域；其 `/search?query=&genre=&sort=&page=` HTML 与官方 `hm` API `/api/search` 的 ID、标题、品牌和分页逐项一致，`/watch?v={id}` 详情的 1080p/720p/480p `<source>` 也与 `hm /api/video/{id}.streams` 一致。`hanime1.com` 的普通数据中心请求会落到 Cloudflare challenge，但真实浏览器可正常读取。
+- **实时目录传输层**：当前 adapter 使用可替换的 `https://r.jina.ai/http://hanime1.com` HTML relay 读取实时页面（每次请求现抓，不落盘、不复制 `hm` 静态 JSON）；实现 `hmPage`/`hmCards`/`hmPageCount`/`hmSearchPath`。
+- **媒体链路**：详情签名 URL 来自 `https://vdownload.hembed.com/{id}-{quality}p.mp4?secure=...`，HEAD/Range 200/206、`ACAO:*`；从本地浏览器跨源直接加载会返回 403，因此 `hmMedia` 仅代理白名单 Hembed URL，带 `Referer: https://hanime1.com/` 并转发 Range/CORS，播放器使用同源 MP4。
+- **已实现与验收**：`providers/catalog.js` / `ROUTE_CONFIGS.hm`、`runtime.js hmList/hmDetail/hmMedia`、App HAnime 分类 Tab；本地 `?qa` 验收首页 24 卡、搜索 AI 第 1/2 页内容不同、详情三档线路、`407804` `readyState=4`、`currentTime 4.91→9.95s`、`1280×720`、duration `179.498s`，无目标 JS 错误；构建、Sites 21/21、Cloudflare 4/4 通过。
+- **边界**：Jina 只是可替换的目录传输层，不是 cfnav API；后续应优先替换为用户自控 relay，以降低第三方依赖与 Pages 目录请求风险。字幕字段仍按官方实际返回处理，示例条目为“源站未提供”。

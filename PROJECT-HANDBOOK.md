@@ -1,6 +1,6 @@
 # CFNav Independent 项目总台账
 
-> 最后更新：2026-08-19
+> 最后更新：2026-08-21
 >
 > 本文件是换代理、换 AI 助手、对话压缩或重新接手时的第一入口。开始工作前先读本文件，再对照 `providers/catalog.js`、`providers/runtime.js` 和 `src/App.jsx`。如文档与代码冲突，以代码的实际运行结果为准，并立即更新本文件。
 
@@ -20,18 +20,18 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 本地入口 | 40 个：原 39 个参考入口中看板娘游戏已移除，另加入参考站新增的 `sf` / 私房 TV 与 `98` / 98堂；`98` 与 `sf` 均已接入实时 adapter |
-| 独立 provider | 18 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频、98堂 dmn12、私房TV sifangtv.cc |
+| 本地入口 | 41 个：原 39 个参考入口中看板娘游戏已移除，另加入参考站新增的 `sf` / 私房 TV、`98` / 98堂与 `hm` / HAnime；`98`、`sf`、`hm` 均已接入实时 adapter |
+| 独立 provider | 19 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频、98堂 dmn12、私房TV sifangtv.cc、HAnime hanime1.com |
 | 实验来源（非参考入口） | Pornhub `ph`：2026-08-17 调查完成并已实现；2026-08-18 前端接入 Vercel relay（CF 边缘被 phncdn 按 IP 限速到 0.1–0.3MB/s 不可用；Vercel 出口 21–46MB/s 满速且未被限速），列表/详情/封面/播放全部走 `https://ph-vercel-probe.vercel.app/api`（单账号；未来多账号只需 `localStorage.phRelayBases` 加逗号分隔 URL）；用户单独要求的实验来源，不写入 ROUTE_CONFIGS、不影响门户保真；详见 SOURCE-RESEARCH.md 末尾与文末工作记录 |
-| 真实匹配完成 | 17 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频、看每日大赛、看禁漫天堂、98堂、私房TV；看TV 进入部分可用 |
+| 真实匹配完成 | 18 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频、看每日大赛、看禁漫天堂、98堂、私房TV、HAnime；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
 | 视频阶段 | 第一轮筛查已结束：7 个完整匹配、看 TV 部分可用；15 个原排除站已更新并恢复待接入；仅看主播因缺独立动态目录保持 pending |
 | 下一项 | **2026-08-19 `sf` / 私房TV 已接入并通过本地 headless 验收（真实上游 sifangtv.cc 独立官方站：首页 259 卡、13 分类/分页、搜索、详情播放页解析、1080p 明文 HLS 直连播放推进、零 JS 错误；参考站 sf.cfnav.me 为 SFE 库登录墙、上游主站 502 不可达，按用户指示 jm 模式接入替代上游，见 48 行与文末记录）**。2026-08-18 `hxc` 已接入并通过参考站 console 核对 + 本地 headless 验收（Fi11 上游 a64d.vd9h4.com：首页 24 卡与参考站逐字一致、详情/分类/搜索/翻页、全量线路 1280×720 播放推进、无片源条目与参考站同样不可播，见 65 行与文末记录）。2026-08-16 第二轮浏览器对比验收已完成：双端同内容且播放推进通过 9 站（hj/mr/tx/rou/lg/pmv/fj/ep/tna/movie）；本地可用待参考 5 站（qiying/madou/ai/jm/91）；`tv` 阻塞已复现并修复（CDN 根路径分片重写 + HLS 判断无后缀代理 URL，MyCamTV MILF readyState=4 播放推进，见文末记录）；`miss` 为上游 CF 全站挑战阻塞（本地 Node 无解，参考站 FastAPI 服务器代抓路线已查明，轮换域名全部实测 403，待海外出口）。第一轮 `pmv` 空列表已查明为验收误判（health check 并发抢占连接，已加 1.5s 超时优化）。已接入并本地 headless 验收过的站点：`qiying`、`madou`、`tx`、`rou`、`mr`、`jm`、`91`、`ai`、`lg`、`pmv`、`fj`、`movie`、`ep`、`tna`、`tv`(adulttv 39 路主题流已验，41 路 oxax 品牌流 2026-08-17 定案部署端不可用：数据中心 IP 404 + 签名绑定解析者 IP，仅本地/开发可播)、`9s`、`jav`、`kankan`、`dsd`、`hxc`、`sf`；`qms`、`hqw`、`mt`、`best`、`xf`、`sjs`、`book`、`one` 用户决定跳过（风控/登录墙/私有票据/CF 全站保护/磁力下载站/上游不明/目录锁在登录墙后）；`miss` 2026-08-16 起因上游 CF 挑战阻塞（调查中）；`dsd` 2026-08-18 已接入（真实上游懂色帝 dsd900.com，MacCMS + jsfuck 签名播放链破解，VIP 视频同源可播，见 80 行与文末记录）；`dj` 2026-08-18 调查定案用户决定跳过（黄豆短剧付费制，见 203 行）；`bj` 2026-08-18 侦查定案用户决定跳过（真实上游 skbj.tv 目录/详情/搜索全匿名可用但 storageUrl 仅登录态返回、VIP 全锁、参考播放走黄豆短剧 psfxhhox.top 不可复用，见 90 行与 SOURCE-RESEARCH.md「韩国主播 / bj 侦查记录」）；`swag` 2026-08-18 调查定案用户决定跳过（浏览层匿名可用但 AES key 端点 403 播放锁死 + 参考播放走私有 `/media?ticket=`，见 69 行与文末记录）；`kankan` 2026-08-18 已接入（真实上游 avjb.com，裸 CDN 分片匿名直连播放零代理，见 74 行与文末记录）；ASMR 按用户决定暂时跳过；`mm` / 墨影集 内容已由用户独立图库站「栖光集」完成（同批数据），聚合入口待接入、未来做外链跳转（链接未就绪）。`hj` 完整正片已实现（2026-08-16，Richy 线索验证有效并落地：preview ts 分片名 LCP 反推完整 m3u8，匿名可拉、无需金币） |
 | 构建 | `npm run build` 生成原 client/server 产物；`npm run build:cloudflare` 生成 Cloudflare Pages 的 `dist/client` |
 | Cloudflare Pages | 已有部署 `video-4nn.pages.dev`；98 研究 adapter 已在 Pages 边缘通过，根目录 `functions/` 只处理 `/provider-api/*`，静态资源不进入 Function |
-| 测试 | `npm run test:sites` 18 项；`npm run test:cloudflare` 4 项，当前均通过 |
-| 主导航视觉 | 2026-08-17 已按当前在线 `cfnav.me` 的 40-node 版本再次逐模块对齐：新增 `sf` / `98` 卡片与当前顺序/颜色/点击文案，ACTIVE NODES 40 / GAME 0，完整筛选、线路徽标、账户区、排行榜、佬友优选、绿色通道、双主题与卡片 hover。排行榜/优选没有独立真实数据时只显示明确空态，不写假用户、假标题或假热度；未接入卡继续显示 PENDING。 |
+| 测试 | `npm run test:sites` 21 项；`npm run test:cloudflare` 4 项，当前均通过 |
+| 主导航视觉 | 2026-08-21 已按当前在线 `cfnav.me` 的 41-node 版本再次逐模块对齐：新增 `hm` 卡片与当前顺序/颜色/点击文案，ACTIVE NODES 41 / GAME 0，完整筛选、线路徽标、账户区、排行榜、佬友优选、绿色通道、双主题与卡片 hover。排行榜/优选没有独立真实数据时只显示明确空态，不写假用户、假标题或假热度；未接入卡继续显示 PENDING。 |
 
 ### 状态术语
 
@@ -47,6 +47,10 @@
 |---|---|---|---|---|---|
 | `sf` | 私房 TV | 影视 / cinema | sf | 专用已验收（替代上游，jm 模式） | 2026-08-19 接入完成：真实上游 = **`sifangtv.cc` 独立官方站**（MacCMS 10；播放 CDN `v2024.sysybf.com` 明文 HLS）。**divergence 声明**：参考站 `sf.cfnav.me` 是 SFE 库登录墙 SPA——`/api/videos`、`/api/meta`、`/api/videos/{id}`、`/js/app.js` 匿名全 401；每视频播放 hex 由登录态后端签发（`14.29.46.204/aboxVOD/mp4:{hex}/manifest.mpd`，完整 hex 才 200、截断 403）；其上游 MacCMS 主站 `psf0404.shop`（=14.29.46.204 Apache/PHP）**502 已停**；封面指纹（`*.psf0404.shop`）与 GCAV 同库（SFA/SFR/SFE 编号）但与 sifangtv.cc 不同源。用户 2026-08-19 指示按 jm 模式（接受数据源 divergence、接入官方独立站、如实记录）接入 sifangtv.cc。实现：列表 `/`（首页单页，去重 259 卡）+ 13 分类 `/index.php/vod/type/id/{cat}.html` + `/page/{n}.html` 分页（20 卡/页）+ 搜索 `/index.php/vod/search/wd/{kw}.html` + `/page/{n}.html`；卡片解析 href `/index.php/vod/play/id/{id}/sid/1/nid/1.html` + `img.lozad data-src` 封面 + HD 徽章；**无详情页**，详情直接拉播放页解析 `player_aaaa` JSON（`url` 明文 m3u8、vod_class/vod_actor、相关推荐 12 卡；注意 JSON 对象后无分号直接 `</script>`）；媒体全 CORS `*`、无防盗链、无 KEY → **浏览器直连零代理**；详情弹层封面用卡片图回退（`detail.vod_pic || item.vod_pic`）。**代理机制（本地 dev 专用）**：Hostinger 对本机出口 IP 反爬封禁（连续抓取触发，全 IP TLS reset；Clash 代理 127.0.0.1:7890 出口正常）→ `sfPage` 检测 `process.env.HTTPS_PROXY`/`HTTP_PROXY` 时动态 `import("node:net"/"node:tls")` 走 **CONNECT 隧道手写 HTTP 代理**（动态 import + process 守卫，Pages workerd 无 process 永不触发）；本地 dev 需 `set HTTPS_PROXY=http://127.0.0.1:7890` 启动。headless 验收：259 卡/0 破图/14 tabs/日本分类 20 卡/搜索 20 卡/详情+相关 12/1080p 播放推进（duration 6930s）/零 JS 错误。`9s`/`hxc` 区块之后新增 `sf` 分发；tests 新增 2 项（列表+详情 mock）全过；14/14。详见 SOURCE-RESEARCH.md「私房TV / sf 侦查记录」。 |
 | `98` | 98堂 | 影视 / cinema | `kan98` | 专用已验收（列表/详情/播放；搜索翻页待上游会话修复） | 2026-08-17 已确认真实上游为 `dmn12.vip` Discuz 论坛：分类 `/forum-{fid}-{page}.html`（fid 41/109/42/43/44/45/46）、搜索 `/search.php`（结果 GET 带 `searchid/searchmd5/kw/page`）、详情 `/thread-{tid}-1-1.html`。首帖公开 `data-tid/pid/vid`，播放 `/play.php?callback=&tid=&pid=&vid=&rand=&_=` 返回 JSONP `data.flvurl`，实时生成 `tyjs.ypxjft.cn` AES-128 HLS；参考站 3691532/3691530 与源站标题、ID、时长逐项一致。Pages 边缘列表/搜索第 1 页/详情/动态 manifest/key/TS 均 200+CORS；2026-08-19 用真实 Chrome 确认上游搜索第 2 页本身可用，但 Pages Functions 的 `_safe`/搜索会话在 POST→GET 间仍被源站挡回（Pages 第 2 页返回 0 条），不伪造分页结果，待上游边缘会话方案。 |
+
+### `hm` / HAnime（新增参考入口，已接入）
+
+真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 当前经可替换的实时 `r.jina.ai` HTML relay 抓取（不保存快照、不依赖 cfnav 登录 API）；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测本地：首页 24 卡、搜索 AI 第 1/2 页内容不同、详情 3 档线路，`407804` 播放 `readyState=4`、`currentTime 4.91→9.95s`、`1280×720`、duration `179.498s`；`test:sites` 21/21、Cloudflare 4/4。注意：Jina relay 是可替换的目录传输层，后续应优先替换为用户自控 relay，以减少第三方依赖与 Pages 目录请求风险。
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
@@ -404,3 +408,4 @@ npm.cmd run test:cloudflare
 - 官方 `miss.cfnav.me/search?q=nact` 显示 **24 条结果（recombee）**，没有搜索分页；官方分类 `/list/fc2?page=N` 才有真实分页（实测共 2000 页）。因此本地 `miss` 搜索第 2 页为空同样是额外分页行为，后续应按官方搜索单页处理；分类分页仍保留。
 - 官方 `tv.cfnav.me/watch/oh-ah` 的 oxax 品牌流在同一浏览器出口复测 `readyState=0/currentTime=0/duration=null`；官方 `tv.cfnav.me/watch/aitv-mycamtv-milf` 主题流复测 `readyState=4`、`currentTime≈59.83s`、`1280×720`。oxax 不是本地独有故障，官方当前也无法解码，继续按部分可用记录。
 - `d1b74f1` 已落实上述 UI 对齐：部署端 `98`/`miss` 搜索结果不再显示分页控件，Miss 分类分页仍保留；真实浏览器复核资产 `index-kBq5UpAZ.js` 生效，`98` 搜索“西野”显示 24 条单页结果、`miss` 搜索“nact”显示 12 条单页结果，Miss 的 FC2 分类仍显示上一页/下一页。
+- 2026-08-21 **主门户 V6 UI 同步（不接入新子站）**：本地门户同步官方当前 41 节点排序与 `hm` PENDING 卡，新增“飞机故障issue”主视图标签、故障状态切换、刷新/提交按钮、排序控件和无数据空态；不恢复游戏入口、不创建 HAnime 子页面。浏览器验收：`ACTIVE NODES 41 / GAME 0`、HAnime 卡存在、故障面板可切换且空态文案正常。构建与 Sites 18/18 通过。

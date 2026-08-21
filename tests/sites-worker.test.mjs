@@ -256,6 +256,68 @@ test("sf detail extracts the plaintext m3u8 from player_aaaa", async () => {
   }
 });
 
+test("hm parses live Hanime1 search HTML through the reader relay", async () => {
+  const originalFetch = globalThis.fetch;
+  const listHtml = `<!doctype html><html><form id="skip-page-form"><input oninput="validateNumberInput(this, 1, 27)"></form><div class="video-item-container"><a href="https://hanime1.com/watch?v=407787" class="video-link"><img class="main-thumb" src="https://vdownload.hembed.com/image/thumbnail/407787l.jpg?secure=x"><div class="duration">05:42</div><div class="title">Narmaya Perverts Her Training</div></a><div class="subtitle"><a>BaraQuda</a><span class="subtitle-time">&nbsp;• 1天前</span></div></div></html>`;
+  globalThis.fetch = async (input) => {
+    assert.match(String(input), /^https:\/\/r\.jina\.ai\/http:\/\/hanime1\.com\/search/);
+    return new Response(listHtml, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await handleProviderRequest(new URL("https://app.example/provider-api/hm?pg=1&limit=24&wd=AI"));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.pagecount, 27);
+    assert.equal(body.list.length, 1);
+    assert.equal(body.list[0].vod_id, "407787");
+    assert.equal(body.list[0].vod_name, "[BaraQuda] Narmaya Perverts Her Training");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("hm detail extracts all signed MP4 qualities and metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  const detailHtml = `<!doctype html><html><head><meta property="og:title" content="Narmaya - Hanime1.me"><meta property="og:image" content="https://vdownload.hembed.com/image/thumbnail/407804h.jpg?secure=x"><meta property="og:video:duration" content="179"><meta name="description" content="detail"></head><video><source src="https://vdownload.hembed.com/407804-720p.mp4?secure=a" type="video/mp4" size="720"><source src="https://vdownload.hembed.com/407804-1080p.mp4?secure=b" type="video/mp4" size="1080"></video></html>`;
+  globalThis.fetch = async (input) => {
+    assert.match(String(input), /^https:\/\/r\.jina\.ai\/http:\/\/hanime1\.com\/watch/);
+    return new Response(detailHtml, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await handleProviderRequest(new URL("https://app.example/provider-api/hm?action=detail&id=407804"));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.vod_name, "Narmaya");
+    assert.equal(body.vod_remarks, "2:59");
+    assert.deepEqual(body.streams.map((stream) => stream.label), ["720p · 中转", "1080p · 中转"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("hm media proxy forwards ranges to Hembed with the upstream referer", async (t) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://vdownload.hembed.com/407804-720p.mp4?secure=token");
+    assert.equal(init.headers.referer, "https://hanime1.com/");
+    assert.equal(init.headers.range, "bytes=0-9");
+    return new Response(new Uint8Array([0, 1, 2]), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-range": "bytes 0-2/3", "content-length": "3" },
+    });
+  };
+  try {
+    const request = new Request("https://app.example/provider-api/hm?action=media&url=" + encodeURIComponent("https://vdownload.hembed.com/407804-720p.mp4?secure=token"), { headers: { range: "bytes=0-9" } });
+    const response = await handleProviderRequest(request);
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
+    assert.equal(response.headers.get("content-range"), "bytes 0-2/3");
+    assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [0, 1, 2]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("kan98 search page 2 reuses the real searchid from the POST redirect", async () => {
   const originalFetch = globalThis.fetch;
   const hits = [];
