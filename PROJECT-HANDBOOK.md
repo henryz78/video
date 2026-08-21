@@ -388,3 +388,12 @@ npm.cmd run test:cloudflare
 - 2026-08-20 对剩余风险项复核：`miss` Pages 列表 12、搜索 10、`milk-302` 详情与 playlist 200，真实浏览器视频 readyState=2、currentTime 3.95s 推进，已从“上游阻塞”降为可维护但需监控；`ep` 列表 24、官方 embed 点击后 readyState=4、currentTime 19.2s 推进，已通过；`tv` AdultIPTV 主题 manifest 200，oxax 品牌流仍是上游数据中心/IP 绑定问题；`98` Pages 搜索第 2 页仍返回 0（Chrome 直接上游第 2 页正常）；`jav` 已部署 eval-free/分块代理修复，目录与详情正常，普通浏览器播放仍需一次稳定采样确认。
 - 页面层抽样目录数：sf 260、98 24、ai 24、hj 20、mr 26、qiying 16、tx 12、lg 24、hxc 24、rou 153、fj 24、kankan 24、pmv 24、jm 48、9s 41、miss 12、dsd 115、movie 20、jav 24、xo 16、ep 24、madou 20、tna 24、tv 24。卡片封面未滚动时的未加载图不视为破图；已接入站点的播放证据继续以本节及既有 headless/真实浏览器记录为准。
 - **2026-08-21 官方 V6 当前版本探索（未改代码）**：`cfnav.me` 实时主页已从 40 增至 **41 个节点**，分类统计为影视 30 / 动漫 4 / 图集 3 / 社区 4 / GAME 0；新增 NODE 01 `hm.cfnav.me`「成人动漫（HAnime）」，本地仍未配置 `hm` 路由，保持待研究。顶部新增 `play.cfnav.me` 游戏站入口与“飞机故障 issue”主页标签；Issue 页当前 0 个未修复、3 个已修复，已修复记录包括 KanOne 完整播放、91 恢复、萌番字幕修复。`hm` 可见契约和播放链已记录到 SOURCE-RESEARCH.md：搜索/排序/类型/分页、`/watch/{id}` 详情、1080p/720p/480p 多画质、直接时效 MP4 播放（示例 407804：1920×1080、179.498s、真实点击后 currentTime 约 2.50→5.05s、无 console 错误）；未找到对应 Richy 或 SleazyFork/GreasyFork 专用脚本，也未确认可长期使用的独立上游，暂不接入。
+
+### 2026-08-21 指定六站部署端复核（用户要求的“重新检查”）
+
+- `91`：部署资产 `index-DQwe-AQN.js` 已上线；目录 23 卡、封面正常。搜索词“女”第 1 页与第 2/3/4/5 页首批标题逐页不同，和 `91porna.com/search?keyword=女&page=N` 对齐；根因是旧适配器搜索请求始终不带 `page` 且把 `pagecount` 固定为 1，已在 `eaa88a2` 修复并复测。
+- `miss`：目录 12 卡、详情 `SW-1064`、播放器两次采样 `readyState=4`、`currentTime 38.04→43.12s`、`1280×720`，播放链正常。搜索词 `nact` 第 1 页有 12 卡，但 Pages 第 2 页为空；上游真实浏览器的 `/search/nact?page=2` 有结果，Node/Pages 出口对 MissAV 各轮换域均返回 Cloudflare managed challenge 403（不是重复内容），因此仍记为“搜索翻页受部署出口阻塞”，不伪造空结果为正常。
+- `ep`：目录 24 卡、详情正常。Vercel relay 返回的 4 档 MP4 均可播；默认线路复测 `readyState=4`、`currentTime 0→10.71s`、`duration 61.13s`、`480×360`。HLS 线路在当前普通浏览器偶发不解码，已将可用 MP4 排在默认线路前，HLS 保留为可选线路。
+- `98`：目录 24 卡、封面 24/24、详情及动态 HLS 正常，播放 `readyState=4`、`currentTime 49.57→54.62s`、`480×270`。搜索“西野”第 1 页有结果；第 2 页仍为空。上游 Chrome 的公开 `searchid/searchmd5/kw&page=2` 有真实结果，Pages Functions 的年龄/搜索会话在 POST→GET 间仍被 dmn12 边缘挡回，保持待上游边缘会话方案。
+- `jav`：推荐 24 卡；搜索 `yuki` 第 1/2 页内容不同；详情显示 1080/720/480/240 直连与备用代理共 8 条线路。默认播放 `readyState=4`、`currentTime 9.04→14.07s`、`1920×1082`、`duration 3546.25s`，普通浏览器已稳定通过。
+- `tv`：第 3 页 AdultIPTV/MyCamTV 主题源可播，复测 `readyState=4`、`currentTime 58.97s`、`1280×720`；第 1 页 oxax 品牌流仍 `readyState=0`、无 duration，属于上游数据中心 IP/签名绑定死局，未将其冒充为可用。
