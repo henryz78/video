@@ -208,41 +208,89 @@ const EPORNER_HEADERS = {
   accept: "application/json,text/html,application/xhtml+xml,*/*;q=0.8",
 };
 
+function epornerBase36Hash(hex = "") {
+  const h = String(hex).replace(/^0x/i, "").trim();
+  if (h.length !== 32 || !/^[a-f0-9]{32}$/i.test(h)) return h;
+  return [0, 8, 16, 24].map((o) => parseInt(h.slice(o, o + 8), 16).toString(36)).join("");
+}
+
 async function epornerPlayPayload(id) {
-  let sources = null;
+  // Embed has no age gate and contains hash; xhr with hash returns signed HLS/MP4 (CORS *)
+  const embedUrl = `https://www.eporner.com/embed/${encodeURIComponent(id)}/`;
+  let hash = "";
+  let cookie = "";
   try {
-    const api = new URL("https://www.eporner.com/api/v2/video/sources/");
-    api.searchParams.set("id", id);
-    api.searchParams.set("format", "json");
-    const response = await fetch(api, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
-    if (response.ok) {
-      const data = await response.json();
-      sources = Array.isArray(data?.sources) ? data.sources : Array.isArray(data?.medias) ? data.medias : null;
+    const embed = await fetch(embedUrl, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
+    if (embed.ok) {
+      const html = await embed.text();
+      const setC = typeof embed.headers.getSetCookie === "function" ? embed.headers.getSetCookie() : [];
+      cookie = setC.map((c) => c.split(";")[0]).join("; ");
+      const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || html.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i);
+      hash = epornerBase36Hash(m ? m[1] : "");
     }
-  } catch { /* fall through to embed parse */ }
-  if (!sources) {
+  } catch { /* no hash */ }
+  if (!hash) {
+    // Fallback to watch page if embed blocked
     try {
-      const embed = await fetch(`https://www.eporner.com/embed/${encodeURIComponent(id)}/`, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
-      if (embed.ok) {
-        const html = await embed.text();
-        const files = [...html.matchAll(/["'](https?:\/\/[^"']+\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/gi)].map((m) => m[1]);
-        sources = [...new Set(files)].map((url) => ({ file: url, label: url.match(/(\d+p)/i)?.[1] || "" }));
+      const api = new URL("https://www.eporner.com/api/v2/video/id/");
+      api.searchParams.set("id", id);
+      api.searchParams.set("thumbsize", "medium");
+      api.searchParams.set("format", "json");
+      const ar = await fetch(api, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
+      if (ar.ok) {
+        const aj = await ar.json();
+        const watchUrl = aj?.url || "";
+        if (watchUrl) {
+          const wr = await fetch(watchUrl, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
+          const html = wr.ok ? await wr.text() : "";
+          const setC = typeof wr.headers.getSetCookie === "function" ? wr.headers.getSetCookie() : [];
+          cookie = setC.map((c) => c.split(";")[0]).join("; ");
+          const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/);
+          hash = epornerBase36Hash(m ? m[1] : "");
+        }
       }
-    } catch { /* no play */ }
+    } catch { /* no hash */ }
   }
-  if (!sources || !sources.length) return null;
-  const streams = sources
-    .map((s, i) => {
-      const file = s.file || s.url || s.src || "";
-      if (!/^https?:\/\//i.test(file) || !/\.(mp4|m3u8)(?:\?|$)/i.test(file)) return null;
-      const quality = (s.label || file.match(/(\d+p)/i)?.[1] || "").toString().trim();
-      return [
-        { label: quality ? `${quality} · 直连 · 推荐` : `线路 ${i + 1} · 直连 · 推荐`, url: file },
-        { label: quality ? `${quality} · 代理` : `线路 ${i + 1} · 代理`, url: `/provider-api/eporner?action=media&url=${encodeURIComponent(file)}` },
-      ];
-    })
-    .filter(Boolean)
-    .flat();
+  if (!hash) return null;
+  const callXhr = async (richy) => {
+    const u = new URL(`https://www.eporner.com/xhr/video/${encodeURIComponent(id)}`);
+    u.searchParams.set("hash", hash);
+    u.searchParams.set("domain", "www.eporner.com");
+    if (richy) {
+      u.searchParams.set("device", "generic");
+      u.searchParams.set("fallback", "false");
+    } else {
+      u.searchParams.set("pixelRatio", "2");
+      u.searchParams.set("playerWidth", "0");
+      u.searchParams.set("playerHeight", "0");
+      u.searchParams.set("fallback", "false");
+      u.searchParams.set("embed", "false");
+      u.searchParams.set("supportedFormats", "hls,dash,h265,vp9,av1,mp4");
+      u.searchParams.set("_", String(Date.now()));
+    }
+    const headers = { ...EPORNER_HEADERS, "x-requested-with": "XMLHttpRequest", referer: embedUrl, origin: "https://www.eporner.com" };
+    if (cookie) headers.cookie = cookie;
+    const r = await fetch(u, { headers, signal: AbortSignal.timeout(15_000) });
+    const text = await r.text();
+    if (!text.trim().startsWith("{")) throw new Error("non-json xhr");
+    return JSON.parse(text);
+  };
+  const valid = (j) => j && j.available === true && j.sources && Object.keys(j.sources.mp4 || {}).some((k) => !/^auto$/.test(k) && j.sources.mp4[k]?.src);
+  let data = null;
+  for (const richy of [true, false]) {
+    try {
+      const j = await callXhr(richy);
+      if (valid(j)) { data = j; break; }
+    } catch { /* try next */ }
+  }
+  if (!data) return null;
+  const streams = [];
+  const hls = data.sources.hls?.auto?.src || "";
+  if (hls) streams.push({ label: "HLS · 自动 · 推荐", url: hls, type: "application/x-mpegURL" });
+  for (const [label, v] of Object.entries(data.sources.mp4 || {})) {
+    if (v && v.src && !/\.na\.mp4/i.test(v.src)) streams.push({ label: `${label} MP4`, url: v.src, type: v.type || "video/mp4" });
+  }
+  if (!streams.length) return null;
   return { streams, play_notice: "eporner 官方源直链 · 自建播放器", media_kind: "video" };
 }
 
