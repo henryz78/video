@@ -403,3 +403,4 @@ npm.cmd run test:cloudflare
 - 官方 `98.cfnav.me` 的前端 bundle 直接加载 `/data/videos.json` 并在浏览器端筛选，`/search?q=西野` 返回 1 条、`/search?q=女` 返回 53 条，`?page=2` 仍是同一个单页结果，没有搜索分页。因此本地 `98` 的空第 2 页不是“官方也坏了”，而是本地额外暴露了上游论坛翻页；若追求官方牌型，应隐藏 `98` 搜索分页，而不是继续做 Pages 会话中转。
 - 官方 `miss.cfnav.me/search?q=nact` 显示 **24 条结果（recombee）**，没有搜索分页；官方分类 `/list/fc2?page=N` 才有真实分页（实测共 2000 页）。因此本地 `miss` 搜索第 2 页为空同样是额外分页行为，后续应按官方搜索单页处理；分类分页仍保留。
 - 官方 `tv.cfnav.me/watch/oh-ah` 的 oxax 品牌流在同一浏览器出口复测 `readyState=0/currentTime=0/duration=null`；官方 `tv.cfnav.me/watch/aitv-mycamtv-milf` 主题流复测 `readyState=4`、`currentTime≈59.83s`、`1280×720`。oxax 不是本地独有故障，官方当前也无法解码，继续按部分可用记录。
+- `d1b74f1` 已落实上述 UI 对齐：部署端 `98`/`miss` 搜索结果不再显示分页控件，Miss 分类分页仍保留；真实浏览器复核资产 `index-kBq5UpAZ.js` 生效，`98` 搜索“西野”显示 24 条单页结果、`miss` 搜索“nact”显示 12 条单页结果，Miss 的 FC2 分类仍显示上一页/下一页。
