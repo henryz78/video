@@ -545,20 +545,20 @@ function SitePage({ site, go, health, setHealth }) {
           const r = await fetch(epDetailUrl(item.vod_id));
           if (!r.ok) throw new Error(`详情返回 ${r.status}`);
           const card = epNormalize(await r.json());
-          // 优先级：CF Pages -> Vercel relay（浏览器直连已用于详情，播放需中继）
+          // eporner 特殊：CF 边缘被上游 JS 挑战拦截（369B 跳转页），Vercel 正常；走 Vercel 为主、CF 为备，避免 15s 等待
           let streams = null;
           try {
-            const cr = await fetch(`/provider-api/eporner?action=play&id=${encodeURIComponent(item.vod_id)}`, { signal: AbortSignal.timeout(15_000) });
-            if (cr.ok) {
-              const cj = await cr.json();
-              if (cj.streams?.length) streams = cj;
-            }
-          } catch { /* CF unavailable, fallback to Vercel */ }
+            const pr = await phRelayFetch({ action: "ep", id: item.vod_id }, { signal: AbortSignal.timeout(15_000) });
+            const pj = await pr.json();
+            if (pj.streams?.length) streams = pj;
+          } catch { /* Vercel unavailable, fallback to CF */ }
           if (!streams) {
             try {
-              const pr = await phRelayFetch({ action: "ep", id: item.vod_id }, { signal: AbortSignal.timeout(30_000) });
-              const pj = await pr.json();
-              if (pj.streams?.length) streams = pj;
+              const cr = await fetch(`/provider-api/eporner?action=play&id=${encodeURIComponent(item.vod_id)}`, { signal: AbortSignal.timeout(15_000) });
+              if (cr.ok) {
+                const cj = await cr.json();
+                if (cj.streams?.length) streams = cj;
+              }
             } catch { /* 中继不可用时仅展示详情 */ }
           }
           if (streams?.streams) { card.streams = streams.streams; card.vod_play_url = streams.streams[0]?.url || ""; card.play_notice = streams.play_notice || "eporner 官方源直链 · 自建播放器"; }
