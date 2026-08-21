@@ -4144,30 +4144,47 @@ async function javMedia(requestUrl, request) {
     return json({ message: "invalid jav media host" }, { status: 400 });
   }
 const headers = { ...JAV_DETAIL_HEADERS };
-  const CHUNK = 8 * 1024 * 1024;
+  const MAX_CHUNK = 8 * 1024 * 1024;
+  // javhd's MP4 moov atom can exceed 3 MB; keep the first response large
+  // enough to contain it so Chrome can start without a second metadata pass.
+  const FIRST_CHUNK = MAX_CHUNK;
   const parsed = (request?.headers?.get?.("range") || "").match(/^bytes=(\d*)-(\d*)$/);
   const start = parsed && parsed[1] !== "" ? Number(parsed[1]) : 0;
-  let end = parsed && parsed[2] !== "" ? Number(parsed[2]) : start + CHUNK - 1;
-  if (end - start + 1 > CHUNK) end = start + CHUNK - 1;
+  const openEnded = !parsed || parsed[2] === "";
+  const chunkSize = start === 0 && openEnded ? FIRST_CHUNK : MAX_CHUNK;
+  let end = parsed && parsed[2] !== "" ? Number(parsed[2]) : start + chunkSize - 1;
+  if (end - start + 1 > MAX_CHUNK) end = start + MAX_CHUNK - 1;
   headers.range = `bytes=${start}-${end}`;
   let upstream;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      upstream = await fetch(target, { headers, signal: AbortSignal.timeout(15_000) });
+      // Do not apply a fixed timeout to the response body. Large signed MP4
+      // ranges can take longer than 15 seconds to stream; aborting after
+      // headers arrive leaves the browser stuck at metadata. The client
+      // request signal still cancels the fetch when the player is closed.
+      upstream = await fetch(target, { headers, ...(request?.signal ? { signal: request.signal } : {}) });
       break;
     } catch (error) {
       if (attempt === 2) return json({ message: "jav media upstream unreachable" }, { status: 502 });
       await new Promise((resolve) => setTimeout(resolve, 1200));
     }
   }
-const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
+  const total = upstream.headers.get("content-range")?.match(/\/(\d+)/)?.[1] || upstream.headers.get("content-length") || "";
   const limit = Math.max(0, end - start + 1);
   const out = new Headers();
+  // Keep the fallback recognisable as MP4.  Some Chrome builds otherwise
+  // leave the media element at metadata-only even when the Range bytes are
+  // valid.
+  out.set("content-type", upstream.headers.get("content-type") || "video/mp4");
   out.set("accept-ranges", "bytes");
   if (total) out.set("content-range", `bytes ${start}-${end}/${total}`);
   out.set("content-length", String(Math.min(limit, Number(total || limit) - start)));
   out.set("access-control-allow-origin", "*");
-  out.set("cache-control", "public, max-age=300");
+  // Range is a request header, not part of the proxy URL.  Caching a first
+  // chunk under that URL can replay the wrong bytes for later ranges and make
+  // a long MP4 appear to stall.
+  out.set("cache-control", "no-store");
+  out.set("vary", "Range");
   return new Response(javTruncate(upstream.body, limit), { status: 206, headers: out });
 }
 

@@ -391,7 +391,7 @@ npm.cmd run test:cloudflare
 - `91porna.com` 当前卡片图片从 `pic.xmbvxj.cn` 轮换为 `pic.yrfmba.cn`；`providers/runtime.js` 已同时修正卡片正则与 AES 图片代理白名单，提交 `889304f` 已推送并部署。Pages 复核已恢复 23 条卡片、详情 m3u8 200；真实浏览器点播受控制接口超时影响未重复计为失败，Node/媒体链路正常。
 - 2026-08-20 对剩余风险项复核：`miss` Pages 列表 12、搜索 10、`milk-302` 详情与 playlist 200，真实浏览器视频 readyState=2、currentTime 3.95s 推进，已从“上游阻塞”降为可维护但需监控；`ep` 列表 24、官方 embed 点击后 readyState=4、currentTime 19.2s 推进，已通过；`tv` AdultIPTV 主题 manifest 200，oxax 品牌流仍是上游数据中心/IP 绑定问题；`98` Pages 搜索第 2 页仍返回 0（Chrome 直接上游第 2 页正常）；`jav` 已部署 eval-free/分块代理修复，目录与详情正常，普通浏览器播放仍需一次稳定采样确认。
 - 页面层抽样目录数：sf 260、98 24、ai 24、hj 20、mr 26、qiying 16、tx 12、lg 24、hxc 24、rou 153、fj 24、kankan 24、pmv 24、jm 48、9s 41、miss 12、dsd 115、movie 20、jav 24、xo 16、ep 24、madou 20、tna 24、tv 24。卡片封面未滚动时的未加载图不视为破图；已接入站点的播放证据继续以本节及既有 headless/真实浏览器记录为准。
-- **2026-08-21 官方 V6 当前版本探索（未改代码）**：`cfnav.me` 实时主页已从 40 增至 **41 个节点**，分类统计为影视 30 / 动漫 4 / 图集 3 / 社区 4 / GAME 0；新增 NODE 01 `hm.cfnav.me`「成人动漫（HAnime）」，本地仍未配置 `hm` 路由，保持待研究。顶部新增 `play.cfnav.me` 游戏站入口与“飞机故障 issue”主页标签；Issue 页当前 0 个未修复、3 个已修复，已修复记录包括 KanOne 完整播放、91 恢复、萌番字幕修复。`hm` 可见契约和播放链已记录到 SOURCE-RESEARCH.md：搜索/排序/类型/分页、`/watch/{id}` 详情、1080p/720p/480p 多画质、直接时效 MP4 播放（示例 407804：1920×1080、179.498s、真实点击后 currentTime 约 2.50→5.05s、无 console 错误）；未找到对应 Richy 或 SleazyFork/GreasyFork 专用脚本，也未确认可长期使用的独立上游，暂不接入。
+- **2026-08-21 官方 V6 当前版本探索与 hm 接入**：`cfnav.me` 实时主页已从 40 增至 **41 个节点**，分类统计为影视 30 / 动漫 4 / 图集 3 / 社区 4 / GAME 0；新增 NODE 01 `hm.cfnav.me`「成人动漫（HAnime）」。`hm` 已接入独立实时 adapter：目录/搜索/分页经 Railway → Vercel → `r.jina.ai` 三层 HTML relay，媒体经 Pages 同源 Range 代理带 Hembed Referer；部署端已验证 24 卡、`AI` 搜索第 1/2 页内容不同，示例 407804 的 720p 播放 `readyState=4`、`currentTime 0.78→7.54s`、`1280×720`。顶部新增 `play.cfnav.me` 游戏站入口与“飞机故障 issue”主页标签；Issue 页当前 0 个未修复、3 个已修复，已修复记录包括 KanOne 完整播放、91 恢复、萌番字幕修复。`hm` 仍不依赖 `cfnav.me` 登录 API。
 
 ### 2026-08-21 指定六站部署端复核（用户要求的“重新检查”）
 
@@ -400,7 +400,9 @@ npm.cmd run test:cloudflare
 - `ep`：目录 24 卡、详情正常。Vercel relay 返回的 4 档 MP4 均可播；默认线路复测 `readyState=4`、`currentTime 0→10.71s`、`duration 61.13s`、`480×360`。HLS 线路在当前普通浏览器偶发不解码，已将可用 MP4 排在默认线路前，HLS 保留为可选线路。
 - `98`：目录 24 卡、封面 24/24、详情及动态 HLS 正常，播放 `readyState=4`、`currentTime 49.57→54.62s`、`480×270`。搜索“西野”第 1 页有结果；第 2 页仍为空。上游 Chrome 的公开 `searchid/searchmd5/kw&page=2` 有真实结果，Pages Functions 的年龄/搜索会话在 POST→GET 间仍被 dmn12 边缘挡回，保持待上游边缘会话方案。
 - `jav`：推荐 24 卡；搜索 `yuki` 第 1/2 页内容不同；详情显示 1080/720/480/240 直连与备用代理共 8 条线路。默认播放 `readyState=4`、`currentTime 9.04→14.07s`、`1920×1082`、`duration 3546.25s`，普通浏览器已稳定通过。
+- 2026-08-21 `jav` 缓冲修复：Pages 分块代理保留完整 8MB 首块（覆盖大 `moov`）、补齐 `Content-Type`、关闭 Range 响应缓存并取消固定 15 秒 body 超时；播放器在高码率首帧超过 15 秒时自动切到较低直连码率。最新本地真实浏览器采样默认 1080p `readyState=4`、`currentTime 3.29→15.82s`、`1920×1082`，无媒体错误；同条目 240p 直连约 30 秒内 `readyState=4`、`currentTime≈42.5s`。
 - `tv`：第 3 页 AdultIPTV/MyCamTV 主题源可播，复测 `readyState=4`、`currentTime 58.97s`、`1280×720`；第 1 页 oxax 品牌流仍 `readyState=0`、无 duration，属于上游数据中心 IP/签名绑定死局，未将其冒充为可用。
+- 本轮追加部署端复核：`xo` 默认公开条目手动点播后 `readyState=4`、`currentTime 0→2.38s` 并持续推进；`hm` 目录 24 卡、`AI` 搜索第 1/2 页不同、407804 720p `readyState=4` 且持续推进；`91` 搜索广泛关键词的第 2–5 页首批标题均不同，详情 720×1280 播放推进；`ep` 默认 MP4 `readyState=4`、`currentTime 4.76→11.80s`；`jav` 搜索/分页不同，普通浏览器长 MP4 会经历缓冲但 `currentTime` 持续推进、无媒体错误；`miss` 搜索保持单页，分类仍分页，手动点播后 `readyState=4`、`currentTime 379.00→390.24s`；`98` 搜索保持单页，手动点播后 `readyState=4`、`currentTime 9.97→22.06s`。`zb` 仍按无独立动态目录规则显示 `SOURCE PENDING`，未用替代数据冒充完成。
 
 ### 2026-08-21 参考站同项对照（修正“搜索第 2 页”判断）
 

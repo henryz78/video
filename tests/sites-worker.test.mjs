@@ -391,7 +391,7 @@ test("jav play returns direct CDN streams with proxy fallback", async () => {
   }
 });
 
-test("jav media proxy caps each response at 8MB with correct content-range", async () => {
+test("jav media proxy preserves the full first metadata chunk and caps ranges at 8MB", async () => {
   const originalFetch = globalThis.fetch;
   const captured = [];
   globalThis.fetch = async (input, init) => {
@@ -409,20 +409,23 @@ test("jav media proxy caps each response at 8MB with correct content-range", asy
   };
   try {
     const url = "https://c3.cdnjhd.com/x==,1787148997/content-01/contents/1-a/videos/1-a_sh.mp4";
-    // open-ended browser range -> capped to 8MB chunk
+    // open-ended first range -> 8MB so large moov atoms are complete
     const r1 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=0-" } }));
     assert.equal(r1.status, 206);
     assert.equal(r1.headers.get("content-range"), "bytes 0-8388607/3337577689");
     assert.equal(captured[0], "bytes=0-8388607");
     assert.equal((await r1.arrayBuffer()).byteLength, 8388608);
     assert.equal(r1.headers.get("access-control-allow-origin"), "*");
+    assert.equal(r1.headers.get("content-type"), "video/mp4");
+    assert.equal(r1.headers.get("cache-control"), "no-store");
+    assert.equal(r1.headers.get("vary"), "Range");
     // explicit small range passes through
     const r2 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=1000-1999" } }));
     assert.equal(r2.status, 206);
     assert.equal(r2.headers.get("content-range"), "bytes 1000-1999/3337577689");
     assert.equal(captured[1], "bytes=1000-1999");
     assert.equal((await r2.arrayBuffer()).byteLength, 1000);
-    // huge explicit range capped to 8MB
+    // huge explicit range is still capped to 8MB
     const r3 = await handleProviderRequest(new Request("https://app.example/provider-api/jav?action=media&url=" + encodeURIComponent(url), { headers: { range: "bytes=0-100000000" } }));
     assert.equal(r3.headers.get("content-range"), "bytes 0-8388607/3337577689");
     assert.equal(captured[2], "bytes=0-8388607");

@@ -714,6 +714,26 @@ function DetailModal({ item, mode, provider, onClose }) {
       return () => hls.destroy();
     }
   }, [active, mode, item.detail_loading, provider?.id, retry]);
+  useEffect(() => {
+    // javhd's signed 1080p/720p MP4s can be multi-GB.  Keep those choices
+    // visible, but if the first frame has not arrived after a reasonable
+    // window, switch to the highest lower direct bitrate so playback starts
+    // instead of leaving the user on an indefinite spinner.
+    if (provider?.id !== "jav" || !active || item.detail_loading) return;
+    const quality = Number(active.quality || 0);
+    if (quality < 480) return;
+    const timer = window.setTimeout(() => {
+      const media = mediaRef.current;
+      if (!media || media.readyState >= 2 || media.currentTime > 0.2) return;
+      const direct = streams.find((stream) => stream.quality === quality && /^https?:\/\//i.test(stream.url));
+      const lower = streams
+        .filter((stream) => /^https?:\/\//i.test(stream.url) && stream.quality < quality)
+        .sort((a, b) => b.quality - a.quality)[0];
+      const fallback = active.url.startsWith("/provider-api/") ? (direct || lower) : lower;
+      if (fallback && fallback.url !== active.url) setActive(fallback);
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [active, item.detail_loading, item.vod_play_url, provider?.id]);
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><article className="detail-modal"><button className="modal-close" onClick={onClose}>关闭</button>
     <div className="player-shell">{item.detail_loading ? <div className="no-stream">正在解析公开播放线路…</div> : item.detail_error ? <div className="no-stream">{item.detail_error}</div> : item.media_kind === "embed" && item.embed_url ? <iframe src={item.embed_url} title={item.vod_name || "视频播放器"} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen referrerPolicy="origin" style={{ width: "100%", height: "100%", minHeight: "52vh", border: 0, background: "#000" }} /> : item.media_kind === "image" && item.media_url ? <img src={item.media_url} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", maxHeight: "72vh", objectFit: "contain", background: "#000" }} /> : active ? (isAudio ? <audio ref={mediaRef} controls /> : <video ref={mediaRef} controls playsInline crossOrigin={provider?.id === "hm" ? undefined : "anonymous"} preload="metadata" poster={item.vod_pic} referrerPolicy={provider?.id === "hm" ? undefined : "no-referrer"} onError={() => { if (retry < 2) setRetry((r) => r + 1); }} />) : <div className="no-stream">此条目没有公开播放地址</div>}</div>
     <div className="detail-copy"><small>{item.type_name || "CONTENT DETAIL"}</small><h2>{item.vod_name}</h2><p>{item.vod_blurb || item.vod_content?.replace(/<[^>]+>/g, "") || "暂无简介"}</p>{streams.length > 0 && <div className="stream-list">{streams.slice(0, 24).map((stream, i) => <button className={active?.url === stream.url ? "active" : ""} key={`${stream.url}-${i}`} onClick={() => setActive(stream)}>{stream.label}</button>)}</div>}<dl><div><dt>年份</dt><dd>{item.vod_year || "—"}</dd></div><div><dt>地区</dt><dd>{item.vod_area || "—"}</dd></div><div><dt>来源</dt><dd>{provider.name}</dd></div></dl></div>
