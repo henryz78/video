@@ -3594,6 +3594,7 @@ const HM_READER_HEADERS = {
   "x-return-format": "html",
   "user-agent": "CFNav-Independent/2.0",
 };
+let hmReaderCursor = 0;
 const HM_TABS = [
   ["latest", "最新上市"], ["uploaded", "最新上傳"], ["裏番", "裏番"], ["泡麵番", "泡麵番"],
   ["Motion Anime", "Motion Anime"], ["3DCG", "3DCG"], ["2.5D", "2.5D"], ["2D動畫", "2D動畫"],
@@ -3611,7 +3612,9 @@ function hmMediaUrl(url) {
 async function hmPage(pathname) {
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
   let lastError;
-  for (const origin of HM_READER_ORIGINS) {
+  const start = hmReaderCursor++ % HM_READER_ORIGINS.length;
+  const origins = HM_READER_ORIGINS.slice(start).concat(HM_READER_ORIGINS.slice(0, start));
+  for (const origin of origins) {
     try {
       const response = await fetch(`${origin}${path}`, {
         headers: HM_READER_HEADERS,
