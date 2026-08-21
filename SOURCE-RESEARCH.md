@@ -21,6 +21,7 @@
 | Richy (11).txt | 18mh.net（及 jmtt1.net 镜像） | `jm` / 看禁漫天堂 | 去广告 + 保漫画/小说/视频可播 + 下载；jm 已实现（18mh.net 官方新站） |
 | Richy (12).txt | haijiao.com（看海角） | `hj` / 看海角 | **已落地**：屏蔽广告/剪贴板劫持、捕获完整 m3u8/音频、原位播放/下载；hj 完整正片实现（wasm `jquery_key` 解密、ts 分片 LCP 反推完整 m3u8）源自此脚本线索 |
 | Richy (13).txt | pornhub.com（实验来源） | `ph`（非参考入口） | **已落地**：去前贴片/暂停/片尾广告、保留原生播放器与全部视频源；ph 调查确认本架构自建播放器无需它 |
+| Richy-十六弹.txt | eporner.com | `ep` / Flux | **已落地（2026-08-21）**：`hash` 提取 + `base36` 转换 + `xhr` 双参集回退；验证 `embed` 无年龄墙（`hd-porn` 有 5742B）、`EP.video.player.hash` 32hex → 4×8hex→36 进制拼接 |
 | Richy.txt | bestjavporn.com | `best` | BestJavPorn 去广告与原生播放修复 v2.5.0；调查确认上游 WordPress + streamplay JWT 播放链，但目录锁在参考站登录墙后，用户跳过 |
 | Richy.py.txt | 漫画站（bz2vraf.live 等） | — | Python 漫画下载器 + 竖版阅读器（`comic.py 52065` 下载全章节→阅读器；`--workers` 并发加速），非浏览器脚本 |
 
@@ -124,6 +125,14 @@
 - **isLikelyPreviewPlaylist**：`#EXTINF` 总时长 ≤45s 且 ts 数 ≤50 判为试看（老帖 URL 常无 preview 字样）。
 - `decodeEncryptString`：三层 `atob`（与我们的 `hjB64Decode` 一致）。
 - **验证结论（2026-08-16，已实施）**：候选 `xxx_i.m3u8`（preview 名去 `_preview`）实测 404；**正确反推 = ts 分片名 LCP + `.m3u8`**（`getRealVideoSrc` 分支），且**匿名可拉、无需签名/登录**。实现：`hjPlaylist` 先拉 preview playlist → `hjTsStem` 求 ts 名 LCP → 探测 `{stem}.m3u8`，合法即用完整片、否则回退 preview。headless 验收播放越过 preview 31s 极限（duration 1664s、推进至 45.2s）。`/api/address/`（评分 100 的最可信源）正确参数仍未复现，未采用。
+
+### Eporner `ep` 侦查记录（2026-08-21，已接入）
+
+- 真实上游 `www.eporner.com`：`api/v2/video/search|id` 浏览器直连（`*`，`src/App.jsx:319/332`）；`embed/{id}/` 含 `EP.video.player.hash` 32hex（`3877ad7f...`），无年龄墙；`hd-porn/{id}/` 在 Vercel 侧命中 5742B `Age Verification`（验证 `watchDebug`），`embed` 则直接 200 含 hash。
+- `hash` 转换：`vjs851.js` 内 `4×8hex → parseInt(,16).toString(36)` 拼接，32hex → 25位 base36（如 `d680494cfd6cbe10d6523be449a21a24` → `1nilb2k1ybe0pc1ngsmaskfi23o`，与用户浏览器逐字一致）。
+- `xhr/video/{id}?hash={base36}&domain=www.eporner.com&device=generic&fallback=false`（Richy 极简集）或全参集（`pixelRatio/playerWidth/playerHeight/embed/supportedFormats/_`），需带 `cookie`（`EPRNS/PHPSESSID`）与 `referer`，返回 `available:true` + `sources{hls.auto.src, mp4{720p/480p/360p/240p}}`（签名 `hash/expires/ip`，约 22h 有效，`ip` 不校验，任意 IP 可播）。
+- CF 边缘 `embed` 被 `369B` JS 挑战拦截（`a^23` 解码跳转 `https://www.eporner.com/`），`api` 也返回 `<!doctype`，故 CF 作备援，Vercel 为主（`src/App.jsx:548`）。
+- Richy 十六弹（`docs/Richy-十六弹.txt` v1.1.0，去广告/VAST）与 SleazyFork 589423 v1.0.0（去广告·隐私·下载，`fetchXhrVideo` 含 `device=generic`）共同验证极简参集与 `base36` 逻辑。
 
 ### iptv-org 开放频道库（电视直播）
 
@@ -844,3 +853,12 @@
 - **反爬（2026-08-19 实测）**：本机出口直连全 IP TLS reset（000；curl/undici 均挂——2026-08-18 密集抓取触发 Hostinger 反爬封禁），但 Clash 代理 127.0.0.1:7890 出口正常（200/265KB）。→ `sfPage` 检测 `process.env.HTTPS_PROXY`/`HTTP_PROXY` 时动态 `import("node:net"/"node:tls")` + 手写 CONNECT 隧道 HTTP/1.1 GET（`sfProxyRequest`；动态 import + `typeof process` 守卫，Pages workerd 无 process 永不触发）。本地 dev 需 `set HTTPS_PROXY=http://127.0.0.1:7890`。生产 Pages 边缘直连（Hostinger 对 CF 边缘 IP 无封禁迹象，如被封则通过部署验证再定）。
 - **实现**：runtime.js `sfPage/sfFetch/sfProxyRequest/sfAsset/sfCards/sfList/sfDetail` + 分发；catalog.js `sf`（divergence 记录）+ ROUTE_CONFIGS.sf；App.jsx `SF_TABS`（"" 最新 + 20-32 十三分类）+ heading + category 默认 ""；`sfCards` 要求块内含 `data-src` 封面（否则过滤——首页无图链接块会造成 259→重复计数）；`player_aaaa` 正则 `(?=<\/script>|;)` 前瞻（无分号）。tests 新增列表 + 详情 mock 2 项（14/14 全过）。
 - **headless 验收（2026-08-19）**：首页 259 卡 / 0 破图 / 14 tabs；日本分类 20 卡（heading「日本」）；搜索「人妻」20 卡；详情 = 标题 + poster（卡片图回退）+ 1 线路 + related 12；1080p（1920×1080）readyState=4 播放推进（duration 6930s，t 10.8→22.8s）；零 JS 错误。构建 + test:sites 全绿。零 cfnav 依赖。
+
+## 萌番 / HAnime（`hm`，2026-08-21 官方 V6 更新探索，尚未接入）
+
+- 官方 V6 帖子：[不许涩涩机场塔台 V6 更新](https://linux.do/t/topic/2783776) 宣布新增 1 站“萌番”，并上线“飞机故障 Issue”；官方实时主页当前为 **41 个节点**（影视 30 / 动漫 4 / 图集 3 / 社区 4 / GAME 0），新增入口为 `https://hm.cfnav.me/`，门户名称为“成人动漫（HAnime）”，站内品牌显示“萌番 · 简洁看番”。
+- Richy 索引与 SleazyFork/GreasyFork 检索：`docs/Richy*.txt` 没有 `hm`/HAnime 对应脚本；SleazyFork 检索到的是通用 `ComicRead`、`hanime1.me`/`hanime.tv` 增强脚本，不是 `hm.cfnav.me` 的上游或播放脚本，暂不建立映射。
+- 可见契约：主页有今日推荐、最新上市、最新上传、裏番、泡麵番、3DCG、2D动画、AI生成、MMD、Cosplay、他们在看等分区；搜索页支持关键词、排序（默认/最新上市/最新上传/观看次数/赞好比例/时长/日/周/月排行）、类型（裏番/泡麵番/Motion Anime/3DCG/2.5D/2D动画/AI生成/MMD/Cosplay）与分页。示例 `search?query=Relozer` 返回 34 个播放条目第一页。
+- 详情路由为 `/watch/{id}`。示例 `/watch/407804` 显示标题、播放次数、发布日期、上传者、标签、文件大小、相关推荐和 3 档画质（1080p/720p/480p）；播放器可见时长 `179.498s`、`1920×1080`，真实点击后 `currentTime` 从约 `2.50s` 推进到 `5.05s`，无 console 错误。当前页面直接给出短时效 MP4：`vdownload.hembed.com/{id}-1080p.mp4?secure=...`，不能把该签名 URL 写死为长期上游。
+- 字幕字段：示例详情明确显示“中文字幕：源站未提供”；官方 Issue 页记录该问题已有修复，但仍需抽样详情确认新旧条目的字幕字段与实际字幕轨道是否一致。
+- 结论：`hm` 是真实新增参考入口，目录/搜索/详情/多画质 MP4 播放契约已初步确认；独立上游域名、实时目录来源和签名生成链仍未查明。按独立性规则保持未接入，不用 HAnime/hanime1 等同类站点替代；下一步若要接入，先查 `hm` 前端 bundle/Network 与对应上游脚本，再与 `hm.cfnav.me` 做目录/排序/详情/字幕/播放逐项对照。

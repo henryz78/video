@@ -215,24 +215,20 @@ function epornerBase36Hash(hex = "") {
 }
 
 async function epornerPlayPayload(id) {
-  // Embed has no age gate and contains hash; xhr with hash returns signed HLS/MP4 (CORS *)
   const embedUrl = `https://www.eporner.com/embed/${encodeURIComponent(id)}/`;
   let hash = "";
   let cookie = "";
-  let debug = { embed: null, watch: null, xhrAttempts: [] };
   try {
     const embed = await fetch(embedUrl, { headers: EPORNER_HEADERS, signal: AbortSignal.timeout(15_000) });
-    const html = embed.ok ? await embed.text() : "";
-    const setC = typeof embed.headers.getSetCookie === "function" ? embed.headers.getSetCookie() : [];
-    cookie = setC.map((c) => c.split(";")[0]).join("; ");
-    debug.embed = { status: embed.status, len: html.length, hasHash: /EP\.video\.player\.hash/.test(html), preview: html.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) };
-    const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || html.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i);
-    hash = epornerBase36Hash(m ? m[1] : "");
-  } catch (e) {
-    debug.embed = { error: (e?.message || String(e)).slice(0, 100) };
-  }
+    if (embed.ok) {
+      const html = await embed.text();
+      const setC = typeof embed.headers.getSetCookie === "function" ? embed.headers.getSetCookie() : [];
+      cookie = setC.map((c) => c.split(";")[0]).join("; ");
+      const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/) || html.match(/hash\s*=\s*['"]([a-z0-9]+)['"]/i);
+      hash = epornerBase36Hash(m ? m[1] : "");
+    }
+  } catch { /* no hash */ }
   if (!hash) {
-    // Fallback to watch page if embed blocked
     try {
       const api = new URL("https://www.eporner.com/api/v2/video/id/");
       api.searchParams.set("id", id);
@@ -247,20 +243,13 @@ async function epornerPlayPayload(id) {
           const html = wr.ok ? await wr.text() : "";
           const setC = typeof wr.headers.getSetCookie === "function" ? wr.headers.getSetCookie() : [];
           cookie = setC.map((c) => c.split(";")[0]).join("; ");
-          debug.watch = { status: wr.status, len: html.length, hasHash: /EP\.video\.player\.hash/.test(html), preview: html.slice(0, 400).replace(/\s+/g, " ").slice(0, 400) };
           const m = html.match(/EP\.video\.player\.hash\s*=\s*['"]([a-zA-Z0-9_-]+)['"]/);
           hash = epornerBase36Hash(m ? m[1] : "");
         }
       }
-    } catch (e) {
-      debug.watch = { error: (e?.message || String(e)).slice(0, 100) };
-    }
+    } catch { /* no hash */ }
   }
-  if (!hash) {
-    const err = new Error("no hash");
-    err.debug = debug;
-    throw err;
-  }
+  if (!hash) return null;
   const callXhr = async (richy) => {
     const u = new URL(`https://www.eporner.com/xhr/video/${encodeURIComponent(id)}`);
     u.searchParams.set("hash", hash);
@@ -290,16 +279,9 @@ async function epornerPlayPayload(id) {
     try {
       const j = await callXhr(richy);
       if (valid(j)) { data = j; break; }
-      debug.xhrAttempts.push(`xhr-${richy ? "richy" : "full"}: code ${j?.code}`);
-    } catch (e) {
-      debug.xhrAttempts.push(`xhr-${richy ? "richy" : "full"}: ${(e?.message || String(e)).slice(0, 60)}`);
-    }
+    } catch { /* try next */ }
   }
-  if (!data) {
-    const err = new Error("xhr failed");
-    err.debug = debug;
-    throw err;
-  }
+  if (!data) return null;
   const streams = [];
   const hls = data.sources.hls?.auto?.src || "";
   if (hls) streams.push({ label: "HLS · 自动 · 推荐", url: hls, type: "application/x-mpegURL" });
@@ -313,13 +295,9 @@ async function epornerPlayPayload(id) {
 async function epornerPlay(requestUrl) {
   const id = requestUrl.searchParams.get("id") || "";
   if (!/^[a-z0-9_-]+$/i.test(id)) return json({ message: "invalid id" }, { status: 400 });
-  try {
-    const payload = await epornerPlayPayload(id);
-    if (!payload) return json({ message: "eporner play unavailable", provider: "eporner" }, { status: 404 });
-    return json({ vod_id: id, ...payload, provider: "eporner" }, { headers: { "cache-control": "public, max-age=120" } });
-  } catch (e) {
-    return json({ message: "eporner play unavailable", provider: "eporner", debug: e.debug || String(e?.message || e) }, { status: 502 });
-  }
+  const payload = await epornerPlayPayload(id);
+  if (!payload) return json({ message: "eporner play unavailable", provider: "eporner" }, { status: 404 });
+  return json({ vod_id: id, ...payload, provider: "eporner" }, { headers: { "cache-control": "public, max-age=120" } });
 }
 
 async function epornerMedia(requestUrl) {
