@@ -2,49 +2,50 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
 import { getProviderForSite, PROVIDERS } from "../providers/catalog.js";
 
-// Homepage metadata follows the live 2026-08-17 reference portal. Provider routing
-// remains slug-based in providers/catalog.js; sf stays pending while 98 uses the verified live adapter.
+// Homepage metadata follows the live 2026-08-21 reference portal. Provider routing
+// remains slug-based in providers/catalog.js; hm is a UI-only pending shell until its real source is confirmed.
 const SITE_BLUEPRINTS = [
-  [1, "sf", "私房 TV", "影视", "video", "red", "#FF6B63", "255, 107, 99", "私房影视与频道内容浏览", "cinema", "direct", "1,430", true],
-  [2, "98", "98堂", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "分类清晰的高清视频浏览站", "cinema", "direct", "1,149", true],
-  [3, "ai", "麻豆视频(AI)", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "AI 视频分类、搜索与播放", "cinema", "direct", "4,519"],
-  [4, "hj", "看海角", "社区", "community", "amber", "#F6C453", "246, 196, 83", "轻量内容聚合入口", "feed", "direct", "4,285"],
-  [5, "91", "看91", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "简洁影院，热门短视频与分类浏览", "cinema", "relay", "3,955"],
-  [6, "mr", "看每日大赛", "社区", "community", "orange", "#FFAD78", "255, 173, 120", "数据源镜像阅读与本地解密展示", "feed", "relay", "3,256"],
-  [7, "qms", "秋名山直播", "影视", "video", "orange", "#FF985C", "255, 152, 92", "聚合直播频道与低延迟播放", "live", "relay", "3,066"],
-  [8, "xf", "看推特", "图集", "gallery", "blue", "#849BFF", "132, 155, 255", "图文与视频浏览器", "feed", "direct", "2,817"],
-  [9, "one", "KanOne", "影视", "video", "pink", "#F178D1", "241, 120, 209", "简洁流畅的视频浏览与播放", "cinema", "direct", "2,306"],
-  [10, "qiying", "栖影", "影视", "video", "lime", "#72D68C", "114, 214, 140", "安静简洁的观影入口", "cinema", "direct", "1,995"],
-  [11, "sjs", "司机社（SJS）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "主题分类、资源检索与帖子阅读", "feed", "direct", "1,951"],
-  [12, "tx", "看糖心Vlog", "影视", "video", "cyan", "#48D8C8", "72, 216, 200", "视频内容浏览入口", "cinema", "relay", "1,896"],
-  [13, "lg", "看OnlyFans", "图集", "gallery", "lime", "#91E85B", "145, 232, 91", "简洁的图集浏览体验", "gallery", "direct", "1,810"],
-  [14, "hxc", "看含羞草", "影视", "video", "lime", "#72D68C", "114, 214, 140", "高清影视内容，分类浏览", "cinema", "relay", "1,555"],
-  [15, "hqw", "好妻网", "影视", "video", "orange", "#FF985C", "255, 152, 92", "精选视频与短片浏览", "cinema", "direct", "1,441"],
-  [16, "swag", "成人社交（SWAG）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "短视频与分类内容浏览", "short", "direct", "1,285"],
-  [17, "book", "有声读物", "动漫", "anime", "lime", "#BDFC48", "189, 252, 72", "书籍阅读与中文音声播放", "audio", "direct", "1,267"],
-  [18, "dj", "轻看短剧", "影视", "video", "blue", "#849BFF", "132, 155, 255", "短剧内容，快速开看", "short", "direct", "1,169"],
-  [19, "mt", "看蜜桃", "影视", "video", "violet", "#C187FF", "193, 135, 255", "高清成人影视，每日更新", "cinema", "relay", "1,102"],
-  [20, "rou", "看肉视频", "影视", "video", "amber", "#F6C453", "246, 196, 83", "简洁观影与内容发现", "cinema", "relay", "992"],
-  [21, "fj", "观番", "动漫", "anime", "lime", "#91E85B", "145, 232, 91", "简洁的番剧在线观看", "anime", "direct", "967"],
-  [22, "kankan", "爱微社区", "社区", "community", "cyan", "#63C7F2", "99, 199, 242", "社区内容与热门资源", "feed", "direct", "906"],
-  [23, "pmv", "成人音乐剪辑（PMV）", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "音乐剪辑与高清播放", "cinema", "direct", "839"],
-  [24, "jm", "禁漫天堂", "动漫", "anime", "cyan", "#48D8C8", "72, 216, 200", "漫画内容浏览入口", "comic", "direct", "820"],
-  [25, "9s", "看九色", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "原创高清内容，分类丰富", "cinema", "relay", "804"],
-  [26, "mm", "墨影集", "图集", "gallery", "violet", "#C187FF", "193, 135, 255", "沉浸式个人影集", "gallery", "direct", "763"],
-  [27, "miss", "看Miss", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "聚合视频内容入口", "cinema", "direct", "742"],
-  [28, "zb", "看主播", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "主播视频目录与连续播放", "live", "direct", "734"],
-  [29, "dsd", "看懂色帝", "影视", "video", "red", "#FF6B63", "255, 107, 99", "精选影视内容入口", "cinema", "relay", "679"],
-  [30, "movie", "影视聚合", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "影视内容聚合与检索", "aggregate", "direct", "605"],
-  [31, "jav", "日本成人影像（JAV）", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "简洁的视频片库", "cinema", "direct", "602"],
-  [32, "xo", "爱看", "社区", "community", "pink", "#FF76A8", "255, 118, 168", "精选内容与发现", "cinema", "relay", "598"],
-  [33, "ep", "高清成人影片（EPORNER）", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "高清片库，支持多清晰度播放", "cinema", "direct", "580"],
-  [34, "madou", "看麻豆", "影视", "video", "lime", "#BDFC48", "189, 252, 72", "麻豆影视，分类与排行浏览", "cinema", "relay", "579"],
-  [35, "tna", "成人视频片库（TNAFlix）", "影视", "video", "pink", "#F178D1", "241, 120, 209", "多清晰度视频目录与搜索", "cinema", "direct", "558"],
-  [36, "best", "看JavPorn", "影视", "video", "pink", "#FF76A8", "255, 118, 168", "精选热门影视内容", "cinema", "direct", "551"],
-  [37, "tv", "电视直播（TV）", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "直播频道与电视内容", "live", "direct", "544"],
-  [38, "ja", "看JavBus", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "JavBus 内容浏览入口", "cinema", "relay", "542"],
-  [39, "bj", "韩国主播视频（SKBJ）", "影视", "video", "orange", "#FFAD78", "255, 173, 120", "画廊与视频内容聚合", "live", "direct", "503"],
-  [40, "asmr", "助眠音声（ASMR）", "影视", "video", "cyan", "#63C7F2", "99, 199, 242", "沉浸式 ASMR 音视频助眠内容", "audio", "direct", "453"],
+  [1, "hm", "成人动漫（HAnime）", "动漫", "anime", "pink", "#F178D1", "241, 120, 209", "中文翻译、分类检索与多画质播放", "anime", "direct", "609", true],
+  [2, "ai", "麻豆视频(AI)", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "AI 视频分类、搜索与播放", "cinema", "direct", "5,076"],
+  [3, "hj", "看海角", "社区", "community", "amber", "#F6C453", "246, 196, 83", "轻量内容聚合入口", "feed", "direct", "4,940"],
+  [4, "91", "看91", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "简洁影院，热门短视频与分类浏览", "cinema", "relay", "4,615"],
+  [5, "mr", "看每日大赛", "社区", "community", "orange", "#FFAD78", "255, 173, 120", "数据源镜像阅读与本地解密展示", "feed", "relay", "3,763"],
+  [6, "qms", "秋名山直播", "影视", "video", "orange", "#FF985C", "255, 152, 92", "聚合直播频道与低延迟播放", "live", "relay", "3,302"],
+  [7, "xf", "看推特", "图集", "gallery", "blue", "#849BFF", "132, 155, 255", "图文与视频浏览器", "feed", "direct", "3,209"],
+  [8, "one", "KanOne", "影视", "video", "pink", "#F178D1", "241, 120, 209", "简洁流畅的视频浏览与播放", "cinema", "direct", "2,673"],
+  [9, "qiying", "栖影", "影视", "video", "lime", "#72D68C", "114, 214, 140", "安静简洁的观影入口", "cinema", "direct", "2,306"],
+  [10, "tx", "看糖心Vlog", "影视", "video", "cyan", "#48D8C8", "72, 216, 200", "视频内容浏览入口", "cinema", "relay", "2,153"],
+  [11, "sjs", "司机社（SJS）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "主题分类、资源检索与帖子阅读", "feed", "direct", "2,143"],
+  [12, "lg", "看OnlyFans", "图集", "gallery", "lime", "#91E85B", "145, 232, 91", "简洁的图集浏览体验", "gallery", "direct", "2,001"],
+  [13, "hxc", "看含羞草", "影视", "video", "lime", "#72D68C", "114, 214, 140", "高清影视内容，分类浏览", "cinema", "relay", "1,799"],
+  [14, "sf", "私房 TV", "影视", "video", "red", "#FF6B63", "255, 107, 99", "私房影视与频道内容浏览", "cinema", "direct", "1,739"],
+  [15, "hqw", "好妻网", "影视", "video", "orange", "#FF985C", "255, 152, 92", "精选视频与短片浏览", "cinema", "direct", "1,615"],
+  [16, "swag", "成人社交（SWAG）", "影视", "video", "violet", "#AA8CFF", "170, 140, 255", "短视频与分类内容浏览", "short", "direct", "1,459"],
+  [17, "98", "98堂", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "分类清晰的高清视频浏览站", "cinema", "direct", "1,391"],
+  [18, "book", "有声读物", "动漫", "anime", "lime", "#BDFC48", "189, 252, 72", "书籍阅读与中文音声播放", "audio", "direct", "1,374"],
+  [19, "dj", "轻看短剧", "影视", "video", "blue", "#849BFF", "132, 155, 255", "短剧内容，快速开看", "short", "direct", "1,314"],
+  [20, "mt", "看蜜桃", "影视", "video", "violet", "#C187FF", "193, 135, 255", "高清成人影视，每日更新", "cinema", "relay", "1,253"],
+  [21, "rou", "看肉视频", "影视", "video", "amber", "#F6C453", "246, 196, 83", "简洁观影与内容发现", "cinema", "relay", "1,140"],
+  [22, "fj", "观番", "动漫", "anime", "lime", "#91E85B", "145, 232, 91", "简洁的番剧在线观看", "anime", "direct", "1,055"],
+  [23, "kankan", "爱微社区", "社区", "community", "cyan", "#63C7F2", "99, 199, 242", "社区内容与热门资源", "feed", "direct", "1,048"],
+  [24, "jm", "禁漫天堂", "动漫", "anime", "cyan", "#48D8C8", "72, 216, 200", "漫画内容浏览入口", "comic", "direct", "938"],
+  [25, "9s", "看九色", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "原创高清内容，分类丰富", "cinema", "relay", "924"],
+  [26, "miss", "看Miss", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "聚合视频内容入口", "cinema", "direct", "893"],
+  [27, "pmv", "成人音乐剪辑（PMV）", "影视", "video", "lime", "#56E2A7", "86, 226, 167", "音乐剪辑与高清播放", "cinema", "direct", "891"],
+  [28, "mm", "墨影集", "图集", "gallery", "violet", "#C187FF", "193, 135, 255", "沉浸式个人影集", "gallery", "direct", "883"],
+  [29, "zb", "看主播", "影视", "video", "cyan", "#52DDED", "82, 221, 237", "主播视频目录与连续播放", "live", "direct", "810"],
+  [30, "dsd", "看懂色帝", "影视", "video", "red", "#FF6B63", "255, 107, 99", "精选影视内容入口", "cinema", "relay", "802"],
+  [31, "jav", "日本成人影像（JAV）", "影视", "video", "blue", "#63A8FF", "99, 168, 255", "简洁的视频片库", "cinema", "direct", "703"],
+  [32, "movie", "影视聚合", "影视", "video", "amber", "#E8D15C", "232, 209, 92", "影视内容聚合与检索", "aggregate", "direct", "701"],
+  [33, "xo", "爱看", "社区", "community", "pink", "#FF76A8", "255, 118, 168", "精选内容与发现", "cinema", "relay", "687"],
+  [34, "madou", "看麻豆", "影视", "video", "lime", "#BDFC48", "189, 252, 72", "麻豆影视，分类与排行浏览", "cinema", "relay", "670"],
+  [35, "ep", "高清成人影片（EPORNER）", "影视", "video", "cyan", "#8EDFE8", "142, 223, 232", "高清片库，支持多清晰度播放", "cinema", "direct", "655"],
+  [36, "best", "看JavPorn", "影视", "video", "pink", "#FF76A8", "255, 118, 168", "精选热门影视内容", "cinema", "direct", "644"],
+  [37, "ja", "看JavBus", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "JavBus 内容浏览入口", "cinema", "relay", "636"],
+  [38, "tna", "成人视频片库（TNAFlix）", "影视", "video", "pink", "#F178D1", "241, 120, 209", "多清晰度视频目录与搜索", "cinema", "direct", "635"],
+  [39, "tv", "电视直播（TV）", "影视", "video", "red", "#FF7F8F", "255, 127, 143", "直播频道与电视内容", "live", "direct", "604"],
+  [40, "bj", "韩国主播视频（SKBJ）", "影视", "video", "orange", "#FFAD78", "255, 173, 120", "画廊与视频内容聚合", "live", "direct", "560"],
+  [41, "asmr", "助眠音声（ASMR）", "影视", "video", "cyan", "#63C7F2", "99, 199, 242", "沉浸式 ASMR 音视频助眠内容", "audio", "direct", "495"],
 ].map(([id, slug, name, category, navCategory, accent, color, rgb, description, mode, delivery, clicks, isNew = false]) => ({
   id, slug, name, category, navCategory, accent, color, rgb, description, mode, delivery, clicks, isNew,
 }));
@@ -316,6 +317,14 @@ function epNormalize(item) {
   };
 }
 
+function epPreferBrowserStreams(streams = []) {
+  return [...streams].sort((a, b) => {
+    const ahls = /\.m3u8(?:$|\?)/i.test(a?.url || "");
+    const bhls = /\.m3u8(?:$|\?)/i.test(b?.url || "");
+    return Number(ahls) - Number(bhls);
+  });
+}
+
 function epListUrl({ pg, wd, preset, order }) {
   const upstream = new URL("https://www.eporner.com/api/v2/video/search/");
   upstream.searchParams.set("query", wd?.trim() || preset?.trim() || "all");
@@ -563,8 +572,8 @@ function SitePage({ site, go, health, setHealth }) {
             } catch { /* 中继不可用时仅展示详情 */ }
           }
           if (streams?.streams) {
-            card.streams = streams.streams;
-            card.vod_play_url = streams.streams[0]?.url || "";
+            card.streams = epPreferBrowserStreams(streams.streams);
+            card.vod_play_url = card.streams[0]?.url || "";
             card.play_notice = streams.play_notice || "eporner 官方源直链 · 自建播放器";
             card.media_kind = "video";
           } else {

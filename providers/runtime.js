@@ -283,11 +283,15 @@ async function epornerPlayPayload(id) {
   }
   if (!data) return null;
   const streams = [];
-  const hls = data.sources.hls?.auto?.src || "";
-  if (hls) streams.push({ label: "HLS · 自动 · 推荐", url: hls, type: "application/x-mpegURL" });
+  // The Eporner HLS endpoint is intermittently CORS-blocked in a normal
+  // browser, while the signed MP4s are consistently playable.  Put the
+  // highest MP4 first so opening a detail starts immediately; keep HLS as
+  // an explicit optional line for browsers where it is available.
   for (const [label, v] of Object.entries(data.sources.mp4 || {})) {
     if (v && v.src && !/\.na\.mp4/i.test(v.src)) streams.push({ label: `${label} MP4`, url: v.src, type: v.type || "video/mp4" });
   }
+  const hls = data.sources.hls?.auto?.src || "";
+  if (hls) streams.push({ label: "HLS · 自动", url: hls, type: "application/x-mpegURL" });
   if (!streams.length) return null;
   return { streams, play_notice: "eporner 官方源直链 · 自建播放器", media_kind: "video" };
 }
