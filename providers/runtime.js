@@ -942,8 +942,17 @@ function parseKan91Cards(html) {
 }
 
 function kan91PageCount(html, page) {
-  const next = html.match(/<link rel="next" href="[^"]*page=(\d+)"/);
-  return Math.max(page, ...(next ? [Number(next[1])] : []));
+  // 91porna exposes the real total in its pager label (for example
+  // `第 5/417 页`).  The old parser only looked at a rel=next link, which
+  // made search results report one page and forced every search request to
+  // fetch page 1 again.
+  const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const labelTotal = Number(plain.match(/第\s*\d+\s*\/\s*(\d+)\s*页/i)?.[1] || 0);
+  const next = html.match(/<link\s+rel=["']next["']\s+href=["'][^"']*page=(\d+)/i);
+  const linked = [...html.matchAll(/(?:[?&]page=|data-page=["'])(\d+)/gi)]
+    .map((match) => Number(match[1]))
+    .filter(Number.isFinite);
+  return Math.max(page, labelTotal, ...(next ? [Number(next[1])] : []), ...linked);
 }
 
 async function kan91List(requestUrl) {
@@ -951,10 +960,10 @@ async function kan91List(requestUrl) {
   const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
   const category = requestUrl.searchParams.get("preset")?.trim() || "play";
   const html = keyword
-    ? await kan91Page("/comic/index/search", { keyword })
+    ? await kan91Page("/comic/index/search", { keyword, page: page > 1 ? String(page) : "" })
     : await kan91Page("/comic/index/video", { category, page: page > 1 ? String(page) : "" });
   const list = parseKan91Cards(html).slice(0, 24);
-  const pagecount = keyword ? 1 : kan91PageCount(html, page);
+  const pagecount = kan91PageCount(html, page);
   return json({
     code: 1,
     page,
