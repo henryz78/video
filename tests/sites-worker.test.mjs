@@ -260,7 +260,9 @@ test("hm parses live Hanime1 search HTML through the reader relay", async () => 
   const originalFetch = globalThis.fetch;
   const listHtml = `<!doctype html><html><form id="skip-page-form"><input oninput="validateNumberInput(this, 1, 27)"></form><div class="video-item-container"><a href="https://hanime1.com/watch?v=407787" class="video-link"><img class="main-thumb" src="https://vdownload.hembed.com/image/thumbnail/407787l.jpg?secure=x"><div class="duration">05:42</div><div class="title">Narmaya Perverts Her Training</div></a><div class="subtitle"><a>BaraQuda</a><span class="subtitle-time">&nbsp;• 1天前</span></div></div></html>`;
   globalThis.fetch = async (input) => {
-    assert.match(String(input), /^https:\/\/r\.jina\.ai\/http:\/\/hanime1\.com\/search/);
+    const url = String(input);
+    assert.match(url, /^https:\/\/relay-lake-eight\.vercel\.app\/api\?action=hm&path=/);
+    assert.match(decodeURIComponent(url), /\/search\?query=AI/);
     return new Response(listHtml, { status: 200, headers: { "content-type": "text/html" } });
   };
   try {
@@ -280,7 +282,9 @@ test("hm detail extracts all signed MP4 qualities and metadata", async () => {
   const originalFetch = globalThis.fetch;
   const detailHtml = `<!doctype html><html><head><meta property="og:title" content="Narmaya - Hanime1.me"><meta property="og:image" content="https://vdownload.hembed.com/image/thumbnail/407804h.jpg?secure=x"><meta property="og:video:duration" content="179"><meta name="description" content="detail"></head><video><source src="https://vdownload.hembed.com/407804-720p.mp4?secure=a" type="video/mp4" size="720"><source src="https://vdownload.hembed.com/407804-1080p.mp4?secure=b" type="video/mp4" size="1080"></video></html>`;
   globalThis.fetch = async (input) => {
-    assert.match(String(input), /^https:\/\/r\.jina\.ai\/http:\/\/hanime1\.com\/watch/);
+    const url = String(input);
+    assert.match(url, /^https:\/\/relay-lake-eight\.vercel\.app\/api\?action=hm&path=/);
+    assert.match(decodeURIComponent(url), /\/watch\?v=407804/);
     return new Response(detailHtml, { status: 200, headers: { "content-type": "text/html" } });
   };
   try {
