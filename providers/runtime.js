@@ -3586,8 +3586,9 @@ async function sfDetail(requestUrl) {
 // Keep the relay isolated so it can be replaced by a user-controlled fetcher
 // later without touching the provider contract.
 const HM_READER_ORIGINS = [
+  "https://relay-production-3a90.up.railway.app/api?action=hm&path=",
+  "https://relay-lake-eight.vercel.app/api?action=hm&path=",
   "https://r.jina.ai/http://hanime1.com",
-  "https://r.jina.ai/https://hanime1.com",
 ];
 const HM_READER_HEADERS = {
   accept: "text/html,application/xhtml+xml",
@@ -3616,7 +3617,8 @@ async function hmPage(pathname) {
   const origins = HM_READER_ORIGINS.slice(start).concat(HM_READER_ORIGINS.slice(0, start));
   for (const origin of origins) {
     try {
-      const response = await fetch(`${origin}${path}`, {
+      const url = origin.includes("action=hm") ? `${origin}${encodeURIComponent(path)}` : `${origin}${path}`;
+      const response = await fetch(url, {
         headers: HM_READER_HEADERS,
         signal: AbortSignal.timeout(30_000),
       });
