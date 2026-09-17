@@ -1,0 +1,355 @@
+// ==UserScript==
+// @name         Eporner Clean Player
+// @namespace    local.eporner.clean
+// @version      1.1.0
+// @author       Richy
+// @description  Remove Eporner page ads, popunders, in-player ads, and VAST pre/post-rolls while preserving the native player.
+// @match        *://eporner.com/*
+// @match        *://*.eporner.com/*
+// @run-at       document-start
+// @inject-into  page
+// @sandbox      raw
+// @noframes
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const PLAYER_ID = 'EPvideo';
+  const PLAYER_POLL_MS = 25;
+  const NO_AD_POPUPS = 0;
+  const PLAYER_PATCH = Symbol.for('eporner.clean.player-patch');
+  const AD_SELECTOR = [
+    '[data-ep-adzone]',
+    '[data-ep-aid]',
+    '[id^="epad-"]',
+    'iframe[title^="Advertisement"]',
+    'ins[data-zoneid]',
+    '.adsinfo',
+    '#adinhead',
+    '[id^="admobile"]',
+    '[id^="ifad"]',
+    '[id^="movieplayer-box-adv"]',
+    '#ifdeskadmiddle',
+    '#footadframe',
+    '#adstripe',
+    '#adPlayerIfr',
+    '#EPimLayer',
+    '#EPIMFrame',
+    '#videotextbanner',
+    '.vjs-inplayer-container',
+    '.vjs-inplayerlink',
+    '.vjs-inplayer-link',
+    '.vjs-vast-blocker',
+    'script[src*="/dot/pop4.php"]',
+    'script[src*="magsrv.com"]',
+    'script[src*="tsyndicate.com"]',
+  ].join(',');
+  const AD_HOST_SUFFIXES = Object.freeze([
+    'magsrv.com',
+    'tsyndicate.com',
+    'contentsserved.com',
+    'godkc.com',
+    'doppiocdn.com',
+    'exoclick.com',
+    'juicyads.com',
+    'trafficjunky.com',
+    'popads.net',
+    'clickadu.com',
+    'hilltopads.net',
+  ]);
+  const AD_PATH_PATTERNS = Object.freeze([
+    /^\/dot\//,
+    /^\/getape\//,
+    /^\/xhr\/vast\//,
+    /^\/static\/popCode-/,
+  ]);
+  const HIDE_ADS_CSS = `
+    ${AD_SELECTOR} {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+    }
+    #movieplayer-box { margin-left: auto !important; margin-right: auto !important; }
+    #EPvideo.vjs-ad-playing .vjs-control-bar { visibility: visible !important; }
+  `;
+
+  function isEpornerHost(hostname) {
+    return hostname === 'eporner.com' || hostname.endsWith('.eporner.com');
+  }
+
+  function parseUrl(value) {
+    try {
+      return new URL(String(value), location.href);
+    } catch (error) {
+      console.error('[Eporner Clean] Invalid URL', value, error);
+      return null;
+    }
+  }
+
+  function isAdRequest(value) {
+    const url = parseUrl(value);
+    if (!url) return false;
+    const adHost = AD_HOST_SUFFIXES.some((host) =>
+      url.hostname === host || url.hostname.endsWith(`.${host}`));
+    if (adHost) return true;
+    return isEpornerHost(url.hostname)
+      && AD_PATH_PATTERNS.some((pattern) => pattern.test(url.pathname));
+  }
+
+  function installStyles() {
+    const root = document.head || document.documentElement;
+    if (!root) {
+      document.addEventListener('readystatechange', installStyles, { once: true });
+      return;
+    }
+    const style = document.createElement('style');
+    style.textContent = HIDE_ADS_CSS;
+    root.append(style);
+  }
+
+  function installPopupGuard() {
+    const nativeOpen = window.open;
+    const cleanOpen = function (url, target, features) {
+      const parsed = parseUrl(url);
+      if (parsed && isEpornerHost(parsed.hostname) && !isAdRequest(parsed.href)) {
+        return Reflect.apply(nativeOpen, window, [url, target, features]);
+      }
+      console.info('[Eporner Clean] Blocked popup', url);
+      return null;
+    };
+    Object.defineProperty(window, 'open', {
+      configurable: false,
+      writable: false,
+      value: cleanOpen,
+    });
+  }
+
+  function installProgrammaticLinkGuard() {
+    const nativeClick = HTMLElement.prototype.click;
+    const cleanClick = function () {
+      const parsed = parseUrl(this.href);
+      if (parsed && isEpornerHost(parsed.hostname) && !isAdRequest(parsed.href)) {
+        return Reflect.apply(nativeClick, this, []);
+      }
+      console.info('[Eporner Clean] Blocked programmatic navigation', this.href);
+      return undefined;
+    };
+    Object.defineProperty(HTMLAnchorElement.prototype, 'click', {
+      configurable: false,
+      writable: false,
+      value: cleanClick,
+    });
+  }
+
+  function emptyPopBinding(value) {
+    return Array.isArray(value) ? [] : '';
+  }
+
+  function sanitizePopunderConfig(config) {
+    if (!config || typeof config !== 'object') return config;
+    return {
+      ...config,
+      alwaysBindTo: emptyPopBinding(config.alwaysBindTo),
+      alwaysPop: false,
+      alwaysPopAnyway: false,
+      bindTo: emptyPopBinding(config.bindTo),
+      extraBindTo: emptyPopBinding(config.extraBindTo),
+      extraPop: false,
+      popLimit: NO_AD_POPUPS,
+      popLimitGlobal: NO_AD_POPUPS,
+      popPreUrl: '',
+      popUrl: '',
+    };
+  }
+
+  function installPopunderConfigGuard() {
+    let cleanConfig = sanitizePopunderConfig(window.EPpopConfig);
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'EPpopConfig');
+    if (descriptor && !descriptor.configurable) {
+      window.EPpopConfig = cleanConfig;
+      return;
+    }
+    Object.defineProperty(window, 'EPpopConfig', {
+      configurable: false,
+      enumerable: true,
+      get() { return cleanConfig; },
+      set(config) { cleanConfig = sanitizePopunderConfig(config); },
+    });
+  }
+
+  function disableLoadedPopunder() {
+    const popunder = window.EPpop;
+    if (!popunder?.config) return false;
+    popunder.config.alwaysBindTo = '';
+    popunder.config.bindTo = '';
+    popunder.config.extraBindTo = '';
+    popunder.config.popLimit = NO_AD_POPUPS;
+    popunder.config.popLimitGlobal = NO_AD_POPUPS;
+    popunder.EPshouldFire = () => false;
+    return true;
+  }
+
+  function startPopunderWatcher() {
+    const timer = window.setInterval(() => {
+      if (!disableLoadedPopunder()) return;
+      window.clearInterval(timer);
+    }, PLAYER_POLL_MS);
+  }
+
+  function sanitizeVideoData(data) {
+    if (!data || typeof data !== 'object') return data;
+    const inplayer = data.inplayer && {
+      ...data.inplayer,
+      desktop: { ...data.inplayer.desktop, active: false },
+      mobile: { ...data.inplayer.mobile, active: false },
+    };
+    const postroll = data.vast?.postroll && {
+      ...data.vast.postroll,
+      active: false,
+      tag: '',
+    };
+    return {
+      ...data,
+      inplayer,
+      inplayerLink: data.inplayerLink
+        ? { ...data.inplayerLink, active: false, endpointURL: '' }
+        : data.inplayerLink,
+      vast: data.vast
+        ? { ...data.vast, active: false, tag: '', postroll }
+        : data.vast,
+    };
+  }
+
+  function sanitizeSourcePayload(payload) {
+    if (!payload || typeof payload !== 'object') return payload;
+    const apiResponse = sanitizeVideoData(payload.apiResponse);
+    const videoUrls = payload.videoUrls === payload.apiResponse
+      ? apiResponse
+      : sanitizeVideoData(payload.videoUrls);
+    return { ...payload, apiResponse, videoUrls };
+  }
+
+  function getPlayer() {
+    if (typeof window.videojs?.getPlayer !== 'function') return null;
+    try {
+      return window.videojs.getPlayer(PLAYER_ID) || null;
+    } catch (error) {
+      console.debug('[Eporner Clean] Player is not ready', error);
+      return null;
+    }
+  }
+
+  function recoverPlayerFromVast() {
+    const player = getPlayer();
+    const plugin = player?.EPvideo;
+    const settings = plugin?.getSettings?.();
+    if (!settings?.isInVast || !settings.sources?.length) return;
+    settings.isInVast = false;
+    settings.vast.adTagUrl = '';
+    settings.vast.postroll.active = false;
+    settings.vast.postroll.adTagUrl = '';
+    if (player.EPvastADS) {
+      player.EPvastADS.loading = false;
+      player.EPvastADS.playing = false;
+      player.EPvastADS.inVast = false;
+    }
+    player.removeClass('vjs-ad-playing');
+    player.error(null);
+    player.trigger('vast.end');
+    plugin.firstSwitchQuality(false);
+  }
+
+  function patchPlayer() {
+    const player = getPlayer();
+    const plugin = player?.EPvideo;
+    if (!plugin?.prepareSettingSource) return false;
+    if (plugin[PLAYER_PATCH]) return true;
+    const original = plugin.prepareSettingSource;
+    plugin.prepareSettingSource = function (videoId, payload, callback) {
+      const cleanPayload = sanitizeSourcePayload(payload);
+      return Reflect.apply(original, this, [videoId, cleanPayload, callback]);
+    };
+    Object.defineProperty(plugin, PLAYER_PATCH, { value: true });
+    recoverPlayerFromVast();
+    return true;
+  }
+
+  function cleanSubtree(root) {
+    if (!root?.querySelectorAll) return;
+    const matches = root.matches?.(AD_SELECTOR) ? [root] : [];
+    const ads = [...matches, ...root.querySelectorAll(AD_SELECTOR)];
+    ads.forEach((node) => node.remove());
+    root.querySelectorAll('a[href]').forEach((anchor) => {
+      if (isAdRequest(anchor.href)) anchor.remove();
+    });
+  }
+
+  function startDomCleaner() {
+    cleanSubtree(document);
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes') cleanSubtree(mutation.target);
+        mutation.addedNodes.forEach((node) => cleanSubtree(node));
+      });
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'data-ep-adzone', 'data-ep-aid', 'href', 'id', 'src', 'title'],
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  function installClickGuard() {
+    document.addEventListener('click', (event) => {
+      const element = event.target?.closest?.('a[href]');
+      if (!element) return;
+      if (!element.closest(AD_SELECTOR) && !isAdRequest(element.href)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      console.info('[Eporner Clean] Blocked ad navigation', element.href);
+    }, true);
+  }
+
+  function installPlayerActivationGuard() {
+    document.addEventListener('click', (event) => {
+      const target = event.target?.closest?.(
+        '#EPvideo .vjs-big-play-button, #EPvideo .vjs-poster, #EPvideo video',
+      );
+      if (!target) return;
+      const player = getPlayer();
+      if (!player?.paused()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const playback = player.play();
+      playback?.catch?.((error) => {
+        console.error('[Eporner Clean] Native playback failed', error);
+      });
+    }, true);
+  }
+
+  function startPlayerWatcher() {
+    const timer = window.setInterval(() => {
+      if (!patchPlayer()) return;
+      window.clearInterval(timer);
+    }, PLAYER_POLL_MS);
+  }
+
+  installPopunderConfigGuard();
+  installStyles();
+  installPopupGuard();
+  installProgrammaticLinkGuard();
+  installClickGuard();
+  installPlayerActivationGuard();
+  startPopunderWatcher();
+  startPlayerWatcher();
+  if (document.documentElement) startDomCleaner();
+  else document.addEventListener('readystatechange', startDomCleaner, { once: true });
+}());
