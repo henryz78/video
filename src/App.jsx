@@ -1019,7 +1019,7 @@ function JmModal({ comic, onClose, onChapter }) {
   </article></div>;
 }
 
-const PH_RELAY_BASES = ["https://relay-lake-eight.vercel.app/api", "https://ph-vercel-probe.vercel.app/api"];
+const PH_RELAY_BASES = ["https://hy-relay.vercel.app/api"];
 function phRelayBases() {
   const custom = (localStorage.getItem("phRelayBases") || "").split(",").map((s) => s.trim()).filter(Boolean);
   return custom.length ? custom : PH_RELAY_BASES;

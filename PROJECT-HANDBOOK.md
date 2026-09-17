@@ -22,7 +22,7 @@
 |---|---|
 | 本地入口 | 41 个：原 39 个参考入口中看板娘游戏已移除，另加入参考站新增的 `sf` / 私房 TV、`98` / 98堂与 `hm` / HAnime；`98`、`sf`、`hm` 均已接入实时 adapter |
 | 独立 provider | 19 个：GDLSP、HStream、LeakGallery、Eporner、麻豆AI、PMVHaven、TNAFlix、iptv-org、RedGifs、oxax.tv + AdultIPTV、91porna、麻豆社、MissAV、糖心Vlog、看肉视频、98堂 dmn12、私房TV sifangtv.cc、HAnime hanime1.com |
-| 实验来源（非参考入口） | Pornhub `ph`：2026-08-17 调查完成并已实现；2026-08-18 前端接入 Vercel relay（CF 边缘被 phncdn 按 IP 限速到 0.1–0.3MB/s 不可用；Vercel 出口 21–46MB/s 满速且未被限速），列表/详情/封面/播放全部走 `https://ph-vercel-probe.vercel.app/api`（单账号；未来多账号只需 `localStorage.phRelayBases` 加逗号分隔 URL）；用户单独要求的实验来源，不写入 ROUTE_CONFIGS、不影响门户保真；详见 SOURCE-RESEARCH.md 末尾与文末工作记录 |
+| 实验来源（非参考入口） | Pornhub `ph`：2026-08-17 调查完成并已实现；2026-08-18 前端接入 Vercel relay（CF 边缘被 phncdn 按 IP 限速到 0.1–0.3MB/s 不可用；Vercel 出口 21–46MB/s 满速且未被限速），列表/详情/封面/播放全部走 `https://hy-relay.vercel.app/api`（单账号；未来多账号只需 `localStorage.phRelayBases` 加逗号分隔 URL）；用户单独要求的实验来源，不写入 ROUTE_CONFIGS、不影响门户保真；详见 SOURCE-RESEARCH.md 末尾与文末工作记录 |
 | 真实匹配完成 | 18 个完整：麻豆视频 AI、PMV 视频、观番、OnlyFans 图集、EPORNER、TNAFlix、影视聚合、看91、栖影、看麻豆、看 Miss、看糖心Vlog、看肉视频、看每日大赛、看禁漫天堂、98堂、私房TV、HAnime；看TV 进入部分可用 |
 | 被撤销的替代映射 | 22 个 Eporner/RedGifs 关键词替代入口已移除，不再计入完成 |
 | 看板娘游戏 | 用户明确取消，不进入、不接入，已从本地导航移除 |
@@ -50,7 +50,7 @@
 
 ### `hm` / HAnime（新增参考入口，已接入）
 
-真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 经**通用三层目录 relay**（`Railway https://relay-production-3a90.up.railway.app/api?action=hm&path=` 主 → `Vercel https://relay-lake-eight.vercel.app/api?action=hm&path=` 备 → `r.jina.ai/http://hanime1.com` 兜底，`30s` 超时覆盖 Railway 冷启动，保留原始 HTML、CORS `*`、不落盘、不依赖 cfnav 登录 API）抓取；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`（视频分片不经 Vercel/Railway）。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测：Pages `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`video-4nn` 目录不再 `429`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路验证）。
+真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 经**通用目录 relay**（现为 `Vercel https://hy-relay.vercel.app/api?action=hm&path=` 主 → `r.jina.ai/http://hanime1.com` 兜底；原 Railway 主链路因用户更换域名暂时下线，待新域名回填后恢复为首选，`30s` 超时覆盖冷启动，保留原始 HTML、CORS `*`、不落盘、不依赖 cfnav 登录 API）抓取；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`（视频分片不经 Vercel/Railway）。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测：Pages `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`video-4nn` 目录不再 `429`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路验证）。
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
@@ -411,3 +411,10 @@ npm.cmd run test:cloudflare
 - 官方 `tv.cfnav.me/watch/oh-ah` 的 oxax 品牌流在同一浏览器出口复测 `readyState=0/currentTime=0/duration=null`；官方 `tv.cfnav.me/watch/aitv-mycamtv-milf` 主题流复测 `readyState=4`、`currentTime≈59.83s`、`1280×720`。oxax 不是本地独有故障，官方当前也无法解码，继续按部分可用记录。
 - `d1b74f1` 已落实上述 UI 对齐：部署端 `98`/`miss` 搜索结果不再显示分页控件，Miss 分类分页仍保留；真实浏览器复核资产 `index-kBq5UpAZ.js` 生效，`98` 搜索“西野”显示 24 条单页结果、`miss` 搜索“nact”显示 12 条单页结果，Miss 的 FC2 分类仍显示上一页/下一页。
 - 2026-08-21 **主门户 V6 UI 同步（不接入新子站）**：本地门户同步官方当前 41 节点排序与 `hm` PENDING 卡，新增“飞机故障issue”主视图标签、故障状态切换、刷新/提交按钮、排序控件和无数据空态；不恢复游戏入口、不创建 HAnime 子页面。浏览器验收：`ACTIVE NODES 41 / GAME 0`、HAnime 卡存在、故障面板可切换且空态文案正常。构建与 Sites 18/18 通过。
+
+### 2026-09-17 中转迁移至 hy-relay（Vercel 重建）
+
+- 用户删除旧 Vercel 项目（relay-lake-eight、ph-vercel-probe 均 DEPLOYMENT_NOT_FOUND）并更换 Railway 域名后，hm（502 hanime1 reader 404）、ph（全灭）、ep 播放（Vercel 主链路死）相继中断；另发现 rou（rou.video page 403 拦 CF 出口）、kan91（空列表）为新增异常，待查。
+- relay 仓库已重构为通用核心 + 按站拆分，详见该仓库 README；用户在新域名 hy-relay.vercel.app 重建部署并验证 status/ph list/ep play 全通。
+- 本仓库改动：PH_RELAY_BASES 与 HM_READER_ORIGINS 指向新域名（旧 Railway 域名待用户提供新地址再回填为首选）；test:sites 21/21、test:cloudflare 4/4。
+- 注意：新 Vercel 出口抓 hanime1.com 直连与经 r.jina.ai 均被 Cloudflare challenge 403，hm 需等 Railway（不同出口）回填后才能恢复；ph/ep 不受影响。
