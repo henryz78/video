@@ -50,7 +50,7 @@
 
 ### `hm` / HAnime（新增参考入口，已接入）
 
-真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 经**通用目录 relay**（现为 `Vercel https://hy-relay.vercel.app/api?action=hm&path=` 主 → `r.jina.ai/http://hanime1.com` 兜底；原 Railway 主链路因用户更换域名暂时下线，待新域名回填后恢复为首选，`30s` 超时覆盖冷启动，保留原始 HTML、CORS `*`、不落盘、不依赖 cfnav 登录 API）抓取；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`（视频分片不经 Vercel/Railway）。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测：Pages `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`video-4nn` 目录不再 `429`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路验证）。
+真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 经**通用目录 relay**（现为 `Railway https://hy-relay.up.railway.app/api?action=hm&path=` 主 → `Vercel https://hy-relay.vercel.app/api?action=hm&path=` 备 → `r.jina.ai/http://hanime1.com` 兜底，`30s` 超时覆盖冷启动，保留原始 HTML、CORS `*`、不落盘、不依赖 cfnav 登录 API）抓取；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`（视频分片不经 Vercel/Railway）。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测：Pages `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`video-4nn` 目录不再 `429`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路验证）。
 
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|

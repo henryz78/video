@@ -3586,6 +3586,7 @@ async function sfDetail(requestUrl) {
 // Keep the relay isolated so it can be replaced by a user-controlled fetcher
 // later without touching the provider contract.
 const HM_READER_ORIGINS = [
+  "https://hy-relay.up.railway.app/api?action=hm&path=",
   "https://hy-relay.vercel.app/api?action=hm&path=",
   "https://r.jina.ai/http://hanime1.com",
 ];
