@@ -18,6 +18,9 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Product decisions
 
+- Official portal correction (2026-09-17): the reference site is https://cfnav.me/; https://nginx.hyzvo.com/ is this project's own Cloudflare deployment. The five-title-click plus age-confirmation sequence only unlocks our deployed decoy entry and is not part of the official site's contract.
+- Portal interaction correction (2026-09-18): “打开游戏站” and “起飞绿色通道” must remain inert empty links (`href="#"`), with no external target or added behavior. Keep the green-passage tab visible on mobile.
+- Portal mobile fidelity correction (2026-09-18): the main strip has four actual tabs (directory, leaderboard, picks, issues) plus the standalone green-passage button; mobile cards use the official two-column portrait layout, and the announcement opens list-first before detail.
 - This is an authorized, personal, non-commercial learning project inspired by cfnav.me.
 - Git commit policy (user decision, 2026-08-14): do NOT push per small change. Only commit/push once a site's channel/adapter is verified stable (headless playable + tests green + no obvious source churn), and group the site's code + docs into one commit. Keep history coarse for maintainability.
 - Independence is the priority: do not make the app depend on `cfnav.me/api/*` as its permanent data source.
