@@ -108,7 +108,7 @@
 | `redgifs` | `api.redgifs.com` + `media.redgifs.com` | 获取匿名临时令牌；搜索与详情 JSON；45 分钟内存缓存 | HD/移动版 MP4，`no-referrer` | 匿名临时令牌，仅内存 | API 未作为本项目的稳定契约保证；CDN 会拒绝本地 Referer。 |
 | `tnaflix` | `www.tnaflix.com` + TNAFlix 媒体节点 | 解析匿名公开目录、分页、搜索、详情 JSON-LD 与页面内动态清晰度地址 | 多清晰度 MP4 直连 | 无 | 官方 HTML 结构和媒体签名会轮换；adapter 每次打开详情重新取得最新地址，不写死签名。 |
 | `adulttv` | `oxax.tv` / `s.oxax.tv` / `r.pokaz.me` + `cdn.adultiptv.net` | 内置经参考站逐项核对的 80 路目录；AdultIPTV 直接 HLS；oxax 访问公开 HTTP slug 页面，解析拆分的 Playerjs 签名，随后由受限同源代理重写 HLS 清单、分片和 key URI | HLS.js / 浏览器原生 HLS | 无账号或持久令牌；oxax 的临时签名不落盘；代理仅允许 `s.oxax.tv` 和 `r.pokaz.me` | 39 路主题流已本地+部署端验收；41 路品牌流 **2026-08-17 定案部署端不可用**（`s.oxax.tv` 数据中心 IP 一律 404 + 签名 `k=` 绑定解析者 IP，仅本地/开发住宅 IP 可播；manifest 已改 302 直连，见 tv 行）。 |
-| `kan91` | `91porna.com` + `yd-hls.utxxds.cn` + `tp*.xmbvxj.cn` / `pic.xmbvxj.cn` | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.xmbvxj.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测。 |
+| `kan91` | `91porna.com` + `yd-hls.*.cn` + `tp*.*.cn` / `pic.*.cn`（CDN 域名轮换：2026-09-18 起为 `tuafjz` / `bnfuiu` 系） | 抓公开 HTML 列表/搜索/详情 JSON-LD；详情页内联 packed 脚本解包出 `detail_play` 参数（`u` 固定签名 + `t` 时间桶），实时请求取 m3u8；封面经受限同源代理做 AES-128-CBC 解密；m3u8 直连浏览器 | HLS.js（AES-128 分片） | 无账号或持久令牌；detail_play 的时效签名实时取、不落盘；图片代理仅允许 `pic.*.cn` | 主域走 Cloudflare，本地可能受 DNS 污染影响（改用真实 IP 或正常网络直连）；detail_play 参数结构若改版需重测；卡片为 Tailwind 锚点结构（`detail?video_key=` + `data-src`），`video-elem` 已废弃。 |
 | `qiying` | `agency.nsguiiwz.cc` / `being` / `act`（301 → `agency.qxmrdvtu.cc`，搜索页为 `arrest.qxmrdvtu.cc` 绝对 URL）+ `imgpublic.ycomesc.live` 图片 CDN + `op.vkjyoi.cn` / `bgqpnx.cn` 视频 CDN | 全实时：列表 `/`、`/page/N/`；分类 `/category/{slug}/` 与 `/category/{slug}/{n}/`；搜索 `/search/{kw}/`；标签 `/tag/{slug}/`；详情/播放抓 `/archives/{id}/` 解析 DPlayer `data-config` 签名 m3u8；所有 `pic.*.cn` 图片重写为 `imgpublic.ycomesc.live`（原图加密） | HLS.js（ts/key 直连 CDN） | 无账号；签名由 91吃瓜网服务端生成，每次点播现抓不落盘 | 主站域名轮换（防失联页多线路，adapter 内置三个镜像）；签名有时效，过期重新点播即可；分类/搜索分页路径是 `/{n}/` 而非 `/page/{n}/` |
 | `madou` | `madou.club`（WordPress）+ `dash.madou.club` 分享页 | 抓首页/分类/搜索/点赞排行 HTML 解析卡片（标题/封面/观看/点赞/分类）；详情页解析 iframe shareId 与分享页短时效 JWT，拼 m3u8 完整 URL | HLS.js（AES-128，ts/key 直连） | 无账号；分享页每次现抓 100 秒时效 JWT，不落盘 | 上游域名/主题结构可能轮换；JWT 时效短，过期重新点播即可 |
 | `rou` | `rou.video`（Next.js SSR）+ `v.rn2xx.xyz`（imgproxy 封面 / 签名 HLS） | 抓 `/home`/`/cat`/`/t/{tag}`/`/search`/`/v/{id}` 的 `__NEXT_DATA__`；详情 `ev` 字节减密出签名 m3u8；封面直链；播放/分片经同源代理（白名单 `v.rn\d+.xyz`，清单分片行重写） | HLS.js（无加密，分片走代理） | 无账号；签名约 1 天时效，每次打开详情现解密不落盘 | CDN 域名 `v.rnNNN.xyz` 数字后缀会轮换，正则已放宽；上游反爬尚无表现 |
@@ -434,3 +434,15 @@ npm.cmd run test:cloudflare
 - 通过 Codex in-app browser 复核官方 `cfnav.me` 根页：主视图固定保留 4 个真正的 tab——导航目录、机长排行榜、佬友优选、飞机故障 issue；“起飞绿色通道”是同一栏中的独立 button，不属于 tab。移动端主栏可横向滚动，不能隐藏 issue 或绿色通道。
 - “打开游戏站”和“起飞绿色通道”按用户决定保留入口外观，但改为空链接 `href="#"`，移除新标签页跳转；不增加点击处理或其他内容。
 - 官方移动端站点卡片为两列、约 4:5 比例，隐藏 NODE/ONLINE/点击数等次要标记，仅保留线路徽标、图标、名称、描述与域名；本地已同步该密度和布局。公告入口先显示公告列表，再进入详情，补齐刷新、关闭、返回列表控件及对应 DOM 标识。未改动子站 provider、详细页或播放逻辑。
+
+### 2026-09-18 issue 全量复现（31 条逐站验证，只修真故障）
+
+- 方法：PORTAL_ISSUES 4 未修复 + 27 已修复逐条映射到本地实现；有本地实现的站（kankan/91/hj/mr/fj/hm/miss/门户层）逐项复现，无实现的站（dj/one/hg/hoj/asmr/sjs/pearhoho/ccc/手机配对）跳过并记录原因。
+- kankan #23（30秒）/#6（全挂）：均未复现。playlist 按详情时长自建全量（抽查 982 段/32.7 分钟），抽样 12 条 8 条分片存活（含 3830 段长片）；死掉的 4 条为上游 CDN 下架的旧 ID（42xxx–62xxx 段），detail 页仍在，属上游可用性波动，参考站同样依赖该 CDN，不改。
+- 91 #29/#21/#2：复现成功并修复。上游改版：卡片改为 Tailwind 锚点结构（`video-elem` 废弃），图床 `pic.xmbvxj.cn`→`pic.tuafjz.cn`，媒体 `yd-hls.utxxds.cn`→`yd-hls.bnfuiu.cn`、key/分片 `tp*.xmbvxj.cn`→`tp*.tuafjz.cn`。修法：卡片解析改锚点+`data-src`，三处域名正则泛化为 `pic./yd-hls.` + `[a-z0-9]+.cn`；封面老密钥仍可解新图。验证：列表 23、详情、封面 JPEG、搜索 24、播放 15s/1451s 推进、零报错。
+- hj #26（授权过期）/#4（X-User-Token）：均未复现。匿名链完好：19 分钟完整片（911 段/1119s），headless 播放 26.7s 推进，零报错，无需任何 token。
+- mr #20（封面）：未复现，10/10 可加载（9 JPEG + 1 PNG，均为有效图片）。
+- fj #14 / hm #1（字幕）：本地详情均无字幕轨道字段，两站均为 MP4 直链播放（内嵌字幕由播放器原生渲染），无可改项，记录。
+- miss：详情 + HLS 200 正常。
+- 门户层 #28（收藏）：通过，`cf-favs` 跨 reload 持久；#24/#19（绿通）：可见惰性空链，符合用户 2026-09-18 决定；#5（xbwz）：第三方节点 200 存活。
+- 跳过：#32 dj / #34 one / #3 one（SKIP 站无实现）；#33 pearhoho / #30 ccc（范围外）；#31/#27/#25/#15 hg、#22/#13/#10 hoj（未接入）；#18/#12 asmr、#8 sjs（SKIP/下架）；#9 手机配对（本地无此功能）；#17 常亮+选集（video 标签能力边界，记录未改）。

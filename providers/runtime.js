@@ -925,16 +925,24 @@ function kan91ImageProxy(source) {
 function parseKan91Cards(html) {
   const cards = [];
   const seen = new Set();
-  const pattern = /video_key=(\d+)[^"]*"[\s\S]{0,600}?data-src="(https:\/\/pic\.(?:xmbvxj|yrfmba)\.cn\/[^"]+)"[\s\S]{0,600}?alt="([^"]*)"/g;
+  // Current markup (2026-09, Tailwind redesign): image anchors
+  // <a ... href="/comic/index/detail?video_key={id}"> ... <img data-src="https://pic.{cdn}.cn/..." alt="title"> ... duration ... </a>
+  // plus separate title-only anchors for the same id (skipped: no image).
+  // Image CDN rotates (xmbvxj -> yrfmba -> tuafjz), so accept any pic.*.cn host.
+  const pattern = /<a\b[^>]*href="[^"]*detail\?video_key=(\d+)[^"]*"[^>]*>([\s\S]*?)<\/a>/g;
   for (const match of html.matchAll(pattern)) {
     const id = match[1];
     if (seen.has(id)) continue;
+    const block = match[2];
+    const pic = block.match(/data-src="(https:\/\/pic\.[a-z0-9]+\.cn\/[^"]+)"/i)?.[1] || "";
+    if (!pic) continue;
     seen.add(id);
+    const duration = block.match(/(\d{1,3}:\d{2}(?::\d{2})?)\s*</)?.[1] || "";
     cards.push({
       vod_id: id,
-      vod_name: decodeHtml(match[3]) || `91视频 ${id}`,
-      vod_pic: kan91ImageProxy(match[2]),
-      vod_remarks: "VIDEO",
+      vod_name: decodeHtml(block.match(/alt="([^"]*)"/)?.[1] || "") || `91视频 ${id}`,
+      vod_pic: kan91ImageProxy(pic),
+      vod_remarks: duration || "VIDEO",
       type_name: "91视频",
       vod_area: "91porna.com",
       media_kind: "video",
@@ -1013,8 +1021,8 @@ async function kan91ResolvePlay(html, id) {
   if (!response.ok) throw new Error(`kan91 detail_play ${response.status}`);
   const payload = unpackPacked(await response.text());
   if (!payload) throw new Error("kan91 detail_play payload unavailable");
-  const video = payload.match(/https:\/\/yd-hls\.utxxds\.cn\/[^'"\\]+/)?.[0];
-  const poster = payload.match(/https:\/\/pic\.xmbvxj\.cn\/[^'"\\]+/)?.[0];
+  const video = payload.match(/https:\/\/yd-hls\.[a-z0-9]+\.cn\/[^'"\\]+/)?.[0];
+  const poster = payload.match(/https:\/\/pic\.[a-z0-9]+\.cn\/[^'"\\]+/)?.[0];
   if (!video) throw new Error("kan91 stream unavailable");
   return { video: video.replace(/\\+$/, ""), poster: kan91NormalizeAsset(poster || "") };
 }
@@ -1068,7 +1076,7 @@ async function kan91Image(requestUrl) {
   } catch {
     return json({ message: "invalid image source" }, { status: 400 });
   }
-  if (!/^pic\.(?:xmbvxj|yrfmba)\.cn$/i.test(source.hostname) || !["https:", "http:"].includes(source.protocol)) {
+  if (!/^pic\.[a-z0-9]+\.cn$/i.test(source.hostname) || !["https:", "http:"].includes(source.protocol)) {
     return json({ message: "invalid image source" }, { status: 400 });
   }
   const response = await fetch(source, { headers: { ...KAN91_HEADERS, accept: "image/*" } });
