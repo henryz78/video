@@ -52,6 +52,10 @@
 
 真实上游为公开备用域 **`hanime1.com`**；该域与 `hm.cfnav.me` 的目录 ID、标题、品牌、分页和 `vdownload.hembed.com` 签名 MP4 逐项核对一致。因 `hanime1.com` 对数据中心出口启用 Cloudflare challenge，目录/详情 HTML 经**通用目录 relay**（现为 `Railway https://hy-relay.up.railway.app/api?action=hm&path=` 主 → `Vercel https://hy-relay.vercel.app/api?action=hm&path=` 备 → `r.jina.ai/http://hanime1.com` 兜底，`30s` 超时覆盖冷启动，保留原始 HTML、CORS `*`、不落盘、不依赖 cfnav 登录 API）抓取；媒体由同源 `hm?action=media` 代理带 `Referer: https://hanime1.com/`，再以 Range 流式返回 `vdownload.hembed.com`（视频分片不经 Vercel/Railway）。实现：`hmList`（最新/上传/类型/搜索/分页）、`hmDetail`（标题/封面/标签/相关推荐/1080p/720p/480p）、`hmMedia`（Host 白名单 + Range + CORS）；App 使用 HAnime 分类 Tab。实测：Pages `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`video-4nn` 目录不再 `429`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路验证）。
 
+### `hoj` / HoHoJ轻看（新增参考入口，已接入）
+
+真实上游为 **`hohoj.tv`**（HoHoJ 打J好幫手｜免費線上AV；sejie80 / website.informer / hypestat 均收录为日本AV站）。门户卡片「日本成人影片检索·女优·HLS直连播放」与上游一致。**全链路匿名可用**（源站无 CF）：首页 `/`（轮播 + 分区）/ 12 分类 `/main_ctg?id=`（id 1–12）/ 女优 `/model?id=` / 搜索 `/search?text=`（`&p=N` 分页）/ 详情 `/video?id=`（标题/封面/标签/女优/观看数）/ 播放 iframe `/embed?id=` → `<video src="https://video-N.ggjav.com/.../index.m3u8">`（media-chrome + hls.js）。媒体链：封面 `cdn-1.ggjav.com` 直连；m3u8 200（198KB，`CORS *`，绝对分片地址，无加密）；分片 206 真 TS（`47 40 00 10`，`CORS *`）→ **浏览器直连零代理**，无需媒体代理 action。媒体 host 数字轮换（实测 video-5/video-8），embed 页给绝对地址，动态解析即可。实现：`hojPage`（浏览器 UA）/`hojCards`（`.video-item` 块：data-src 封面 + video-item-title + 观看数 + badge）/`hojList`（首页去重、`cat:` 分类、`model:` 女优、`wd` 搜索、`&p=N` 分页、`cat` 索引）/`hojDetail`（og:title/og:image/description/tags/actress + embed 直链 m3u8 + related 12）；App `HOJ_TABS`（最新 + 12 分类 + 分类索引）；tests 新增 2 项（列表+详情 mock）。headless 验收：首页 24 卡/滚动后 0 破图/13 tabs/分类 24 卡/搜索 IPZZ 24 卡/详情 720p 级 m3u8（2318 段）/1280 宽 readyState=4 播放推进 16.1s/零 JS 错误。零 cfnav 依赖。详见 SOURCE-RESEARCH.md「HoHoJ 轻看 / hoj 侦查记录」。
+
 | # | slug | 参考入口 | 分类 / 模式 | 当前 provider | 默认筛选 | 当前状态 | 实现与下一步 |
 |---:|---|---|---|---|---|---|---|
 | 1 | `one` | KanOne | 影视 / cinema | — | — | 用户跳过 / 不接入 | 2026-08-15 调查：参考站为 Next.js SPA，`/api/bootstrap` POST 公开返回 `uuid`+`hotKeywords`+`imgServers`+`cdnList`（登录会话内），目录/搜索 `/api/search` POST `{uuid,keyword,page,limit}`、详情 `/api/detail` POST `{uuid,id}` 全在 Linux.do 登录墙后（Node 401）。媒体链独立已验证：图片 `imgpw807.s7n7ue8.com`/`jmt612.xqjby.com` `/storage/thumb/{id}/{hash}.jpg` 200+CORS `*`；MP4 `dlmk0129.scycjz.com/one/compress/decry/vd/{date}/{b64}/{time}/{res}/.../decrypt/{token}.mp4` 206+CORS `*`、标准 MP4 无加密。上游域名群（`dlmk0129`×4、`0325api`×5、`imgpw807`×2 镜像）指向同一套防封站群；API 源站 `0325api.*`（Swoft）路由盲猜 60+ 路径全 500/403；`jmt612.xqjby.com` 暴露 S3 桶 `one-fruit-new` 列表（`oneVideo/hls/one/...` 2022 旧数据 757 条 + `admin/jiami/storage`），但桶内文件 403 不可下载、分页被拒（marker 403）。结论：与 `mt` 同型——媒体链独立是局部胜利，目录/搜索/详情锁在参考站登录墙后、上游 Swoft API 路由不可得、S3 桶非实时目录。用户 2026-08-15 决定跳过。无新证据（上游网页站或免登录 API）不重开。 |
@@ -445,4 +449,8 @@ npm.cmd run test:cloudflare
 - fj #14 / hm #1（字幕）：本地详情均无字幕轨道字段，两站均为 MP4 直链播放（内嵌字幕由播放器原生渲染），无可改项，记录。
 - miss：详情 + HLS 200 正常。
 - 门户层 #28（收藏）：通过，`cf-favs` 跨 reload 持久；#24/#19（绿通）：可见惰性空链，符合用户 2026-09-18 决定；#5（xbwz）：第三方节点 200 存活。
-- 跳过：#32 dj / #34 one / #3 one（SKIP 站无实现）；#33 pearhoho / #30 ccc（范围外）；#31/#27/#25/#15 hg、#22/#13/#10 hoj（未接入）；#18/#12 asmr、#8 sjs（SKIP/下架）；#9 手机配对（本地无此功能）；#17 常亮+选集（video 标签能力边界，记录未改）。
+- 跳过：#32 dj / #34 one / #3 one（SKIP 站无实现）；#33 pearhoho / #30 ccc（范围外）；#31/#27/#25/#15 hg、#22/#13/#10 hoj（当时未接入；hoj 已于本轮接入，hg 经侦查确认正片锁会员仍保持 PENDING）；#18/#12 asmr、#8 sjs（SKIP/下架）；#9 手机配对（本地无此功能）；#17 常亮+选集（video 标签能力边界，记录未改）。
+
+### 2026-09-18 hoj / HoHoJ轻看已接入（hohoj.tv，全链匿名直连）
+
+- 承接「黄果短剧 / hg（跳过）+ HoHoJ 轻看 / hoj（可接入）」侦查结论。实现：catalog.js `hoj` provider + ROUTE_CONFIGS `hoj`；runtime.js `hojPage`/`hojCards`/`hojList`/`hojDetail` + 分发；App.jsx `HOJ_TABS` + tabs/heading/分类网格接线；tests 新增 2 项。headless 验收：首页 24 卡/滚动后 0 破图/13 tabs/分类 巨乳美乳 24 卡/搜索 IPZZ 24 卡/详情 m3u8（2318 段）/1280 宽 readyState=4 播放推进 16.1s/零 JS 错误；构建 + test:sites 23/23 + test:cloudflare 4/4 全绿。`/site/hoj` 详情页由 SOURCE PENDING 升级为可用（门户卡片徽章沿用官方 ONLINE 口径，未动）。

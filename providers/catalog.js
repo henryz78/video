@@ -202,6 +202,13 @@ kan98: {
     discoveredFrom: "hm.cfnav.me 官方 V6 API/页面契约与 hanime1.com 公开备用域逐条核对；目录经实时 HTML relay 抓取，不使用 cfnav 私有 API 或快照",
     capabilities: "分类目录 / 搜索 / 分页 / 详情 / 标签 / 1080p/720p/480p MP4 直连播放",
   },
+  hoj: {
+    id: "hoj",
+    name: "HoHoJ 轻看实时上游",
+    upstream: "hohoj.tv + cdn-1.ggjav.com 封面 + video-N.ggjav.com（CORS * 无加密 HLS）",
+    discoveredFrom: "hoj.cfnav.me 门户卡片与 hohoj.tv（好好J）逐项核对；列表/分类/女优/搜索/详情/embed 全匿名直连",
+    capabilities: "首页 / 12 分类 / 女优 / 搜索 / 分页 / 详情 / HLS 直连播放",
+  },
 };
 
 const ROUTE_CONFIGS = {
@@ -231,6 +238,7 @@ hj: { provider: "hj" },
   hxc: { provider: "hxc" },
   sf: { provider: "sf" },
   hm: { provider: "hm" },
+  hoj: { provider: "hoj" },
 };
 
 export function getProviderForSite(slug) {

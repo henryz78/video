@@ -866,3 +866,20 @@
 - **媒体链路**：详情签名 URL 来自 `https://vdownload.hembed.com/{id}-{quality}p.mp4?secure=...`，HEAD/Range 200/206、`ACAO:*`；从本地浏览器跨源直接加载会返回 403，因此 `hmMedia` 仅代理白名单 Hembed URL，带 `Referer: https://hanime1.com/` 并转发 Range/CORS，播放器使用同源 MP4（视频分片不经 Vercel/Railway）。
 - **已实现与验收**：`providers/catalog.js` / `ROUTE_CONFIGS.hm`、`runtime.js hmList/hmDetail/hmMedia`（三层 `HM_READER_ORIGINS`）、App HAnime 分类 Tab；`video-4nn` 实测 `hm?pg=1` 24 卡、`hm?wd=AI` 27 页、`hm detail 407804` 3 档、`407804` `readyState=4`/`1280×720`；`test:sites` 21/21、Cloudflare 4/4（2026-08-21 Railway 主链路）。
 - **边界**：三层 relay 仅代理目录 HTML，不代理视频分片；Jina/Railway 均为可替换传输层，不依赖 cfnav 登录态。字幕字段仍按官方实际返回处理，示例条目为“源站未提供”。
+
+## 黄果短剧 / hg 侦查记录（2026-09-18，只读调查，未改代码，结论：跳过）
+
+- Richy 索引无匹配（注：jm 章节的 `hg` 是 18mh.net「韩国H漫」分类 slug，无关）；SleazyFork 搜黄果/hohoj 无专用脚本（仅 hanime1.me 漫改角标等通用脚本，不建映射）。
+- 候选上游：`huangguo.com`（5KB 落地页）、`huangguo-ai.xyz`、`huangguoduanju.net`、`huangguodrama.ai`（253KB Next.js 完整目录站，`/video/{id}/` + `/detail/{id}/` + `/discover/` + `/ranks/hot/` + 7 语言，title「黄果短剧官网（黄果AI）｜AI 短剧、漫剧与短片免费在线观看」）。以后者为实际内容库。
+- **排除 `huangguoai.com`（2026-09-18 用户提示后验证）**：该站活着（141KB，title「黄果短剧 - AI成人短剧 - 精品短剧在线观看平台」），但与 drama.ai 是**两套不同系统**：非 Next.js、无 `/video/{id}/` 路由（`/video/10438/` 返回「页面未找到」）、剧集 ID 为小数字（`/detail/12/`、`/detail/117/` vs drama.ai 的 10438/113010）；详情页 99KB 无 `<video>`、无 m3u8/mp4，28 处 APP 下载引导——是品牌/创作者招募站（吻合 blocktempo 报道的招募制平台本体），不是可看站。参考站 hg 是可看站（全部 issue 都是播放问题）+ 门户卡片「连续选集」对应 drama.ai 的上一集/下一集与 `/detail/` 剧集页 → 上游为 `huangguodrama.ai` 无误。
+- 目录/详情/封面全匿名可用：剧集页 `/detail/{id}/`（选集链接、JSON-LD `TVSeries`+`episodeNumber`、封面 `/covers/d/{id}-{n}.jpg`）；单集页 `/video/{id}/`（标题/简介/评分/语言/上一集下一集、预告片 `/trailers/{id}.mp4` 206 可播）；账号接口 `/api/auth/me/` 匿名 200 `{"ok":true,"user":null}`（浏览无需登录，有登录体系）。
+- **播放链硬阻塞**：SSR/RSC/全部 JS chunk 里没有任何正片地址（只有预告片）；headless 真机验证（年龄确认已点掉）：播放器唯一 video 源就是预告片，无登录墙、无 VIP 按钮、无任何取流 API 调用——正片不对匿名客户端提供。与参考站 open issue #32（VIP剧集看不了，7 次遇到）互相印证。
+- **结论（用户 2026-08-18 对 dj 黄豆短剧付费制的同型决定适用）**：目录独立但正片锁会员，参考站自己都播不了 VIP，按最高原则（复刻参考站可见效果）与独立性铁律保持 PENDING 壳，不实现。重开条件：上游开放匿名正片地址，或参考站出现可独立复现的播放链。
+
+## HoHoJ 轻看 / hoj 侦查记录（2026-09-18，只读调查，未改代码，结论：可接入）
+
+- 真实上游 = `hohoj.tv`（HoHoJ 打J好幫手｜免費線上AV｜高清日本AV；sejie80 / website.informer / hypestat 均收录 `hohoj.tv` 为日本AV站，描述“无码、有码、素人、中文字幕、欧美一应俱全”）。与门户卡片「日本成人影片检索·女优·HLS直连播放」一致。
+- 全链路匿名可用（nginx/Apache 类源站，无 CF）：首页 `/`（轮播 + 分区，73+ 视频链接）；分类 `/main_ctg?id=&name=` 与 `/ctg?id=&name=`（各 24 卡）；女优 `/model?id=&name=`（24 卡）；搜索 `/search?text=`（24 卡，`&p=N` 分页）；详情 `/video?id=`（标题/og:image/标签/相关）；播放 iframe `/embed?id=` → `<video src="https://video-N.ggjav.com/video_1/{vid}-{code}.mp4/index.m3u8">`（media-chrome + hls.js 播放器）。
+- 媒体链：封面 `cdn-1.ggjav.com/media/video/large_{x}.jpg`（直连）；m3u8 200（198KB，`CORS *`，绝对分片地址，无加密）；分片 206（真 TS `47 40 00 10`，`CORS *`）。**浏览器直连零代理**。媒体 host 数字轮换（实测 video-5/video-8），embed 页给绝对地址，动态解析即可。
+- 实现要点（供后续实现者）：provider `hoj`：`hojPage`（浏览器 UA）/`hojCards`（`a[href*="video?id="]` + 同块 `img[data-src|src]` 封面 + 时长 div + 相邻标题锚）/`hojList`（首页去重、`main_ctg` 分类、`model` 女优、`wd` 搜索、`&p=N` 分页）/`hojDetail`（og:title/og:image/tags + related）/`hojPlay`（抓 `/embed?id=` 取 video src 直链，无需代理）。`/extra_info`（1.4MB suggestions JSON）不要常规拉取。
+- 参考站比对待用户登录态 console 取证（`hoj.cfnav.me` 全站登录墙，Node 匿名 401）。

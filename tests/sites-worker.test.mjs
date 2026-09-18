@@ -322,8 +322,65 @@ test("hm media proxy forwards ranges to Hembed with the upstream referer", async
   }
 });
 
-test("kan98 search page 2 reuses the real searchid from the POST redirect", async () => {
+test("hoj parses video-item cards with covers, badges and pagination", async () => {
   const originalFetch = globalThis.fetch;
+  const listHtml = `<!doctype html><html><body><div class="video-list"><div class="row">
+    <div class="video-item col-6"><a href="/video?id=575"><img class="img-placeholder" src="https://cdn-1.ggjav.com/media/video/small_230916.jpg" alt="IPZZ-033 标题"><div class="video-item-title mt-1">IPZZ-033 标题</div><div class="video-item-rating mt-1"><i class="fa-regular fa-eye"></i> <span class="me-2">661.0 k</span></div><div class="video-item-badge">中文字幕</div></a></div>
+    <div class="video-item col-6"><a href="/video?id=38124"><img class="img-placeholder" src="https://cdn-1.ggjav.com/media/video/small_297186.jpg" alt="第二条"><div class="video-item-title mt-1">第二条</div></a></div>
+  </div></div><ul class="pagination"><li><a href="javascript:changePage(2);">2</a></li><li><a href="javascript:changePage(1049);">1049</a></li></ul></body></html>`;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    assert.match(url, /^https:\/\/hohoj\.tv\/main_ctg\?id=9/);
+    return new Response(listHtml, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await handleProviderRequest(new URL("https://app.example/provider-api/hoj?pg=1&limit=24&preset=cat%3A9"));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.pagecount, 1049);
+    assert.equal(body.list.length, 2);
+    assert.equal(body.list[0].vod_id, "575");
+    assert.equal(body.list[0].vod_name, "IPZZ-033 标题");
+    assert.equal(body.list[0].vod_pic, "https://cdn-1.ggjav.com/media/video/small_230916.jpg");
+    assert.equal(body.list[0].vod_remarks, "中文字幕");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("hoj detail resolves embed m3u8 plus tags, actress and related", async () => {
+  const originalFetch = globalThis.fetch;
+  const detailHtml = `<!doctype html><html><head><title>IPZZ-033 | HoHoJ</title><meta property="og:image" content="https://cdn-1.ggjav.com/media/video/large_230916.jpg"><meta name="description" content="简介"></head><body>
+    <h5 class="mt-3">IPZZ-033 标题</h5>
+    <div><i class="fa-regular fa-eye"></i> <span>661.0 k</span></div>
+    <div class="model"><a href="/model?id=6&name=x"><div class="model-name mt-1">桃乃木香奈</div></a></div>
+    <a href="/ctg?id=9&name=y">巨乳美乳</a>
+    <iframe class="player" src="/embed?id=575"></iframe>
+    <div class="video-item col-6"><a href="/video?id=38124"><img src="https://cdn-1.ggjav.com/media/video/small_297186.jpg"><div class="video-item-title mt-1">相关一</div></a></div>
+  </body></html>`;
+  const embedHtml = `<html><body><video id="my-video" src="https://video-5.ggjav.com/video_1/99405-IPZZ-033.mp4/index.m3u8"></video></body></html>`;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/embed?id=575")) return new Response(embedHtml, { status: 200, headers: { "content-type": "text/html" } });
+    assert.match(url, /^https:\/\/hohoj\.tv\/video\?id=575/);
+    return new Response(detailHtml, { status: 200, headers: { "content-type": "text/html" } });
+  };
+  try {
+    const response = await handleProviderRequest(new URL("https://app.example/provider-api/hoj?action=detail&id=575"));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.vod_name, "IPZZ-033 标题");
+    assert.equal(body.vod_play_url, "https://video-5.ggjav.com/video_1/99405-IPZZ-033.mp4/index.m3u8");
+    assert.deepEqual(body.metadata.actresses, ["桃乃木香奈"]);
+    assert.ok(body.metadata.tags.includes("巨乳美乳"));
+    assert.equal(body.metadata.related.length, 1);
+    assert.equal(body.metadata.related[0].vod_id, "38124");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("kan98 search page 2 reuses the real searchid from the POST redirect", async () => {  const originalFetch = globalThis.fetch;
   const hits = [];
   globalThis.fetch = async (input) => {
     const url = String(input);

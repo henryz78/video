@@ -3769,6 +3769,131 @@ async function hmDetail(requestUrl) {
   }, { headers: { "cache-control": "public, max-age=60" } });
 }
 
+/* ---------------- hoj / HoHoJ轻看 (hohoj.tv) ---------------- */
+const HOJ_ORIGIN = "https://hohoj.tv";
+const HOJ_HEADERS = {
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+};
+const HOJ_CATS = [
+  ["", "最新"], ["8", "亂倫"], ["2", "強姦凌辱"], ["12", "內射受孕"], ["5", "多P群交"],
+  ["9", "巨乳美乳"], ["7", "出軌"], ["6", "角色劇情"], ["1", "絲襪美腿"],
+  ["10", "潮吹放尿"], ["11", "走後門"], ["4", "制服誘惑"], ["3", "主奴調教"],
+];
+
+async function hojPage(pathname) {
+  const response = await fetch(new URL(pathname, HOJ_ORIGIN), { headers: HOJ_HEADERS, signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error(`hohoj.tv page ${response.status}`);
+  return response.text();
+}
+
+function hojCards(html) {
+  const cards = [];
+  const seen = new Set();
+  for (const block of html.split('<div class="video-item ').slice(1)) {
+    const id = block.match(/href="[^"]*\/video\?id=(\d+)/)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const cover = decodeHtml(block.match(/<img\b[^>]*src="(https:\/\/[^"]+)"/)?.[1] || "");
+    const title = decodeHtml(block.match(/class="video-item-title[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] || block.match(/alt="([^"]*)"/)?.[1] || "");
+    if (!title) continue;
+    const views = decodeHtml(block.match(/fa-eye"><\/i>\s*<span[^>]*>([^<]+)/)?.[1] || "");
+    const badge = decodeHtml(block.match(/class="video-item-badge"[^>]*>([^<]*)</)?.[1] || "");
+    cards.push({
+      vod_id: id,
+      vod_name: title,
+      vod_pic: cover,
+      vod_remarks: badge || "VIDEO",
+      vod_blurb: views ? `${views} 观看` : "",
+      vod_content: title,
+      vod_area: "hohoj.tv",
+      type_name: badge || "HoHoJ",
+      media_kind: "video",
+      needs_detail: true,
+      provider: "hoj",
+    });
+  }
+  return cards;
+}
+
+function hojPageCount(html, page) {
+  const linked = [...html.matchAll(/changePage\((\d+)\)/g)].map((m) => Number(m[1])).filter(Number.isFinite);
+  return Math.max(1, page, ...linked);
+}
+
+function hojSearchPath(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const keyword = requestUrl.searchParams.get("wd")?.trim() || "";
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  let path;
+  if (keyword) path = `/search?text=${encodeURIComponent(keyword)}`;
+  else if (preset.startsWith("cat:")) path = `/main_ctg?id=${encodeURIComponent(preset.slice(4))}`;
+  else if (preset.startsWith("model:")) path = `/model?id=${encodeURIComponent(preset.slice(6))}`;
+  else path = "/";
+  if (page > 1) path += `${path.includes("?") ? "&" : "?"}p=${page}`;
+  return path;
+}
+
+async function hojList(requestUrl) {
+  const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
+  const preset = requestUrl.searchParams.get("preset")?.trim() || "";
+  if (preset === "cat") {
+    return json({
+      code: 1, page: 1, pagecount: 1, limit: HOJ_CATS.length - 1, total: HOJ_CATS.length - 1,
+      list: HOJ_CATS.slice(1).map(([id, name]) => ({
+        vod_id: `cat:${id}`, vod_name: name, vod_remarks: "分类",
+        vod_area: "hohoj.tv", type_name: "分类", media_kind: "gallery",
+        needs_detail: false, provider: "hoj",
+      })),
+      provider: "hoj",
+    }, { headers: { "cache-control": "public, max-age=600" } });
+  }
+  const html = await hojPage(hojSearchPath(requestUrl));
+  const all = hojCards(html);
+  const limit = Math.min(48, Math.max(1, Number(requestUrl.searchParams.get("limit") || 24)));
+  const pagecount = hojPageCount(html, page);
+  return json({ code: 1, page, pagecount, total: pagecount * 24, limit, list: all.slice(0, limit), provider: "hoj" }, {
+    headers: { "cache-control": "public, max-age=120" },
+  });
+}
+
+async function hojDetail(requestUrl) {
+  const id = requestUrl.searchParams.get("id") || "";
+  if (!/^\d+$/.test(id)) return json({ message: "invalid id" }, { status: 400 });
+  const html = await hojPage(`/video?id=${encodeURIComponent(id)}`);
+  const title = decodeHtml(html.match(/<h5[^>]*>([\s\S]*?)<\/h5>/)?.[1] || html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] || html.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.split("|")[0] || `HoHoJ ${id}`);
+  const cover = decodeHtml(html.match(/<meta property="og:image" content="([^"]+)"/)?.[1] || "");
+  const description = decodeHtml(html.match(/<meta name="description" content="([^"]{0,300})/)?.[1] || "");
+  const views = decodeHtml(html.match(/fa-eye"><\/i>\s*<span[^>]*>([^<]+)/)?.[1] || "");
+  const likes = decodeHtml(html.match(/id="likes"[^>]*>([^<]+)/)?.[1] || "");
+  const date = decodeHtml(html.match(/class="ms-auto"><span>([^<]+)/)?.[1] || "");
+  const tags = [...html.matchAll(/href="[^"]*ctg\?[^"]*"[^>]*>([^<]{1,30})</g)].map((m) => decodeHtml(m[1].trim())).filter(Boolean).slice(0, 20);
+  const actresses = [...html.matchAll(/<div class="model-name[^"]*"[^>]*>([^<]+)/g)].map((m) => decodeHtml(m[1].trim())).filter(Boolean);
+  let playUrl = "";
+  const embed = html.match(/<iframe\b[^>]*class="player"[^>]*src="([^"]+)"/)?.[1] || html.match(/<iframe\b[^>]*src="(\/embed\?id=\d+[^"]*)"/)?.[1] || "";
+  if (embed) {
+    try {
+      const embedHtml = await hojPage(embed.startsWith("/") ? embed : `/embed?id=${encodeURIComponent(id)}`);
+      playUrl = decodeHtml(embedHtml.match(/<video\b[^>]*src="([^"]+\.m3u8[^"]*)"/)?.[1] || "");
+    } catch { playUrl = ""; }
+  }
+  const related = hojCards(html).filter((item) => item.vod_id !== id).slice(0, 12);
+  return json({
+    vod_id: id,
+    vod_name: title,
+    vod_pic: cover,
+    vod_remarks: "VIDEO",
+    vod_blurb: [actresses.join(" "), views && `${views} 观看`, likes && `${likes} 喜欢`, date].filter(Boolean).join(" · "),
+    vod_content: description || tags.join(" · "),
+    vod_area: "hohoj.tv",
+    type_name: tags[0] || "HoHoJ",
+    vod_play_url: playUrl,
+    media_kind: "video",
+    needs_detail: false,
+    provider: "hoj",
+    metadata: { actresses, tags, date, related },
+  }, { headers: { "cache-control": "public, max-age=120" } });
+}
+
 const JS9_ORIGIN = "https://jiuse.tv";
 const JS9_TABS = [
   ["latest", "最新"], ["hd", "高清"], ["recent-favorite", "最近加精"], ["hot-list", "当前最热"],
@@ -5103,6 +5228,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
     if (provider === "sf") return await (action === "detail" ? sfDetail(requestUrl) : sfList(requestUrl));
     if (provider === "hm") return await (action === "media" ? hmMedia(requestUrl, request) : action === "detail" ? hmDetail(requestUrl) : hmList(requestUrl));
+    if (provider === "hoj") return await (action === "detail" ? hojDetail(requestUrl) : hojList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {
     return json({ message: error?.message || "upstream request failed", provider }, { status: 502 });
