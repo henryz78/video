@@ -3646,6 +3646,9 @@ async function hmPage(pathname, key = "") {
       });
       if (!response.ok) throw new Error(`hanime1 reader ${response.status}`);
       const html = await response.text();
+      if (/Just a moment|challenge-platform|cf-chl|Attention Required|Age Verification/i.test(html) && !/video-item-container/i.test(html)) {
+        throw new Error("hanime1 reader hit upstream challenge/gate page");
+      }
       if (!/<html\b|video-item-container|skip-page-form/i.test(html)) throw new Error("hanime1 reader returned invalid HTML");
       return html;
     } catch (error) {
