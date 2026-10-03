@@ -3603,6 +3603,18 @@ const HM_READER_HEADERS = {
   "x-return-format": "html",
   "user-agent": "CFNav-Independent/2.0",
 };
+// Relay key lives server-side only: Cloudflare env.RELAY_KEY in production,
+// process.env.RELAY_KEY for local node dev. The browser bundle must never
+// contain it, so frontend JSON calls go through the same-origin
+// /provider-api/relay forwarder below instead of hitting the relay directly.
+function relayKey(env) {
+  return (env && env.RELAY_KEY) || (typeof process !== "undefined" ? process.env?.RELAY_KEY : "") || "";
+}
+// JSON directory/detail/play APIs: Vercel first, Railway backup.
+const RELAY_JSON_BASES = [
+  "https://hy-relay.vercel.app/api",
+  "https://hy-relay.up.railway.app/api",
+];
 let hmReaderCursor = 0;
 const HM_TABS = [
   ["latest", "最新上市"], ["uploaded", "最新上傳"], ["裏番", "裏番"], ["泡麵番", "泡麵番"],
@@ -3618,7 +3630,7 @@ function hmMediaUrl(url) {
   return `/provider-api/hm?action=media&url=${encodeURIComponent(url)}`;
 }
 
-async function hmPage(pathname) {
+async function hmPage(pathname, key = "") {
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
   let lastError;
   const start = hmReaderCursor++ % HM_READER_ORIGINS.length;
@@ -3626,8 +3638,10 @@ async function hmPage(pathname) {
   for (const origin of origins) {
     try {
       const url = origin.includes("action=hm") ? `${origin}${encodeURIComponent(path)}` : `${origin}${path}`;
+      const headers = { ...HM_READER_HEADERS };
+      if (key && origin.includes("action=hm")) headers["x-relay-key"] = key;
       const response = await fetch(url, {
-        headers: HM_READER_HEADERS,
+        headers,
         signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) throw new Error(`hanime1 reader ${response.status}`);
@@ -3692,9 +3706,9 @@ function hmSearchPath(requestUrl) {
   return `/search?${params.toString()}`;
 }
 
-async function hmList(requestUrl) {
+async function hmList(requestUrl, key = "") {
   const page = Math.max(1, Number(requestUrl.searchParams.get("pg") || 1));
-  const html = await hmPage(hmSearchPath(requestUrl));
+  const html = await hmPage(hmSearchPath(requestUrl), key);
   const list = hmCards(html).slice(0, Math.min(48, Math.max(1, Number(requestUrl.searchParams.get("limit") || 24))));
   const pagecount = hmPageCount(html, page);
   return json({ code: 1, page, pagecount, total: pagecount * 24, limit: list.length, list, provider: "hm" }, {
@@ -3733,10 +3747,10 @@ function hmMeta(html, name) {
   return decodeHtml(html.match(re)?.[1] || "");
 }
 
-async function hmDetail(requestUrl) {
+async function hmDetail(requestUrl, key = "") {
   const id = requestUrl.searchParams.get("id") || "";
   if (!/^\d+$/.test(id)) return json({ message: "invalid id" }, { status: 400 });
-  const html = await hmPage(`/watch?v=${encodeURIComponent(id)}`);
+  const html = await hmPage(`/watch?v=${encodeURIComponent(id)}`, key);
   const title = (hmMeta(html, "og:title") || decodeHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || `HAnime ${id}`)).replace(/\s+-\s+(?:H?動漫.*|Hanime1\.me)$/i, "");
   const poster = hmMeta(html, "og:image") || decodeHtml(html.match(/<video\b[^>]*poster=["']([^"']+)/i)?.[1] || "");
   const description = hmMeta(html, "description") || hmMeta(html, "og:description");
@@ -5171,12 +5185,52 @@ async function hxcImage(requestUrl) {
   });
 }
 
-export async function handleProviderRequest(request) {
+// Same-origin forwarder for the relay JSON APIs the browser used to call
+// directly (ph directory/detail, ep play-resolve). The relay key is attached
+// server-side via header so it never ships in the frontend bundle.
+// Only allowlisted directory actions are forwarded; media bytes stay direct
+// browser -> relay using the relay-embedded ?key= URLs.
+const RELAY_FORWARD_ALLOW = new Set(["", "list", "detail", "ep", "play"]);
+async function relayForward(requestUrl, key) {
+  const action = requestUrl.searchParams.get("action") || "";
+  if (!RELAY_FORWARD_ALLOW.has(action)) return json({ message: "relay forward not allowed" }, { status: 400 });
+  const qs = new URLSearchParams(requestUrl.searchParams);
+  qs.delete("key");
+  let lastError;
+  for (const base of RELAY_JSON_BASES) {
+    try {
+      const headers = { accept: "application/json,*/*;q=0.8", "user-agent": "CFNav-Independent/2.0" };
+      if (key) headers["x-relay-key"] = key;
+      const upstream = await fetch(`${base}?${qs}`, { headers, signal: AbortSignal.timeout(30_000) });
+      const body = await upstream.text();
+      if (!upstream.ok) {
+        let message = `relay forward ${upstream.status}`;
+        try { message = JSON.parse(body).message || message; } catch { /* keep status message */ }
+        throw new Error(message);
+      }
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "content-type": upstream.headers.get("content-type") || "application/json; charset=utf-8",
+          "access-control-allow-origin": "*",
+          "cache-control": "public, max-age=60",
+        },
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("relay unavailable");
+}
+
+export async function handleProviderRequest(request, env) {
   const requestUrl = request instanceof URL ? request : new URL(request.url);
   const match = requestUrl.pathname.match(/^\/provider-api\/([a-z0-9-]+)/i);
   const provider = match?.[1];
   const action = requestUrl.searchParams.get("action") || "list";
+  const key = relayKey(env);
   try {
+    if (provider === "relay") return await relayForward(requestUrl, key);
     if (provider === "gdlsp") return await gdlsp(requestUrl);
     if (provider === "hstream") return await (action === "detail" ? hstreamDetail(requestUrl.searchParams.get("id")) : hstreamList(requestUrl));
     if (provider === "leakgallery") return await (action === "detail" ? leakGalleryDetail(requestUrl.searchParams.get("id")) : leakGalleryList(requestUrl));
@@ -5227,7 +5281,7 @@ if (provider === "kan98") return await (action === "image" ? kan98Image(requestU
     if (provider === "dsd") return await (action === "media" ? dsdMedia(requestUrl) : action === "cats" ? json(await dsdCats(), { headers: { "cache-control": "public, max-age=600" } }) : action === "detail" ? dsdDetail(requestUrl) : dsdList(requestUrl));
     if (provider === "hxc") return await (action === "img" ? hxcImage(requestUrl) : action === "detail" ? hxcDetail(requestUrl) : hxcList(requestUrl));
     if (provider === "sf") return await (action === "detail" ? sfDetail(requestUrl) : sfList(requestUrl));
-    if (provider === "hm") return await (action === "media" ? hmMedia(requestUrl, request) : action === "detail" ? hmDetail(requestUrl) : hmList(requestUrl));
+    if (provider === "hm") return await (action === "media" ? hmMedia(requestUrl, request) : action === "detail" ? hmDetail(requestUrl, key) : hmList(requestUrl, key));
     if (provider === "hoj") return await (action === "detail" ? hojDetail(requestUrl) : hojList(requestUrl));
     return json({ message: "unknown provider" }, { status: 404 });
   } catch (error) {

@@ -299,6 +299,32 @@ test("hm detail extracts all signed MP4 qualities and metadata", async () => {
   }
 });
 
+test("relay forwarder attaches the server-side key and passes JSON through", async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (input, init) => {
+    captured = { url: String(input), key: init?.headers?.["x-relay-key"] };
+    return new Response(JSON.stringify({ list: [], provider: "ph" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const response = await handleProviderRequest(new URL("https://app.example/provider-api/relay?pg=1&limit=24"), { RELAY_KEY: "test-key" });
+    assert.equal(response.status, 200);
+    assert.match(captured.url, /^https:\/\/hy-relay\.vercel\.app\/api\?/);
+    assert.match(captured.url, /pg=1/);
+    assert.ok(!captured.url.includes("test-key"), "key must travel via header, not URL");
+    assert.equal(captured.key, "test-key");
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
+    assert.deepEqual((await response.json()).provider, "ph");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("relay forwarder rejects non-allowlisted actions", async () => {
+  const response = await handleProviderRequest(new URL("https://app.example/provider-api/relay?action=media&url=https%3A%2F%2Fx.example%2Fa.ts"), { RELAY_KEY: "test-key" });
+  assert.equal(response.status, 400);
+});
+
 test("hm media proxy forwards ranges to Hembed with the upstream referer", async (t) => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {

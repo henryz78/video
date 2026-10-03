@@ -11,5 +11,5 @@ export async function onRequest(context) {
     });
   }
 
-  return handleProviderRequest(context.request);
+  return handleProviderRequest(context.request, context.env);
 }

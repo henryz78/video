@@ -1031,22 +1031,25 @@ function JmModal({ comic, onClose, onChapter }) {
 }
 
 const PH_RELAY_BASES = ["https://hy-relay.vercel.app/api"];
-function phRelayBases() {
+function phRelayTargets(qs) {
   const custom = (localStorage.getItem("phRelayBases") || "").split(",").map((s) => s.trim()).filter(Boolean);
-  return custom.length ? custom : PH_RELAY_BASES;
+  // Default route goes through the same-origin forwarder so the relay key
+  // stays server-side; custom user bases keep direct access (unmanaged).
+  if (custom.length) return custom.map((base) => `${base}?${qs}`);
+  return [`/provider-api/relay?${qs}`];
 }
 async function phRelayFetch(params, { signal } = {}) {
-  const bases = phRelayBases();
-  const index = Number(localStorage.getItem("phRelayIndex") || 0);
   const qs = new URLSearchParams(params);
+  const bases = phRelayTargets(qs);
+  const index = Number(localStorage.getItem("phRelayIndex") || 0);
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   signal?.addEventListener("abort", onAbort);
   try {
     for (let attempt = 0; attempt < bases.length; attempt++) {
-      const base = bases[(index + attempt) % bases.length];
+      const target = bases[(index + attempt) % bases.length];
       try {
-        const response = await fetch(`${base}?${qs}`, { signal: controller.signal });
+        const response = await fetch(target, { signal: controller.signal });
         if (!response.ok) throw new Error(`上游返回 ${response.status}`);
         localStorage.setItem("phRelayIndex", String((index + attempt) % bases.length));
         return response;

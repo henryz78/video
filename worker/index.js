@@ -5,7 +5,7 @@ export default {
     const requestUrl = new URL(request.url);
 
     if (requestUrl.pathname.startsWith("/provider-api/") && request.method === "GET") {
-      return handleProviderRequest(request);
+      return handleProviderRequest(request, env);
     }
 
     const response = await env.ASSETS.fetch(request);
